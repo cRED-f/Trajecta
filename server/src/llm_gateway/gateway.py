@@ -101,23 +101,25 @@ def _find_bifrost(settings: Settings) -> str | None:
 
 def _make_client(name: str, cfg: LlmProviderConfig) -> LLMClient | None:
     """Instantiate an LLMClient from a provider config entry."""
-    api_key = os.environ.get(f"TRAJECTA_{name.upper()}_API_KEY", "")
-    if name in ("openai", "omni_route", "9_router", "openai_compat"):
+    api_key = os.environ.get(f"TRAJECTA_{name.upper()}_API_KEY", "") or cfg.api_key_env or ""
+    # model: env var wins if set and non-empty; otherwise fall back to cfg.model.
+    model = os.environ.get(cfg.model_env, "") or cfg.model if cfg.model_env else cfg.model
+    if name in ("openai", "omni_route", "9_router", "openai_compat", "bifrost"):
         return OpenAICompatClient(
             api_key=api_key or None,
-            base_url=cfg.base_url,
-            model=cfg.model,
+            base_url=cfg.base_url or None,
+            model=model or None,
         )
     if name == "anthropic":
         return AnthropicClient(
             api_key=api_key or None,
-            model=cfg.model,
+            model=model,
             base_url=cfg.base_url,
         )
     if name == "ollama":
         return OpenAICompatClient(
             api_key="local",
             base_url=cfg.base_url or "http://localhost:11434",
-            model=cfg.model,
+            model=model,
         )
     return None

@@ -10,7 +10,7 @@ llm:
   # When Bifrost is configured, it handles routing/failover — individual
   # provider entries below are ignored.
   # Bifrost uses `/` model separator: openai/gpt-4o-mini, anthropic/claude-sonnet-4-6
-  default_provider: "bifrost"
+  default_provider: "9_router"
   providers:
     bifrost:
       enabled: false
@@ -28,7 +28,11 @@ llm:
     omni_route:
       enabled: false
     9_router:
-      enabled: false
+      enabled: true
+      base_url: "http://localhost:20128/v1"
+      model: "claude-opus-free"  # default; overridable via TRAJECTA_9_ROUTER_MODEL
+      model_env: "TRAJECTA_9_ROUTER_MODEL"
+      # API key via TRAJECTA_9_ROUTER_API_KEY env var (see .env.example)
     openai_compat:
       enabled: false
       base_url: ""

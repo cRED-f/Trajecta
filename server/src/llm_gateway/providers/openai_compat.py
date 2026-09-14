@@ -72,13 +72,26 @@ class OpenAICompatClient(LLMClient):
     @staticmethod
     def _to_events(stream: Any, model: str) -> Iterator[CompletionEvent]:
         yield CompletionEvent(kind="start", model=model)
+        usage: Usage | None = None
         for chunk in stream:
             if not chunk.choices:
+                # Some providers return usage on chunks with no choices (final chunk).
+                if getattr(chunk, "usage", None):
+                    usage = Usage(
+                        input_tokens=getattr(chunk.usage, "prompt_tokens", 0),
+                        output_tokens=getattr(chunk.usage, "completion_tokens", 0),
+                    )
                 continue
             delta = chunk.choices[0].delta
             if delta and delta.content:
                 yield CompletionEvent(kind="token", text=delta.content)
-        yield CompletionEvent(kind="end", model=model)
+            # OpenAI returns usage on the final (empty delta) chunk with choices.
+            if getattr(chunk, "usage", None):
+                usage = Usage(
+                    input_tokens=getattr(chunk.usage, "prompt_tokens", 0),
+                    output_tokens=getattr(chunk.usage, "completion_tokens", 0),
+                )
+        yield CompletionEvent(kind="end", model=model, usage=usage)
 
     # -- sync interface -----------------------------------------------------
 
@@ -141,10 +154,21 @@ class OpenAICompatClient(LLMClient):
             stream=True,
         )
         yield CompletionEvent(kind="start", model=model or self._model)
+        usage: Usage | None = None
         async for chunk in s:
             if not chunk.choices:
+                if getattr(chunk, "usage", None):
+                    usage = Usage(
+                        input_tokens=getattr(chunk.usage, "prompt_tokens", 0),
+                        output_tokens=getattr(chunk.usage, "completion_tokens", 0),
+                    )
                 continue
             delta = chunk.choices[0].delta
             if delta and delta.content:
                 yield CompletionEvent(kind="token", text=delta.content)
-        yield CompletionEvent(kind="end", model=model or self._model)
+            if getattr(chunk, "usage", None):
+                usage = Usage(
+                    input_tokens=getattr(chunk.usage, "prompt_tokens", 0),
+                    output_tokens=getattr(chunk.usage, "completion_tokens", 0),
+                )
+        yield CompletionEvent(kind="end", model=model or self._model, usage=usage)

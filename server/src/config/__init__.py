@@ -20,6 +20,7 @@ class LlmProviderConfig(BaseModel):
     model: str = ""
     base_url: str | None = None
     api_key_env: str | None = None  # env var name to pull the key from
+    model_env: str | None = None  # env var name to pull the default model from (overrides `model`)
 
 
 class LlmConfig(BaseModel):
