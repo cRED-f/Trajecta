@@ -1,0 +1,30 @@
+# Trajecta local development stack
+# Start: docker compose up
+# Or just Bifrost: docker compose up bifrost
+
+services:
+  bifrost:
+    image: maximhq/bifrost
+    container_name: trajecta-bifrost
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config/bifrost:/app/data
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: trajecta-qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant-data:/qdrant/storage
+
+volumes:
+  qdrant-data:

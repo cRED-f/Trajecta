@@ -19,6 +19,7 @@ class LlmProviderConfig(BaseModel):
     enabled: bool = True
     model: str = ""
     base_url: str | None = None
+    api_key_env: str | None = None  # env var name to pull the key from
 
 
 class LlmConfig(BaseModel):
@@ -57,10 +58,23 @@ class Settings(BaseSettings):
 
     @classmethod
     def load(cls) -> "Settings":
-        """Load the full configuration: defaults, then local overrides enforced by env vars."""
-        settings = cls.from_yaml(cls().yaml_defaults_path)
-        if settings.local_config_path.exists():
-            local = cls.from_yaml(settings.local_config_path)
+        """Load the full configuration: defaults, then local overrides, then env vars.
+
+        Merges YAML dicts recursively so a local override of one key under a
+        section (e.g. `llm.providers.bifrost.base_url`) doesn't clobber the
+        whole section, then validates once.
+        """
+        data = cls.from_yaml(cls().yaml_defaults_path).model_dump()
+        if cls().local_config_path.exists():
+            local = cls.from_yaml(cls().local_config_path).model_dump()
+            _deep_merge(data, local)
+        return cls.model_validate(data)
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> None:
+    """Recursively merge `override` into `base` (in place). Lists are replaced."""
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _deep_merge(base[key], value)
         else:
-            local = cls()
-        return settings.model_copy(update=local.model_dump())
+            base[key] = value

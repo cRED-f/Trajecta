@@ -6,8 +6,15 @@ server:
   port: 8420
 
 llm:
-  default_provider: "openai"
+  # Bifrost sidecar: set TRAJECTA_BIFROST_URL or fill base_url below.
+  # When Bifrost is configured, it handles routing/failover — individual
+  # provider entries below are ignored.
+  # Bifrost uses `/` model separator: openai/gpt-4o-mini, anthropic/claude-sonnet-4-6
+  default_provider: "bifrost"
   providers:
+    bifrost:
+      enabled: false
+      base_url: "http://127.0.0.1:8080"  # Bifrost HTTP sidecar
     openai:
       enabled: true
       model: "openai:gpt-5.5"

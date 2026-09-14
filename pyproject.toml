@@ -30,6 +30,8 @@ aiosqlite = "^0.22.1"
 qdrant-client = "^1.19.0"
 docker = "^7.2.0"
 deepeval = "^4.2.2"
+langchain-openai = "^1.6.2"
+langchain-mcp-adapters = "^0.3.2"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.1.1"

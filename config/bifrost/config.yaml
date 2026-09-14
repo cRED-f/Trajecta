@@ -1,0 +1,28 @@
+# Bifrost gateway configuration
+# Docs: https://docs.getbifrost.ai/overview
+#
+# Bifrost runs as a Go HTTP sidecar on :8080
+# Python talks to it via /v1 (LLM) and /mcp (tools)
+#
+# Start: docker run -p 8080:8080 -v "$(pwd)/config/bifrost:/app/data" maximhq/bifrost
+# Or: docker compose up bifrost
+
+port: 8080
+
+# Provider credentials — fill in your keys
+providers:
+  openai:
+    api_key: "${OPENAI_API_KEY}"
+  anthropic:
+    api_key: "${ANTHROPIC_API_KEY}"
+  ollama:
+    base_url: "http://host.docker.internal:11434"
+
+# Virtual keys for your Python app to authenticate with Bifrost
+virtual_keys:
+  - key: "sk-bf-trajecta"
+    name: "trajecta-local"
+    models:
+      - "openai/*"
+      - "anthropic/*"
+      - "ollama/*"
