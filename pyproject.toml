@@ -1,0 +1,54 @@
+[tool.poetry]
+name = "trajecta"
+version = "0.1.0"
+description = "Local-first autonomous desktop agent that learns reusable skills from successful task trajectories"
+authors = []
+readme = "README.md"
+packages = [{include = "server", from = "."}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.141.1"
+uvicorn = {extras = ["standard"], version = "^0.53.0"}
+pydantic = "^2.13.5"
+pyyaml = "^6.0"
+pydantic-settings = "^2.15.0"
+langchain = "^1.4.0"
+langchain-core = "^1.6.3"
+langchain-community = "^0.4.2"
+langgraph = "^1.2.11"
+deepagents = "^0.7.13"
+guardrails-ai = "^0.11.0"
+opentelemetry-api = "^1.44.0"
+opentelemetry-sdk = "^1.44.0"
+opentelemetry-exporter-otlp = "^1.44.0"
+opentelemetry-instrumentation-fastapi = "^0.65b0"
+openai = "^3.13.0"
+anthropic = "^1.5.0"
+httpx = "^0.28.1"
+aiosqlite = "^0.22.1"
+qdrant-client = "^1.19.0"
+docker = "^7.2.0"
+deepeval = "^4.2.2"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^9.1.1"
+pytest-asyncio = "^1.4.0"
+ruff = "^0.16.7"
+mypy = "^2.3.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["server/tests"]

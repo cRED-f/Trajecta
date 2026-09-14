@@ -1,0 +1,63 @@
+# Trajecta Default Configuration
+# Override with environment variables or .trajecta/config.yaml
+
+server:
+  host: "127.0.0.1"
+  port: 8420
+
+llm:
+  default_provider: "openai"
+  providers:
+    openai:
+      enabled: true
+      model: "openai:gpt-5.5"
+    anthropic:
+      enabled: false
+      model: "anthropic:claude-sonnet-4-6"
+    ollama:
+      enabled: false
+      base_url: "http://localhost:11434"
+      model: "ollama:north-mini-code-1.0"
+    omni_route:
+      enabled: false
+    9_router:
+      enabled: false
+    openai_compat:
+      enabled: false
+      base_url: ""
+      model: ""
+
+memory:
+  sqlite_path: ".trajecta/data/trajecta.db"
+  vector_store:
+    enabled: true
+    collection_prefix: "trajecta_"
+
+skills:
+  storage_path: ".trajecta/skills"
+  evaluation:
+    min_samples: 3
+    confidence_threshold: 0.8
+
+guardrails:
+  default_risk_level: "SENSITIVE"
+  rules_path: "config/guardrail-rules.yaml"
+
+sandbox:
+  enabled: true
+  image: "trajecta-sandbox:latest"
+  timeout_seconds: 300
+  memory_limit: "512m"
+  cpu_limit: "1.0"
+
+tools:
+  mcp_servers: []
+
+observability:
+  enabled: true
+  otlp_endpoint: "http://localhost:4317"
+  service_name: "trajecta"
+
+evals:
+  deep_eval_project: "trajecta"
+  results_path: "evals/results"

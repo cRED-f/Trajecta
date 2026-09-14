@@ -1,0 +1,1 @@
+"""Storage backends — SQLite, FTS5, and local vector store for trajectory + metadata."""

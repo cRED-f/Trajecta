@@ -1,0 +1,1 @@
+"""Context manager — assembles task + memory + skill context for the planner."""

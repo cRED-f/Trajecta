@@ -1,0 +1,1 @@
+"""Docker sandbox — isolated execution for sensitive tools."""

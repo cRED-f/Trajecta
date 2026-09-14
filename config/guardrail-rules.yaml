@@ -1,0 +1,44 @@
+# Guardrail Rules — Deterministic Policy Engine
+# Risk levels: SAFE (auto-execute) | SENSITIVE (require approval) | DENIED (block)
+
+tools:
+  filesystem_read:
+    default: "SAFE"
+    rules:
+      - paths: ["/etc", "/proc"]  # read-only sensitive locations
+        risk: "SENSITIVE"
+  filesystem_write:
+    default: "SENSITIVE"
+    rules:
+      - paths: [".trajecta/skills"]  # skill registry is managed by the system
+        risk: "DENIED"
+  shell:
+    default: "DENIED"
+    rules:
+      - pattern: "^(ls|cat|pwd|find|grep|cd|...) "
+        risk: "SAFE"
+      - pattern: "(rm -rf|mkfs|dd |:(){|> /dev/sd)"
+        risk: "DENIED"
+  git:
+    default: "SENSITIVE"
+    rules:
+      - pattern: "^(git status|git diff|git log) "
+        risk: "SAFE"
+      - pattern: "git push"
+        risk: "SENSITIVE"
+  python_exec:
+    default: "SENSITIVE"
+  http:
+    default: "SENSITIVE"
+    rules:
+      - method: "GET"
+        risk: "SAFE"
+
+# Custom fail-dangerous patterns (denied even if a single rule says safe)
+blocklist:
+  - "rm -rf /"
+  - "mkfs.*"
+  - "dd if=.*of=/dev/"
+  - "chmod 777 /"
+
+# Users can override these in .trajecta/config.yaml

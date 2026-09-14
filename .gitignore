@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+server/.venv/
+dist/
+build/
+*.egg-info/
+*.db
+*.sqlite*
+.mypy_cache/
+.ruff_cache/
+
+# Node / Tauri (apps/desktop)
+node_modules/
+apps/desktop/dist/
+apps/desktop/src-tauri/target/
+apps/desktop/node_modules/
+
+# Trajecta local state
+.trajecta/
+evals/results/
+
+# Env / secrets
+.env
+.env.*
+!.env.example

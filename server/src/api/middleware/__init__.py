@@ -1,0 +1,1 @@
+"""API middleware — CORS, auth, request logging, error handling."""
