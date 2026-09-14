@@ -15,6 +15,23 @@ class ServerConfig(BaseModel):
     port: int = 8420
 
 
+class VectorStoreConfig(BaseModel):
+    enabled: bool = True
+    mode: str = "embedded"  # "embedded" = in-process qdrant; "server" = remote
+    path: str = ".trajecta/data/qdrant"
+    url: str | None = None  # when mode == "server"
+    collection_prefix: str = "trajecta_"
+
+
+class MemoryConfig(BaseModel):
+    db_path: str = ".trajecta/data/trajecta.db"         # our task/skill/config store + FTS
+    langgraph_db_path: str = ".trajecta/data/langgraph.db"  # LangGraph checkpointer + store (one file)
+    langgraph_server_url: str = "http://127.0.0.1:2024"
+    memory_files: list[str] = Field(default_factory=lambda: ["/memories/AGENTS.md"])
+    skills_path: str = "/skills/"
+    vector_store: VectorStoreConfig = VectorStoreConfig()
+
+
 class LlmProviderConfig(BaseModel):
     enabled: bool = True
     model: str = ""
@@ -44,6 +61,7 @@ class Settings(BaseSettings):
 
     server: ServerConfig = ServerConfig()
     llm: LlmConfig = LlmConfig()
+    memory: MemoryConfig = MemoryConfig()
 
     yaml_defaults_path: Path = Path("config/default.yaml")
     local_config_path: Path = Path(".trajecta/config.yaml")

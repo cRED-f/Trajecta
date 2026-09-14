@@ -39,9 +39,15 @@ llm:
       model: ""
 
 memory:
-  sqlite_path: ".trajecta/data/trajecta.db"
+  db_path: ".trajecta/data/trajecta.db"
+  langgraph_db_path: ".trajecta/data/langgraph.db"
+  langgraph_server_url: "http://127.0.0.1:2024"
+  memory_files: ["/memories/AGENTS.md"]
+  skills_path: "/skills/"
   vector_store:
     enabled: true
+    mode: "embedded"
+    path: ".trajecta/data/qdrant"
     collection_prefix: "trajecta_"
 
 skills:
