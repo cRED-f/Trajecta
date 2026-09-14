@@ -1,0 +1,13 @@
+# Runtime deps for the memory graph served by `langgraph dev`.
+# Versions mirror what's verified in the local venv (pyproject.toml).
+langgraph==1.2.11
+langgraph-sdk==0.4.4
+deepagents==0.7.13
+langchain-openai==1.6.2
+langchain-core==1.6.3
+langgraph-checkpoint-sqlite==3.1.1
+uvicorn[standard]==0.53.0
+fastapi==0.141.1
+pydantic==2.13.5
+pyyaml==6.0.3
+pydantic-settings==2.15.0

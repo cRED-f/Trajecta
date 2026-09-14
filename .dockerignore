@@ -1,0 +1,12 @@
+.venv/
+server/.venv/
+__pycache__/
+*.pyc
+*.db
+*.sqlite3
+.trajecta/
+.trajecta_tmp_qdrant/
+.git/
+node_modules/
+apps/
+evals/results/

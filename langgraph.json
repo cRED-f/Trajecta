@@ -1,0 +1,9 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "memory": "./server/src/memory/graph.py:memory_graph"
+  },
+  "env": {
+    "TRAJECTA_LANGGRAPH_DB": "/data/langgraph.db"
+  }
+}
