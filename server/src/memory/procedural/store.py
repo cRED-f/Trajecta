@@ -16,6 +16,20 @@ SKILLS_DIR = "/skills/"
 SKILL_FILE_NAME = "SKILL.md"
 
 
+def _build_skill_md(name: str, content: str, *, description: str | None = None) -> str:
+    """Render a Deep Agents loadable SKILL.md with YAML frontmatter.
+
+    Deep Agents skips a `/skills/<name>/SKILL.md` file unless it begins with
+    `---`/frontmatter containing `name` (+ optional `description`).
+    """
+    import yaml
+
+    head: dict[str, Any] = {"name": name}
+    if description is not None:
+        head["description"] = description
+    return f"---\n{yaml.safe_dump(head, sort_keys=False)}---\n\n{content}"
+
+
 class ProceduralMemory:
     """Verified skills as `/skills/<name>/SKILL.md` in the store (Deep Agents skills path).
 
@@ -37,9 +51,13 @@ class ProceduralMemory:
 
     # -- skills CRUD -------------------------------------------------------
 
-    async def apromote(self, name: str, content: str) -> None:
-        """Write a SKILL.md for a promoted skill (skill pipeline output)."""
-        await self._backend().awrite(self._skill_path(name), content)
+    async def apromote(self, name: str, content: str, *, description: str | None = None) -> None:
+        """Write a Deep Agents-loadable SKILL.md for a promoted skill.
+
+        `description` becomes frontmatter so Deep Agents recognizes the file
+        as a skill (it skips files without a `name`/`description` frontmatter).
+        """
+        await self._backend().awrite(self._skill_path(name), _build_skill_md(name, content, description=description))
 
     async def alist(self) -> list[str]:
         """Names of promoted skills in the store."""
