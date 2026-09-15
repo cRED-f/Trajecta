@@ -37,6 +37,7 @@ class MemoryProvider:
         self._settings = settings or Settings.load()
         cfg = self._settings.memory
 
+        self._conn_saver: aiosqlite.Connection | None = None
         self._conn: aiosqlite.Connection | None = None
 
         self.checkpointer: AsyncSqliteSaver | None = None
@@ -47,6 +48,9 @@ class MemoryProvider:
         self.langgraph_db_path = cfg.langgraph_db_path
         self.memory_files = cfg.memory_files
         self.skills_path = cfg.skills_path
+
+        self.sqlite: SQLiteDatabase | None = None
+        self.fts: FTSIndex | None = None
 
         self.short_term = ShortTermStore(self)
         self.semantic = SemanticMemory(self)
@@ -126,6 +130,15 @@ class MemoryProvider:
 
     def agent_kwargs(self) -> dict[str, Any]:
         """Keyword arguments for `create_deep_agent(model, **agent_kwargs())`."""
+        if (
+            self.checkpointer is None
+            or self.store is None
+            or self.backend is None
+        ):
+            raise RuntimeError(
+                "MemoryProvider is not open — call await provider.open() first"
+            )
+
         return {
             "checkpointer": self.checkpointer,
             "store": self.store,

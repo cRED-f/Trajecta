@@ -99,17 +99,55 @@ class FTSIndex:
         """Return the memory row for a given id."""
         return await self._db.fetchone("SELECT * FROM memories WHERE id = ?", (memory_id,))
 
-    async def search(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
-        """Lexical search with a snippet."""
+    async def search(
+        self,
+        query: str,
+        limit: int = 10,
+        *,
+        tier: str | None = None,
+        namespace: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """FTS search optionally scoped to a memory tier and namespace."""
+
         limit = max(1, int(limit))
+
+        conditions = [
+            "memories_fts MATCH ?",
+        ]
+
+        params: list[Any] = [query]
+
+        if tier is not None:
+            conditions.append("tier = ?")
+            params.append(tier)
+
+        if namespace is not None:
+            conditions.append("namespace = ?")
+            params.append(namespace)
+
+        params.append(limit)
+
+        where_clause = " AND ".join(conditions)
+
         return await self._db.fetch(
-            """
-            SELECT tier, namespace, key, content,
-                   snippet(memories_fts, 3, '[', ']', '…', 24) AS snippet
+            f"""
+            SELECT
+                tier,
+                namespace,
+                key,
+                content,
+                snippet(
+                    memories_fts,
+                    3,
+                    '[',
+                    ']',
+                    '…',
+                    24
+                ) AS snippet
             FROM memories_fts
-            WHERE memories_fts MATCH ?
+            WHERE {where_clause}
             ORDER BY rank
             LIMIT ?
             """,
-            (query, limit),
+            tuple(params),
         )

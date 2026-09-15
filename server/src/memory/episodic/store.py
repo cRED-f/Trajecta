@@ -44,34 +44,125 @@ class EpisodicMemory:
 
     # -- retrieval ---------------------------------------------------------
 
-    async def search(self, query: str, limit: int = 10, *, user_id: str | None = None) -> list[dict[str, Any]]:
-        """Find past threads whose metadata matches the user.
-
-        Metadada-driven: Deep Agents threads carry `user_id`; filtering on it is
-        how we select useful experiences from previous tasks. Each hit is later
-        expanded into its message history via `get_history`.
+    async def search(
+        self,
+        query: str,
+        limit: int = 10,
+        *,
+        user_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """
+        Search previous threads using their actual message content.
+
+        Temporary implementation.
+
+        Future architecture:
+            trajectory
+                -> episode extraction
+                -> summary
+                -> FTS + embeddings
+                -> hybrid retrieval
+        """
+
         uid = user_id or self._user_id
-        threads = []
+        limit = max(1, int(limit))
+
+        # Pull a broader candidate pool before ranking.
+        candidate_limit = max(
+            limit * 5,
+            25,
+        )
+
         try:
             threads = await self._client().threads.search(
-                metadata={"user_id": uid} if uid else None,
-                limit=limit,
+                metadata=(
+                    {"user_id": uid}
+                    if uid
+                    else None
+                ),
+                limit=candidate_limit,
             )
-        except Exception:  # pragma: no cover — no live server
+
+        except Exception:
             return []
 
-        results = []
-        for t in threads:
-            results.append(
+        query_tokens = {
+            token.lower()
+            for token in query.split()
+            if token.strip()
+        }
+
+        ranked: list[dict[str, Any]] = []
+
+        for thread in threads:
+            thread_id = thread.get("thread_id")
+
+            if not thread_id:
+                continue
+
+            metadata = (
+                thread.get("metadata")
+                or {}
+            )
+
+            title = str(
+                metadata.get("title")
+                or ""
+            )
+
+            history = await self.get_history(
+                thread_id,
+                limit=50,
+            )
+
+            history_text = " ".join(
+                str(message.get("content") or "")
+                for message in history
+            )
+
+            searchable = (
+                f"{title} {history_text}"
+            ).lower()
+
+            if query_tokens:
+                matched = sum(
+                    1
+                    for token in query_tokens
+                    if token in searchable
+                )
+
+                score = (
+                    matched
+                    / len(query_tokens)
+                )
+            else:
+                score = 1.0
+
+            if score <= 0:
+                continue
+
+            ranked.append(
                 {
-                    "thread_id": t.get("thread_id"),
-                    "user_id": (t.get("metadata") or {}).get("user_id"),
-                    "created_at": t.get("created_at"),
-                    "title": (t.get("metadata") or {}).get("title"),
+                    "thread_id": thread_id,
+                    "user_id": metadata.get(
+                        "user_id"
+                    ),
+                    "created_at": thread.get(
+                        "created_at"
+                    ),
+                    "title": (
+                        title or None
+                    ),
+                    "score": score,
                 }
             )
-        return results
+
+        ranked.sort(
+            key=lambda item: item["score"],
+            reverse=True,
+        )
+
+        return ranked[:limit]
 
     async def get_history(self, thread_id: str, limit: int = 50) -> list[dict[str, Any]]:
         """Expand one thread into its message history for the agent."""

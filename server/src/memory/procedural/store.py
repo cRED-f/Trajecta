@@ -1,94 +1,221 @@
 """Procedural memory — store of reusable verified skills and instructions.
 
-Skills that pass Trajecta's evaluation pipeline are promoted to `/skills/<name>/`
-as SKILL.md files in the LangGraph store (the Deep Agents `skills=` path), so the
-agent loads them on demand. Trajecta's skill registry mirrors them into SQLite.
+Skills that pass Trajecta's evaluation pipeline are promoted to:
+
+    /skills/<name>/SKILL.md
+
+The path is always accessed through CompositeBackend so Deep Agents routing
+behaves exactly the same inside and outside the agent runtime.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import re
+from typing import TYPE_CHECKING
+
+import yaml
+
+from deepagents.backends.protocol import BackendProtocol
 
 if TYPE_CHECKING:
     from server.src.memory.provider import MemoryProvider
 
+
 SKILLS_DIR = "/skills/"
 SKILL_FILE_NAME = "SKILL.md"
 
+_SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
-def _build_skill_md(name: str, content: str, *, description: str | None = None) -> str:
-    """Render a Deep Agents loadable SKILL.md with YAML frontmatter.
 
-    Deep Agents skips a `/skills/<name>/SKILL.md` file unless it begins with
-    `---`/frontmatter containing `name` (+ optional `description`).
-    """
-    import yaml
+def _validate_skill_name(name: str) -> str:
+    """Validate against the Agent Skills naming rules."""
+    name = name.strip()
 
-    head: dict[str, Any] = {"name": name}
-    if description is not None:
-        head["description"] = description
-    return f"---\n{yaml.safe_dump(head, sort_keys=False)}---\n\n{content}"
+    if not name:
+        raise ValueError("Skill name cannot be empty")
+
+    if len(name) > 64:
+        raise ValueError("Skill name must be <= 64 characters")
+
+    if not _SKILL_NAME_RE.fullmatch(name):
+        raise ValueError(
+            "Skill name must contain lowercase letters, numbers and "
+            "single hyphens only, e.g. 'python-debugger'"
+        )
+
+    return name
+
+
+def _build_skill_md(
+    name: str,
+    content: str,
+    *,
+    description: str | None = None,
+) -> str:
+    """Create a valid Deep Agents SKILL.md."""
+
+    name = _validate_skill_name(name)
+
+    description = (
+        description
+        or f"Reusable Trajecta skill for {name.replace('-', ' ')} tasks."
+    )
+
+    metadata = {
+        "name": name,
+        "description": description,
+    }
+
+    frontmatter = yaml.safe_dump(
+        metadata,
+        sort_keys=False,
+        allow_unicode=True,
+    ).strip()
+
+    return (
+        "---\n"
+        f"{frontmatter}\n"
+        "---\n\n"
+        f"{content.strip()}\n"
+    )
 
 
 class ProceduralMemory:
-    """Verified skills as `/skills/<name>/SKILL.md` in the store (Deep Agents skills path).
-
-    Read-mostly: contents come from the skill registry on promotion. All public
-    methods are async (the backend exposes awrite/aread/als/adelete).
-    """
+    """Verified reusable skills stored through Deep Agents' CompositeBackend."""
 
     def __init__(self, provider: "MemoryProvider") -> None:
         self._provider = provider
 
-    def _backend(self) -> Any:
+    def _backend(self) -> BackendProtocol:
+        """
+        Return CompositeBackend itself.
+
+        Do NOT use:
+
+            backend.routes["/skills/"]
+
+        CompositeBackend must receive the full /skills/... path so it can
+        strip the route prefix before forwarding to StoreBackend.
+        """
         backend = self._provider.backend
+
         if backend is None:
-            raise RuntimeError("MemoryProvider not open — call await provider.open() first")
-        return backend.routes[SKILLS_DIR]
+            raise RuntimeError(
+                "MemoryProvider not open — call await provider.open() first"
+            )
+
+        return backend
 
     def _skill_path(self, name: str) -> str:
-        return f"{SKILLS_DIR}{name.lstrip('/')}/{SKILL_FILE_NAME}"
+        name = _validate_skill_name(name)
+        return f"{SKILLS_DIR}{name}/{SKILL_FILE_NAME}"
 
-    # -- skills CRUD -------------------------------------------------------
+    async def apromote(
+        self,
+        name: str,
+        content: str,
+        *,
+        description: str | None = None,
+    ) -> None:
+        """Create or replace a valid promoted Deep Agents skill."""
 
-    async def apromote(self, name: str, content: str, *, description: str | None = None) -> None:
-        """Write a Deep Agents-loadable SKILL.md for a promoted skill.
+        skill_md = _build_skill_md(
+            name,
+            content,
+            description=description,
+        )
 
-        `description` becomes frontmatter so Deep Agents recognizes the file
-        as a skill (it skips files without a `name`/`description` frontmatter).
-        """
-        await self._backend().awrite(self._skill_path(name), _build_skill_md(name, content, description=description))
+        result = await self._backend().awrite(
+            self._skill_path(name),
+            skill_md,
+        )
+
+        if result.error:
+            raise RuntimeError(
+                f"Failed to promote skill {name!r}: {result.error}"
+            )
 
     async def alist(self) -> list[str]:
-        """Names of promoted skills in the store."""
-        ls = await self._backend().als(SKILLS_DIR)
-        names: list[str] = []
-        for entry in getattr(ls, "entries", []) or []:
-            path = entry.get("path", "") if isinstance(entry, dict) else getattr(entry, "path", "") or ""
-            parts = path.strip("/").split("/")
-            # "/skills/deploy/" → ["skills","deploy"] or "deploy/SKILL.md" → ["deploy","SKILL.md"]
-            if len(parts) >= 2 and parts[0] == "skills":
-                name = parts[1]
-            elif len(parts) >= 1:
-                name = parts[0]
-            else:
+        """Return names of promoted skills."""
+
+        result = await self._backend().als(SKILLS_DIR)
+
+        if result.error:
+            raise RuntimeError(
+                f"Failed to list procedural skills: {result.error}"
+            )
+
+        names: set[str] = set()
+
+        for entry in result.entries or []:
+            # Deep Agents skill discovery considers child directories.
+            if not entry.get("is_dir"):
                 continue
-            if name and name not in names:
-                names.append(name)
-        return names
+
+            path = entry.get("path", "").rstrip("/")
+
+            if not path:
+                continue
+
+            name = path.split("/")[-1]
+
+            try:
+                names.add(_validate_skill_name(name))
+            except ValueError:
+                continue
+
+        return sorted(names)
 
     async def aload(self, name: str) -> str | None:
-        """Content of a skill's SKILL.md (None when missing)."""
-        res = await self._backend().aread(self._skill_path(name))
-        if res.error or res.file_data is None:
-            return None
-        return res.file_data.get("content")
+        """Load a skill's SKILL.md."""
 
-    async def asearch(self, query: str, limit: int = 10) -> list[dict]:
-        """Search skill names + contents (best-effort lexical match)."""
-        matches: list[dict] = []
+        result = await self._backend().aread(
+            self._skill_path(name)
+        )
+
+        if result.error or result.file_data is None:
+            return None
+
+        return result.file_data.get("content")
+
+    async def adelete(self, name: str) -> None:
+        """Delete the promoted SKILL.md."""
+
+        result = await self._backend().adelete(
+            self._skill_path(name)
+        )
+
+        if result.error:
+            raise RuntimeError(
+                f"Failed to delete skill {name!r}: {result.error}"
+            )
+
+    async def asearch(
+        self,
+        query: str,
+        limit: int = 10,
+    ) -> list[dict[str, str]]:
+        """Simple lexical search over promoted skills."""
+
+        query = query.strip().lower()
+        results: list[dict[str, str]] = []
+
         for name in await self.alist():
             content = await self.aload(name) or ""
-            if query.lower() in name.lower() or query.lower() in content.lower():
-                matches.append({"name": name, "content": content})
-        return matches[:limit]
+
+            if (
+                not query
+                or query in name.lower()
+                or query in content.lower()
+            ):
+                results.append(
+                    {
+                        "name": name,
+                        "content": content,
+                    }
+                )
+
+            if len(results) >= limit:
+                break
+
+        return results

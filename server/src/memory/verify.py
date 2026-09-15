@@ -24,18 +24,64 @@ from server.src.memory.provider import MemoryProvider
 # ---------------------------------------------------------------------------
 
 class FakeThreads:
-    def __init__(self) -> None:
-        self._threads: dict[str, dict] = {}
-        self._histories: dict[str, list] = {}
+    async def search(
+        self,
+        metadata=None,
+        limit=None,
+    ):
+        if (
+            metadata
+            and metadata.get("user_id") == "alice"
+        ):
+            return [
+                {
+                    "thread_id": "abc123",
+                    "metadata": {
+                        "user_id": "alice",
+                        "title": "Billing API incident",
+                    },
+                    "created_at": "2026-01-01",
+                },
+                {
+                    "thread_id": "xyz789",
+                    "metadata": {
+                        "user_id": "alice",
+                        "title": "Vacation planning",
+                    },
+                    "created_at": "2026-01-02",
+                },
+            ]
 
-    async def search(self, metadata=None, limit=None):  # noqa: ANN001, ANN002
-        if metadata and metadata.get("user_id") == "alice":
-            return [{"thread_id": "abc123", "metadata": metadata, "created_at": "2026-01-01"}]
         return []
 
-    async def get_history(self, thread_id: str, limit=None):  # noqa: ANN001, ANN002
+    async def get_history(
+        self,
+        thread_id: str,
+        limit=None,
+    ):
         if thread_id == "abc123":
-            return [{"type": "human", "role": "user", "content": "hello"}]
+            return [
+                {
+                    "type": "human",
+                    "role": "user",
+                    "content": (
+                        "The billing API is returning "
+                        "duplicate invoices."
+                    ),
+                }
+            ]
+
+        if thread_id == "xyz789":
+            return [
+                {
+                    "type": "human",
+                    "role": "user",
+                    "content": (
+                        "Help me plan a vacation."
+                    ),
+                }
+            ]
+
         return []
 
 
@@ -85,39 +131,179 @@ async def check_short_term(p: MemoryProvider) -> None:
 
 async def check_semantic(p: MemoryProvider) -> None:
     sem = p.semantic
-    await sem.aput("user/pref", "user likes dark mode")
-    got = await sem.aget("user/pref")
-    assert got == "user likes dark mode", f"semantic get got {got!r}"
-    hits = await sem.asearch("dark mode", limit=5)
-    assert any("dark mode" in (h.get("content") or "") for h in hits), "semantic FTS search missed"
-    await sem.adelete("user/pref")
-    assert await sem.aget("user/pref") is None
-    print("  ok  semantic put/get/search/delete (FTS)")
+
+    await sem.aput(
+        "user/pref",
+        "user likes dark mode",
+    )
+
+    got = await sem.aget(
+        "user/pref"
+    )
+
+    assert got == "user likes dark mode"
+
+    # Verify CompositeBackend routing.
+    assert p.store is not None
+
+    raw = await p.store.aget(
+        ("trajecta-local",),
+        "/user/pref",
+    )
+
+    assert raw is not None, (
+        "Semantic memory wasn't stored using "
+        "the CompositeBackend-stripped path"
+    )
+
+    hits = await sem.asearch(
+        "dark mode",
+        limit=5,
+    )
+
+    assert any(
+        "dark mode"
+        in (hit.get("content") or "")
+        for hit in hits
+    )
+
+    memory_id = sem._memory_id(
+        "user/pref"
+    )
+
+    await sem.adelete(
+        "user/pref"
+    )
+
+    assert (
+        await sem.aget("user/pref")
+        is None
+    )
+
+    # No stale vector copy.
+    vector_hits = p.vector.search(
+        "memories",
+        "dark mode",
+        limit=10,
+    )
+
+    assert all(
+        hit.get("doc_id") != memory_id
+        for hit in vector_hits
+    )
+
+    print(
+        "  ok  semantic CRUD + hybrid indexes + routing"
+    )
 
 
 async def check_episodic(p: MemoryProvider) -> None:
     ep = p.episodic
+
     ep.set_user("alice")
-    hits = await ep.search("billing", limit=5, user_id="alice")
-    assert hits and hits[0]["thread_id"] == "abc123", "episodic fake search failed"
-    hist = await ep.get_history("abc123")
-    assert hist and hist[0]["content"] == "hello", "episodic fake history failed"
+
+    hits = await ep.search(
+        "billing",
+        limit=5,
+        user_id="alice",
+    )
+
+    assert hits
+    assert hits[0]["thread_id"] == "abc123"
+
+    # Query must actually influence retrieval.
+    assert not any(
+        hit["thread_id"] == "xyz789"
+        for hit in hits
+    )
+
+    hist = await ep.get_history(
+        "abc123"
+    )
+
+    assert hist
+    assert "billing" in (
+        hist[0]["content"].lower()
+    )
+
     tool = ep.as_tool()
-    desc = await tool.ainvoke({"query": "billing", "limit": 3})
-    assert "abc123" in desc, f"episodic tool returned {desc!r}"
-    print("  ok  episodic fake search + tool")
+
+    result = await tool.ainvoke(
+        {
+            "query": "billing",
+            "limit": 3,
+        }
+    )
+
+    assert "abc123" in result
+
+    print(
+        "  ok  episodic query-sensitive search + tool"
+    )
 
 
 async def check_procedural(p: MemoryProvider) -> None:
     proc = p.procedural
-    await proc.apromote("deploy", "# Deploy\n\ndeploy with docker.\n")
+
+    await proc.apromote(
+        "deploy",
+        """
+# Deploy
+
+Deploy the current project using Docker.
+
+## Process
+
+1. Inspect the Dockerfile.
+2. Build the Docker image.
+3. Run the container.
+4. Verify the health endpoint.
+""",
+        description=(
+            "Deploy Docker-based projects and verify "
+            "that the resulting container is healthy."
+        ),
+    )
+
     names = await proc.alist()
-    assert "deploy" in names, f"procedural list={names}"
-    content = await proc.aload("deploy")
-    assert content and "docker" in content
-    hits = await proc.asearch("docker", limit=5)
-    assert hits and hits[0]["name"] == "deploy"
-    print("  ok  procedural promote/list/load/search")
+
+    assert "deploy" in names, (
+        f"procedural list={names}"
+    )
+
+    content = await proc.aload(
+        "deploy"
+    )
+
+    assert content is not None
+    assert "name: deploy" in content
+    assert "description:" in content
+    assert "# Deploy" in content
+
+    hits = await proc.asearch(
+        "docker",
+        limit=5,
+    )
+
+    assert hits
+    assert hits[0]["name"] == "deploy"
+
+    # Verify CompositeBackend stripped /skills/.
+    assert p.store is not None
+
+    raw = await p.store.aget(
+        ("trajecta-local", "skills"),
+        "/deploy/SKILL.md",
+    )
+
+    assert raw is not None, (
+        "Skill was not stored under the "
+        "CompositeBackend-stripped path"
+    )
+
+    print(
+        "  ok  procedural valid skill + routing + search"
+    )
 
 
 def check_agent_kwargs(p: MemoryProvider) -> None:
