@@ -128,22 +128,38 @@ async def check_short_term(p: MemoryProvider) -> None:
     assert state.get("files", {}).get("a.txt") == "x"
     print("  ok  short-term write/read thread")
 
-
 async def check_semantic(p: MemoryProvider) -> None:
     sem = p.semantic
+
+    # --------------------------------------------------------------
+    # Write semantic memory
+    # --------------------------------------------------------------
 
     await sem.aput(
         "user/pref",
         "user likes dark mode",
     )
 
-    got = await sem.aget(
-        "user/pref"
+    # --------------------------------------------------------------
+    # Verify canonical Deep Agents store
+    # --------------------------------------------------------------
+
+    got = await sem.aget("user/pref")
+
+    assert got == "user likes dark mode", (
+        f"semantic get got {got!r}"
     )
 
-    assert got == "user likes dark mode"
+    # --------------------------------------------------------------
+    # Verify CompositeBackend routing
+    #
+    # /memories/user/pref
+    #        ↓
+    # CompositeBackend strips /memories/
+    #        ↓
+    # StoreBackend stores /user/pref
+    # --------------------------------------------------------------
 
-    # Verify CompositeBackend routing.
     assert p.store is not None
 
     raw = await p.store.aget(
@@ -152,9 +168,13 @@ async def check_semantic(p: MemoryProvider) -> None:
     )
 
     assert raw is not None, (
-        "Semantic memory wasn't stored using "
+        "Semantic memory was not stored using "
         "the CompositeBackend-stripped path"
     )
+
+    # --------------------------------------------------------------
+    # Verify hybrid semantic search
+    # --------------------------------------------------------------
 
     hits = await sem.asearch(
         "dark mode",
@@ -162,25 +182,64 @@ async def check_semantic(p: MemoryProvider) -> None:
     )
 
     assert any(
-        "dark mode"
-        in (hit.get("content") or "")
+        "dark mode" in (hit.get("content") or "")
         for hit in hits
+    ), "semantic search missed stored memory"
+
+    # --------------------------------------------------------------
+    # Verify Qdrant vector retrieval specifically
+    #
+    # Important:
+    # This prevents FTS from masking a broken vector search.
+    # --------------------------------------------------------------
+
+    memory_id = sem._memory_id("user/pref")
+
+    vector_hits = p.vector.search(
+        "memories",
+        "dark mode",
+        limit=10,
     )
 
-    memory_id = sem._memory_id(
-        "user/pref"
+    assert any(
+        hit.get("doc_id") == memory_id
+        for hit in vector_hits
+    ), (
+        "semantic memory was not retrievable "
+        "from Qdrant vector search"
     )
 
-    await sem.adelete(
-        "user/pref"
+    # --------------------------------------------------------------
+    # Delete semantic memory
+    # --------------------------------------------------------------
+
+    await sem.adelete("user/pref")
+
+    # --------------------------------------------------------------
+    # Verify canonical memory deletion
+    # --------------------------------------------------------------
+
+    assert await sem.aget("user/pref") is None, (
+        "semantic memory still exists "
+        "in the canonical Deep Agents store"
     )
 
-    assert (
-        await sem.aget("user/pref")
-        is None
-    )
+    # --------------------------------------------------------------
+    # Verify FTS deletion
+    # --------------------------------------------------------------
 
-    # No stale vector copy.
+    if p.fts is not None:
+        fts_row = await p.fts.fetch_memory(memory_id)
+
+        assert fts_row is None, (
+            "deleted semantic memory still exists "
+            "in SQLite/FTS"
+        )
+
+    # --------------------------------------------------------------
+    # Verify Qdrant deletion
+    # --------------------------------------------------------------
+
     vector_hits = p.vector.search(
         "memories",
         "dark mode",
@@ -190,13 +249,15 @@ async def check_semantic(p: MemoryProvider) -> None:
     assert all(
         hit.get("doc_id") != memory_id
         for hit in vector_hits
+    ), (
+        "deleted semantic memory still exists "
+        "in Qdrant"
     )
 
     print(
-        "  ok  semantic CRUD + hybrid indexes + routing"
+        "  ok  semantic CRUD + FTS + vector retrieval "
+        "+ deletion + routing"
     )
-
-
 async def check_episodic(p: MemoryProvider) -> None:
     ep = p.episodic
 

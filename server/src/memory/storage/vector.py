@@ -286,24 +286,23 @@ class VectorStore:
             return []
 
         try:
-            if not self._client.collection_exists(
-                collection_name
-            ):
+            if not self._client.collection_exists(collection_name):
                 return []
 
-            hits = self._client.search(
+            response = self._client.query_points(
                 collection_name=collection_name,
-                query_vector=self._embedder(query),
+                query=self._embedder(query),
                 limit=limit,
                 with_payload=True,
             )
+
+            hits = response.points
 
         except Exception:
             logger.exception(
                 "Qdrant search failed: collection=%s",
                 collection_name,
             )
-
             return []
 
         return [
@@ -325,7 +324,6 @@ class VectorStore:
             }
             for hit in hits
         ]
-
     def _collection_for(
         self,
         namespace: str,
