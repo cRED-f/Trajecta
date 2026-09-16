@@ -102,7 +102,9 @@ class DeepAgentRuntime:
         base_checkpoint_id: str | None,
     ) -> PreparedAgentRun:
         """Do all validation that can fail before SSE headers are returned."""
-        chosen_model = model_name or conversation.model
+        chosen_model = await self._models.resolve_or_default(
+            model_name or conversation.model
+        )
         model = self._models.create(chosen_model)
         tools = await self._mcp.get_tools()
         if self._rag.enabled:

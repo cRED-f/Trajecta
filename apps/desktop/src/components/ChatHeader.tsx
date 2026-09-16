@@ -9,10 +9,6 @@ import type {
   ModelCatalog,
 } from "../types/chat";
 
-import {
-  basenameModel,
-} from "../lib/format";
-
 import { Dropdown } from "./Dropdown";
 
 interface Props {
@@ -60,10 +56,7 @@ export function ChatHeader({
     models?.models.map(
       (item) => ({
         value: item.id,
-
-        label: basenameModel(
-          item.id,
-        ),
+        label: item.id,
       }),
     ) ?? [];
 

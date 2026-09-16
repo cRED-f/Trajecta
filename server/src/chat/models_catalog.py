@@ -18,25 +18,20 @@ class ModelCatalogService:
         self._factory = BifrostModelFactory(settings)
 
     async def list_models(self) -> ModelCatalog:
-        configured: dict[str, ModelInfo] = {}
-        for provider, cfg in self._settings.llm.providers.items():
-            if not cfg.enabled or not cfg.model:
-                continue
-            configured[cfg.model] = ModelInfo(
-                id=cfg.model,
-                provider=provider,
+        default_model = (
+            self._factory
+            .canonical_model_name(
+                self._settings.chat.default_model
+            )
+        )
+
+        configured: dict[str, ModelInfo] = {
+            default_model: ModelInfo(
+                id=default_model,
+                provider=default_model.split("/", 1)[0],
                 source="configured",
             )
-
-        default_model = self._settings.chat.default_model
-        configured.setdefault(
-            default_model,
-            ModelInfo(
-                id=default_model,
-                provider=(default_model.split("/", 1)[0] if "/" in default_model else None),
-                source="configured",
-            ),
-        )
+        }
 
         gateway_reachable = False
         gateway_models: dict[str, ModelInfo] = {}
@@ -58,7 +53,7 @@ class ModelCatalogService:
                     for item in items:
                         if not isinstance(item, dict) or not item.get("id"):
                             continue
-                        raw_model_id = str(item["id"])
+                        raw_model_id = str(item["id"]).strip()
                         model_id = self._factory.canonical_model_name(raw_model_id)
                         gateway_models[model_id] = ModelInfo(
                             id=model_id,

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import os
 
 from langchain_openai import ChatOpenAI
 
 from server.src.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 class BifrostConfigurationError(
@@ -80,7 +83,7 @@ class BifrostModelFactory:
 
     @staticmethod
     def virtual_key() -> str:
-        return os.environ.get("BIFROST_VIRTUAL_KEY", "sk-bf-local")
+        return os.environ.get("BIFROST_VIRTUAL_KEY", "sk-bf-trajecta")
 
     def _configured_url(
         self,
@@ -141,3 +144,56 @@ class BifrostModelFactory:
         )
 
         return f"{provider}/{model}"
+
+    async def resolve_or_default(
+        self,
+        model_name: str | None = None,
+    ) -> str:
+        """
+        Validate model against Bifrost catalog; fall back to default
+        when the model does not exist (stale/unknown model names).
+        """
+        canonical = self.canonical_model_name(model_name)
+        known = await self._known_models()
+        if known is not None and canonical not in known:
+            default = self.canonical_model_name(None)
+            logger.warning(
+                "Model %r not found in Bifrost catalog; "
+                "falling back to default %r",
+                canonical,
+                default,
+            )
+            return default
+        return canonical
+
+    async def _known_models(self) -> set[str] | None:
+        import httpx
+
+        base = self.gateway_base_url()
+        if not base:
+            return None
+        headers: dict[str, str] = {}
+        key = self.virtual_key()
+        if key:
+            headers["x-bf-vk"] = key
+            headers["Authorization"] = f"Bearer {key}"
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(
+                    f"{base.rstrip('/')}/v1/models",
+                    headers=headers,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                items = (
+                    payload.get("data", [])
+                    if isinstance(payload, dict)
+                    else []
+                )
+                return {
+                    self.canonical_model_name(str(item["id"]))
+                    for item in items
+                    if isinstance(item, dict) and item.get("id")
+                }
+        except Exception:
+            return None

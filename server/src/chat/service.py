@@ -10,6 +10,7 @@ from fastapi import UploadFile
 
 from server.src.chat.attachments import AttachmentService
 from server.src.chat.mcp import MCPToolProvider
+from server.src.chat.model import BifrostModelFactory
 from server.src.chat.models import (
     Attachment,
     ChatBranch,
@@ -71,6 +72,7 @@ class ChatService:
         runs: ChatRunRegistry,
     ) -> None:
         self._settings = settings
+        self._models = BifrostModelFactory(settings)
         self._repository = repository
         self._attachments = attachments
         self._rag = rag
@@ -84,7 +86,7 @@ class ChatService:
     async def create_conversation(self, request: ConversationCreate) -> Conversation:
         return await self._repository.create_conversation(
             title=request.title,
-            model=request.model or self._settings.chat.default_model,
+            model=self._models.canonical_model_name(request.model),
             metadata=request.metadata,
         )
 
@@ -120,10 +122,10 @@ class ChatService:
         return await self.get_conversation(conversation_id)
 
     async def select_model(self, conversation_id: str, model: str) -> Conversation:
-        if not model.strip():
-            raise ValueError("Model cannot be empty")
+        canonical = self._models.canonical_model_name(model)
+
         await self._require_conversation(conversation_id)
-        await self._repository.update_model(conversation_id, model.strip())
+        await self._repository.update_model(conversation_id, canonical)
         result = await self._repository.get_conversation(conversation_id)
         assert result is not None
         return result
@@ -417,7 +419,13 @@ class ChatService:
     ) -> PreparedTurn:
         run_id = uuid.uuid4().hex
         cancel_event = await self._runs.register(conversation.id, run_id)
+        resolved_model = runtime.model_name
         try:
+            if conversation.model != resolved_model:
+                await self._repository.update_model(
+                    conversation.id,
+                    resolved_model,
+                )
             user_message = await self._repository.add_message(
                 conversation_id=conversation.id,
                 role=MessageRole.USER,
@@ -428,7 +436,7 @@ class ChatService:
                 metadata={
                     "attachment_ids": [item.id for item in attachments],
                     "operation": operation,
-                    "model": model_name or conversation.model,
+                    "model": resolved_model,
                 },
                 branch_id=branch.id,
             )
