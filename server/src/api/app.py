@@ -16,6 +16,7 @@ from fastapi.middleware.cors import (
 
 from server.src.api.routes import all_routers
 from server.src.chat import build_chat_service
+from server.src.chat.models_catalog import ModelCatalogService
 from server.src.config import Settings
 from server.src.memory.provider import MemoryProvider, get_memory_provider
 
@@ -38,6 +39,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.settings = settings
         app.state.memory_provider = memory
         app.state.chat_service = chat
+        app.state.model_catalog = ModelCatalogService(settings)
 
         try:
             yield

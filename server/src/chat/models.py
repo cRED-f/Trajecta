@@ -40,92 +40,105 @@ class AttachmentStatus(StrEnum):
 class ConversationCreate(BaseModel):
     title: str | None = None
     model: str | None = None
-
-    metadata: dict[str, Any] = Field(
-        default_factory=dict
-    )
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class Conversation(BaseModel):
     id: str
     thread_id: str
-
     title: str | None
     model: str
-
+    active_branch_id: str | None = None
     archived: bool
-
     created_at: datetime
     updated_at: datetime
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
-    metadata: dict[str, Any] = Field(
-        default_factory=dict
-    )
+
+class ChatBranch(BaseModel):
+    id: str
+    conversation_id: str
+    thread_id: str
+    parent_branch_id: str | None = None
+    fork_message_id: str | None = None
+    fork_checkpoint_id: str | None = None
+    head_checkpoint_id: str | None = None
+    label: str | None = None
+    created_at: datetime
 
 
 class ChatMessage(BaseModel):
     id: str
     conversation_id: str
-
     role: MessageRole
     content: str
-
     status: MessageStatus
-
     parent_message_id: str | None = None
-
+    revision_of: str | None = None
+    base_checkpoint_id: str | None = None
+    checkpoint_id: str | None = None
     created_at: datetime
-
-    metadata: dict[str, Any] = Field(
-        default_factory=dict
-    )
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class Attachment(BaseModel):
     id: str
     conversation_id: str
-
     message_id: str | None = None
-
     filename: str
-
     mime_type: str | None = None
     kind: AttachmentKind
-
     virtual_path: str
     extracted_virtual_path: str | None = None
-
     size_bytes: int
     sha256: str
-
     status: AttachmentStatus
-
     created_at: datetime
-
-    metadata: dict[str, Any] = Field(
-        default_factory=dict
-    )
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ConversationDetail(Conversation):
-    messages: list[ChatMessage] = Field(
-        default_factory=list
-    )
-
-    attachments: list[Attachment] = Field(
-        default_factory=list
-    )
+    branch: ChatBranch | None = None
+    messages: list[ChatMessage] = Field(default_factory=list)
+    attachments: list[Attachment] = Field(default_factory=list)
 
 
 class SendMessageRequest(BaseModel):
     content: str = ""
-
-    attachment_ids: list[str] = Field(
-        default_factory=list
-    )
-
-    # Override the conversation model for this turn.
+    attachment_ids: list[str] = Field(default_factory=list)
     model: str | None = None
+
+
+class EditMessageRequest(BaseModel):
+    content: str
+    attachment_ids: list[str] | None = None
+    model: str | None = None
+
+
+class ResendMessageRequest(BaseModel):
+    model: str | None = None
+
+
+class RegenerateMessageRequest(BaseModel):
+    model: str | None = None
+
+
+class SelectModelRequest(BaseModel):
+    model: str
+
+
+class ModelInfo(BaseModel):
+    id: str
+    provider: str | None = None
+    source: str = "configured"
+    owned_by: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelCatalog(BaseModel):
+    default_model: str
+    models: list[ModelInfo] = Field(default_factory=list)
+    gateway_reachable: bool = False
 
 
 class CancelRunResponse(BaseModel):
@@ -134,10 +147,6 @@ class CancelRunResponse(BaseModel):
 
 class ChatEvent(BaseModel):
     type: str
-
     conversation_id: str
     run_id: str
-
-    data: dict[str, Any] = Field(
-        default_factory=dict
-    )
+    data: dict[str, Any] = Field(default_factory=dict)

@@ -15,6 +15,15 @@ class ServerConfig(BaseModel):
     port: int = 8420
 
 
+class ChatRagConfig(BaseModel):
+    enabled: bool = True
+    chunk_size_chars: int = 3_000
+    chunk_overlap_chars: int = 400
+    auto_index_min_chars: int = 4_000
+    top_k: int = 8
+    max_tool_chars: int = 24_000
+
+
 class ChatConfig(BaseModel):
     uploads_path: str = ".trajecta/uploads"
 
@@ -25,6 +34,7 @@ class ChatConfig(BaseModel):
     max_extracted_chars: int = 2_000_000
 
     stream_heartbeat_seconds: float = 15.0
+    rag: ChatRagConfig = ChatRagConfig()
 
 
 class ToolsConfig(BaseModel):

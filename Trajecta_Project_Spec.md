@@ -1,4 +1,4 @@
-2# Trajecta
+# Trajecta
 
 ## Project Overview
 
@@ -750,3 +750,166 @@ The system combines:
 The main engineering thesis is:
 
 > **Can an autonomous agent become measurably better at repeated tasks without blindly trusting what it learns from previous executions?**
+
+
+---
+
+# Current Implementation State — 16 September 2026
+
+This section is the durable handoff for the next Trajecta development session.
+
+## Product Direction
+
+Trajecta is **chat-first**, not a workflow builder. The primary product is a production-grade local autonomous desktop chat harness where the user can converse naturally, attach files, and ask the agent to perform work. Planning and subagents are dynamic capabilities used only when a request benefits from them. The long-term differentiator remains Verified Skill Learning: useful successful trajectories can later become evaluated, versioned procedural skills.
+
+## Implemented Foundation
+
+- Deep Agents + LangGraph memory foundation
+- short-term, semantic, episodic, and procedural memory
+- SQLite + FTS5 local storage
+- embedded Qdrant vector layer
+- Bifrost-backed Deep Agents model factory
+- MCP tool discovery through LangChain MCP
+- FastAPI production chat persistence
+- conversations, messages, uploads, SSE streaming, cancellation
+- image/PDF/DOCX/text attachment ingestion
+- PDF/DOCX/text extraction companions under `/uploads/`
+- Deep Agents read-only `/uploads/` filesystem route
+
+## Chat Slice Completed in This Revision
+
+### Large-document RAG
+
+Large extracted documents are now chunked and indexed locally.
+
+```text
+Upload
+  -> local extracted text
+  -> chunking with overlap
+  -> SQLite attachment_chunks
+  -> FTS5 attachment_chunks_fts
+  -> Qdrant attachment_chunks collection
+  -> conversation-scoped search_attachments tool
+  -> Deep Agent retrieves only relevant passages
+```
+
+The original uploaded file remains canonical. RAG is a retrieval optimization, not a replacement for direct visual/file inspection.
+
+### Proper Streaming Preflight
+
+Streaming routes now validate before returning SSE headers:
+
+- conversation existence
+- attachment ownership/existence
+- non-empty message input
+- active-run conflicts
+- Bifrost model configuration
+- MCP discovery
+- LangGraph checkpoint existence for branches
+
+Only after preflight succeeds is the SSE response created.
+
+### LangGraph-backed Conversation Branching
+
+Messages are immutable. Edit/resend/regenerate create a new application branch and execute from the relevant LangGraph `checkpoint_id`.
+
+```text
+prior checkpoint
+      |
+      +-- original user message -> original assistant
+      |
+      +-- edited/resend user message -> new assistant
+```
+
+Each branch tracks its own head checkpoint, and normal future messages always resume from the active branch head.
+
+Implemented operations:
+
+- edit a user message
+- resend a user message
+- regenerate an assistant answer
+- list conversation branches
+- activate a previous branch
+
+### Model Selection
+
+Implemented:
+
+- `GET /api/v1/models` — configured models plus best-effort Bifrost discovery
+- `PUT /api/v1/chat/conversations/{conversation_id}/model` — persistent model selection for a conversation
+- per-turn model override remains supported in send/edit/resend/regenerate requests
+
+### Tests Added
+
+Tests now cover:
+
+- immutable branch history
+- branch fork behavior
+- edit/regenerate flow
+- invalid-attachment preflight
+- large text upload + RAG indexing/search
+- attachment reuse across branched messages
+
+## Important Database Schema
+
+Schema v3 adds the chat branching and attachment-RAG tables. Schema v4 adds an explicit `thread_id` per chat branch so a fork before the first checkpoint can start on a fresh LangGraph thread while later forks reuse the parent thread plus checkpoint.
+
+Schema v3/v4 includes:
+
+- `chat_branches`
+- `chat_branches.thread_id`
+- `branch_messages`
+- `message_attachments`
+- `attachment_chunks`
+- `attachment_chunks_fts`
+- `conversations.active_branch_id`
+- `chat_messages.revision_of`
+- `chat_messages.base_checkpoint_id`
+- `chat_messages.checkpoint_id`
+
+## Main Chat Endpoints
+
+```text
+POST /api/v1/chat/conversations
+GET  /api/v1/chat/conversations
+GET  /api/v1/chat/conversations/{id}
+PUT  /api/v1/chat/conversations/{id}/model
+
+POST /api/v1/chat/conversations/{id}/attachments
+POST /api/v1/chat/conversations/{id}/messages/stream
+POST /api/v1/chat/conversations/{id}/messages/{message_id}/edit/stream
+POST /api/v1/chat/conversations/{id}/messages/{message_id}/resend/stream
+POST /api/v1/chat/conversations/{id}/messages/{assistant_id}/regenerate/stream
+POST /api/v1/chat/conversations/{id}/cancel
+
+GET /api/v1/chat/conversations/{id}/branches
+PUT /api/v1/chat/conversations/{id}/branches/{branch_id}/activate
+
+GET /api/v1/models
+```
+
+## Known Limitations / Deliberately Deferred
+
+1. **Guardrails AI is intentionally not wired into chat yet.** It remains a later layer.
+2. **The current VectorStore embedder is still the deterministic local placeholder.** FTS5 is real lexical retrieval, but production semantic quality requires replacing the hash embedding with a real local or Bifrost-backed embedding model.
+3. **Scanned/image-only PDFs do not have OCR.** Native multimodal file reading may still work with a capable model, but local text extraction will be empty.
+4. **Bifrost model discovery uses `/v1/models` as a best-effort OpenAI-compatible endpoint.** Configured/default models are always returned even if the gateway does not expose that endpoint.
+5. **Desktop UI is not implemented yet.** The backend API is now ready for it.
+6. **Trajectory capture / OpenTelemetry / Grafana / Skill Miner are not part of this slice.** They come after the production chat experience.
+
+## Recommended Next Slice
+
+Build the **Tauri + React desktop chat UI** against the backend contract above:
+
+- conversation sidebar
+- streaming assistant messages
+- drag/drop multi-file upload and previews
+- tool/subagent progress UI
+- stop/cancel
+- edit/resend/regenerate controls
+- branch/variant navigation
+- model selector
+- attachment chips + document retrieval state
+- robust error/reconnect handling
+
+After the desktop chat loop is usable end-to-end, add OpenTelemetry trajectory capture so agent learning is built on real user interactions rather than synthetic workflows.

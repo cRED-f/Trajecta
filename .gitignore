@@ -25,3 +25,7 @@ evals/results/
 .env
 .env.*
 !.env.example
+Trajecta_Project_Spec.md
+PROJECT_STATE.md
+trajecta.zip
+

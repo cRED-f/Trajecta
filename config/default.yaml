@@ -73,6 +73,13 @@ chat:
   max_upload_mb: 100
   max_extracted_chars: 2000000
   stream_heartbeat_seconds: 15
+  rag:
+    enabled: true
+    chunk_size_chars: 3000
+    chunk_overlap_chars: 400
+    auto_index_min_chars: 4000
+    top_k: 8
+    max_tool_chars: 24000
 
 tools:
   mcp_servers: {}

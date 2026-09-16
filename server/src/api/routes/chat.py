@@ -1,102 +1,153 @@
 from __future__ import annotations
 
-from fastapi import (
-    APIRouter,
-    File,
-    HTTPException,
-    Request,
-    UploadFile,
-)
+from collections.abc import AsyncIterator
 
-from fastapi.responses import (
-    StreamingResponse,
-)
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi.responses import StreamingResponse
 
-from server.src.chat.attachments import (
-    AttachmentError,
-)
-
+from server.src.chat.attachments import AttachmentError
+from server.src.chat.model import BifrostConfigurationError
 from server.src.chat.models import (
     Attachment,
     CancelRunResponse,
+    ChatBranch,
     Conversation,
     ConversationCreate,
     ConversationDetail,
+    EditMessageRequest,
+    RegenerateMessageRequest,
+    ResendMessageRequest,
+    SelectModelRequest,
     SendMessageRequest,
 )
-
-from server.src.chat.runs import (
-    RunAlreadyActive,
-)
-
+from server.src.chat.runtime import InvalidCheckpoint
+from server.src.chat.runs import RunAlreadyActive
 from server.src.chat.service import (
     ChatService,
     ConversationNotFound,
     InvalidAttachment,
+    InvalidMessageOperation,
+    MessageNotFound,
+    PreparedTurn,
 )
+from server.src.chat.streaming import sse_stream
 
-from server.src.chat.streaming import (
-    sse_stream,
-)
-
-
-router = APIRouter(
-    prefix="/chat",
-    tags=["chat"],
-)
+router = APIRouter(prefix="/chat", tags=["chat"])
 
 
-def _service(
-    request: Request,
-) -> ChatService:
+def _service(request: Request) -> ChatService:
     return request.app.state.chat_service
 
 
-@router.post(
-    "/conversations",
-    response_model=Conversation,
-)
+def _raise_preflight(exc: Exception) -> None:
+    if isinstance(exc, ConversationNotFound):
+        raise HTTPException(status_code=404, detail="Conversation not found") from exc
+    if isinstance(exc, MessageNotFound):
+        raise HTTPException(status_code=404, detail="Message not found") from exc
+    if isinstance(exc, RunAlreadyActive):
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if isinstance(exc, (InvalidAttachment, InvalidMessageOperation, InvalidCheckpoint, ValueError)):
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if isinstance(exc, BifrostConfigurationError):
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    raise exc
+
+
+def _response_for_prepared(
+    request: Request,
+    service: ChatService,
+    prepared: PreparedTurn,
+) -> StreamingResponse:
+    async def source() -> AsyncIterator:
+        async for event in service.stream_prepared(prepared):
+            if await request.is_disconnected():
+                await service.cancel(prepared.conversation.id)
+                break
+            yield event
+
+    return StreamingResponse(
+        sse_stream(
+            source(),
+            heartbeat_seconds=(
+                request.app.state.settings.chat.stream_heartbeat_seconds
+            ),
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/conversations", response_model=Conversation)
 async def create_conversation(
     body: ConversationCreate,
     request: Request,
 ) -> Conversation:
-    return await _service(
-        request
-    ).create_conversation(body)
+    return await _service(request).create_conversation(body)
 
 
-@router.get(
-    "/conversations",
-    response_model=list[Conversation],
-)
-async def list_conversations(
-    request: Request,
-) -> list[Conversation]:
-    return await _service(
-        request
-    ).list_conversations()
+@router.get("/conversations", response_model=list[Conversation])
+async def list_conversations(request: Request) -> list[Conversation]:
+    return await _service(request).list_conversations()
 
 
-@router.get(
-    "/conversations/{conversation_id}",
-    response_model=ConversationDetail,
-)
+@router.get("/conversations/{conversation_id}", response_model=ConversationDetail)
 async def get_conversation(
     conversation_id: str,
     request: Request,
 ) -> ConversationDetail:
     try:
-        return await _service(
-            request
-        ).get_conversation(
-            conversation_id
-        )
+        return await _service(request).get_conversation(conversation_id)
+    except Exception as exc:
+        _raise_preflight(exc)
+        raise AssertionError("unreachable")
 
-    except ConversationNotFound:
-        raise HTTPException(
-            status_code=404,
-            detail="Conversation not found",
-        )
+
+@router.get(
+    "/conversations/{conversation_id}/branches",
+    response_model=list[ChatBranch],
+)
+async def list_conversation_branches(
+    conversation_id: str,
+    request: Request,
+) -> list[ChatBranch]:
+    try:
+        return await _service(request).list_branches(conversation_id)
+    except Exception as exc:
+        _raise_preflight(exc)
+        raise AssertionError("unreachable")
+
+
+@router.put(
+    "/conversations/{conversation_id}/branches/{branch_id}/activate",
+    response_model=ConversationDetail,
+)
+async def activate_conversation_branch(
+    conversation_id: str,
+    branch_id: str,
+    request: Request,
+) -> ConversationDetail:
+    try:
+        return await _service(request).activate_branch(conversation_id, branch_id)
+    except Exception as exc:
+        _raise_preflight(exc)
+        raise AssertionError("unreachable")
+
+
+@router.put("/conversations/{conversation_id}/model", response_model=Conversation)
+async def select_conversation_model(
+    conversation_id: str,
+    body: SelectModelRequest,
+    request: Request,
+) -> Conversation:
+    try:
+        return await _service(request).select_model(conversation_id, body.model)
+    except Exception as exc:
+        _raise_preflight(exc)
+        raise AssertionError("unreachable")
 
 
 @router.post(
@@ -109,94 +160,74 @@ async def upload_attachments(
     files: list[UploadFile] = File(...),
 ) -> list[Attachment]:
     try:
-        return await _service(
-            request
-        ).upload(
-            conversation_id,
-            files,
-        )
-
-    except ConversationNotFound:
-        raise HTTPException(
-            status_code=404,
-            detail="Conversation not found",
-        )
-
+        return await _service(request).upload(conversation_id, files)
+    except ConversationNotFound as exc:
+        raise HTTPException(status_code=404, detail="Conversation not found") from exc
     except AttachmentError as exc:
-        raise HTTPException(
-            status_code=413,
-            detail=str(exc),
-        )
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
 
 
-@router.post(
-    "/conversations/{conversation_id}/messages/stream",
-)
+@router.post("/conversations/{conversation_id}/messages/stream")
 async def stream_message(
     conversation_id: str,
     body: SendMessageRequest,
     request: Request,
 ) -> StreamingResponse:
     service = _service(request)
-
-    async def source():
-        try:
-            async for event in service.stream_message(
-                conversation_id,
-                body,
-            ):
-                if await request.is_disconnected():
-                    await service.cancel(
-                        conversation_id
-                    )
-
-                    break
-
-                yield event
-
-        except ConversationNotFound:
-            raise
-
     try:
-        stream = sse_stream(
-            source(),
-            heartbeat_seconds=(
-                request.app.state.settings
-                .chat
-                .stream_heartbeat_seconds
-            ),
-        )
+        prepared = await service.prepare_message(conversation_id, body)
+    except Exception as exc:
+        _raise_preflight(exc)
+        raise AssertionError("unreachable")
+    return _response_for_prepared(request, service, prepared)
 
-        return StreamingResponse(
-            stream,
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
 
-    except RunAlreadyActive:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Conversation already has "
-                "an active run"
-            ),
-        )
+@router.post("/conversations/{conversation_id}/messages/{message_id}/edit/stream")
+async def edit_message(
+    conversation_id: str,
+    message_id: str,
+    body: EditMessageRequest,
+    request: Request,
+) -> StreamingResponse:
+    service = _service(request)
+    try:
+        prepared = await service.prepare_edit(conversation_id, message_id, body)
+    except Exception as exc:
+        _raise_preflight(exc)
+        raise AssertionError("unreachable")
+    return _response_for_prepared(request, service, prepared)
 
-    except InvalidAttachment as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=str(exc),
-        )
 
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=str(exc),
-        )
+@router.post("/conversations/{conversation_id}/messages/{message_id}/resend/stream")
+async def resend_message(
+    conversation_id: str,
+    message_id: str,
+    body: ResendMessageRequest,
+    request: Request,
+) -> StreamingResponse:
+    service = _service(request)
+    try:
+        prepared = await service.prepare_resend(conversation_id, message_id, body)
+    except Exception as exc:
+        _raise_preflight(exc)
+        raise AssertionError("unreachable")
+    return _response_for_prepared(request, service, prepared)
+
+
+@router.post("/conversations/{conversation_id}/messages/{message_id}/regenerate/stream")
+async def regenerate_message(
+    conversation_id: str,
+    message_id: str,
+    body: RegenerateMessageRequest,
+    request: Request,
+) -> StreamingResponse:
+    service = _service(request)
+    try:
+        prepared = await service.prepare_regenerate(conversation_id, message_id, body)
+    except Exception as exc:
+        _raise_preflight(exc)
+        raise AssertionError("unreachable")
+    return _response_for_prepared(request, service, prepared)
 
 
 @router.post(
@@ -207,12 +238,5 @@ async def cancel_run(
     conversation_id: str,
     request: Request,
 ) -> CancelRunResponse:
-    cancelled = await _service(
-        request
-    ).cancel(
-        conversation_id
-    )
-
-    return CancelRunResponse(
-        cancelled=cancelled
-    )
+    cancelled = await _service(request).cancel(conversation_id)
+    return CancelRunResponse(cancelled=cancelled)

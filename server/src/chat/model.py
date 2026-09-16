@@ -38,12 +38,7 @@ class BifrostModelFactory:
         self,
         model_name: str | None = None,
     ) -> ChatOpenAI:
-        bifrost_url = (
-            os.environ.get(
-                "TRAJECTA_BIFROST_URL"
-            )
-            or self._configured_url()
-        )
+        bifrost_url = self.gateway_base_url()
 
         if not bifrost_url:
             raise BifrostConfigurationError(
@@ -52,31 +47,42 @@ class BifrostModelFactory:
                 "llm.providers.bifrost.base_url."
             )
 
-        virtual_key = os.environ.get(
-            "BIFROST_VIRTUAL_KEY",
-            "sk-bf-local",
-        )
+        virtual_key = self.virtual_key()
 
         model = (
             model_name
             or self._settings.chat.default_model
         )
 
+        stripped = bifrost_url.rstrip("/")
+
         base_url = (
-            f"{bifrost_url.rstrip('/')}"
-            "/langchain"
+            stripped
+            if stripped.endswith("/v1")
+            else f"{stripped}/langchain"
         )
 
         return ChatOpenAI(
             model=model,
             base_url=base_url,
             api_key=virtual_key,
+            default_headers={"x-bf-vk": virtual_key},
 
             # Let Bifrost own retries/fallback behavior.
             max_retries=0,
-
             timeout=180,
         )
+
+    def gateway_base_url(self) -> str | None:
+        return (
+            os.environ.get("TRAJECTA_BIFROST_URL")
+            or os.environ.get("BIFROST_URL")
+            or self._configured_url()
+        )
+
+    @staticmethod
+    def virtual_key() -> str:
+        return os.environ.get("BIFROST_VIRTUAL_KEY", "sk-bf-local")
 
     def _configured_url(
         self,

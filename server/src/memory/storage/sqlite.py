@@ -86,6 +86,24 @@ class SQLiteDatabase:
                 "INSERT INTO schema_version(version) VALUES (2)"
             )
 
+            version = 2
+
+        if version < 3:
+            await self._migrate_v3()
+
+            await self._conn.execute(
+                "INSERT INTO schema_version(version) VALUES (3)"
+            )
+
+            version = 3
+
+        if version < 4:
+            await self._migrate_v4()
+
+            await self._conn.execute(
+                "INSERT INTO schema_version(version) VALUES (4)"
+            )
+
         await self._conn.commit()
 
     async def _migrate_v1(self) -> None:
@@ -225,6 +243,212 @@ class SQLiteDatabase:
             CREATE INDEX IF NOT EXISTS
                 idx_attachments_message
             ON attachments(message_id);
+            """
+        )
+
+
+    async def _migrate_v3(self) -> None:
+        """Schema v3: chat branching + attachment RAG indexes."""
+
+        assert self._conn is not None
+
+        # SQLite has no portable ADD COLUMN IF NOT EXISTS, so check first.
+        conversation_cols = {
+            row[1]
+            for row in await (await self._conn.execute(
+                "PRAGMA table_info(conversations)"
+            )).fetchall()
+        }
+        if "active_branch_id" not in conversation_cols:
+            await self._conn.execute(
+                "ALTER TABLE conversations ADD COLUMN active_branch_id TEXT"
+            )
+
+        message_cols = {
+            row[1]
+            for row in await (await self._conn.execute(
+                "PRAGMA table_info(chat_messages)"
+            )).fetchall()
+        }
+        if "revision_of" not in message_cols:
+            await self._conn.execute(
+                "ALTER TABLE chat_messages ADD COLUMN revision_of TEXT"
+            )
+        if "base_checkpoint_id" not in message_cols:
+            await self._conn.execute(
+                "ALTER TABLE chat_messages ADD COLUMN base_checkpoint_id TEXT"
+            )
+        if "checkpoint_id" not in message_cols:
+            await self._conn.execute(
+                "ALTER TABLE chat_messages ADD COLUMN checkpoint_id TEXT"
+            )
+
+        await self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS chat_branches (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL
+                    REFERENCES conversations(id)
+                    ON DELETE CASCADE,
+                thread_id TEXT NOT NULL,
+                parent_branch_id TEXT
+                    REFERENCES chat_branches(id)
+                    ON DELETE SET NULL,
+                fork_message_id TEXT
+                    REFERENCES chat_messages(id)
+                    ON DELETE SET NULL,
+                fork_checkpoint_id TEXT,
+                head_checkpoint_id TEXT,
+                label TEXT,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS branch_messages (
+                branch_id TEXT NOT NULL
+                    REFERENCES chat_branches(id)
+                    ON DELETE CASCADE,
+                message_id TEXT NOT NULL
+                    REFERENCES chat_messages(id)
+                    ON DELETE CASCADE,
+                position INTEGER NOT NULL,
+                PRIMARY KEY (branch_id, position),
+                UNIQUE (branch_id, message_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS message_attachments (
+                message_id TEXT NOT NULL
+                    REFERENCES chat_messages(id)
+                    ON DELETE CASCADE,
+                attachment_id TEXT NOT NULL
+                    REFERENCES attachments(id)
+                    ON DELETE CASCADE,
+                PRIMARY KEY (message_id, attachment_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS attachment_chunks (
+                id TEXT PRIMARY KEY,
+                attachment_id TEXT NOT NULL
+                    REFERENCES attachments(id)
+                    ON DELETE CASCADE,
+                conversation_id TEXT NOT NULL
+                    REFERENCES conversations(id)
+                    ON DELETE CASCADE,
+                chunk_index INTEGER NOT NULL,
+                start_char INTEGER NOT NULL,
+                end_char INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE (attachment_id, chunk_index)
+            );
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS attachment_chunks_fts USING fts5(
+                attachment_id UNINDEXED,
+                conversation_id UNINDEXED,
+                chunk_id UNINDEXED,
+                chunk_index UNINDEXED,
+                content,
+                tokenize='porter'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_chat_branches_conversation
+                ON chat_branches(conversation_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_branch_messages_message
+                ON branch_messages(message_id);
+            CREATE INDEX IF NOT EXISTS idx_message_attachments_attachment
+                ON message_attachments(attachment_id);
+            CREATE INDEX IF NOT EXISTS idx_attachment_chunks_attachment
+                ON attachment_chunks(attachment_id, chunk_index);
+            CREATE INDEX IF NOT EXISTS idx_attachment_chunks_conversation
+                ON attachment_chunks(conversation_id);
+            """
+        )
+
+        # Bootstrap pre-v3 conversations into a main branch without changing
+        # their existing message rows.
+        conversations = await (await self._conn.execute(
+            "SELECT id, thread_id, created_at, active_branch_id FROM conversations"
+        )).fetchall()
+
+        for conversation in conversations:
+            branch_id = conversation[3] or f"{conversation[0]}:main"
+            await self._conn.execute(
+                """
+                INSERT OR IGNORE INTO chat_branches(
+                    id, conversation_id, thread_id, parent_branch_id, fork_message_id,
+                    fork_checkpoint_id, head_checkpoint_id, label, created_at
+                ) VALUES (?, ?, ?, NULL, NULL, NULL, NULL, 'main', ?)
+                """,
+                (branch_id, conversation[0], conversation[1], conversation[2]),
+            )
+            await self._conn.execute(
+                "UPDATE conversations SET active_branch_id = ? WHERE id = ?",
+                (branch_id, conversation[0]),
+            )
+
+            existing = await (await self._conn.execute(
+                "SELECT 1 FROM branch_messages WHERE branch_id = ? LIMIT 1",
+                (branch_id,),
+            )).fetchone()
+            if existing is None:
+                messages = await (await self._conn.execute(
+                    """
+                    SELECT id FROM chat_messages
+                    WHERE conversation_id = ?
+                    ORDER BY created_at ASC, rowid ASC
+                    """,
+                    (conversation[0],),
+                )).fetchall()
+                for position, message in enumerate(messages):
+                    await self._conn.execute(
+                        """
+                        INSERT OR IGNORE INTO branch_messages(
+                            branch_id, message_id, position
+                        ) VALUES (?, ?, ?)
+                        """,
+                        (branch_id, message[0], position),
+                    )
+
+        # Preserve old one-message attachment ownership in the new many-to-many
+        # relation so attachments can be reused by edited/resend branches.
+        await self._conn.execute(
+            """
+            INSERT OR IGNORE INTO message_attachments(message_id, attachment_id)
+            SELECT message_id, id FROM attachments WHERE message_id IS NOT NULL
+            """
+        )
+
+
+    async def _migrate_v4(self) -> None:
+        """Schema v4: explicit LangGraph thread per chat branch.
+
+        Branches that fork before a real checkpoint (for example editing the
+        first user turn) need a fresh LangGraph thread. Later forks can safely
+        reuse the parent thread together with a checkpoint_id.
+        """
+
+        assert self._conn is not None
+
+        branch_cols = {
+            row[1]
+            for row in await (await self._conn.execute(
+                "PRAGMA table_info(chat_branches)"
+            )).fetchall()
+        }
+
+        if "thread_id" not in branch_cols:
+            await self._conn.execute(
+                "ALTER TABLE chat_branches ADD COLUMN thread_id TEXT"
+            )
+
+        await self._conn.execute(
+            """
+            UPDATE chat_branches
+            SET thread_id = (
+                SELECT conversations.thread_id
+                FROM conversations
+                WHERE conversations.id = chat_branches.conversation_id
+            )
+            WHERE thread_id IS NULL OR thread_id = ''
             """
         )
 

@@ -188,12 +188,22 @@ class VectorStore:
         namespace: str,
         doc_id: str,
         text: str,
+        *,
+        payload: dict[str, Any] | None = None,
     ) -> None:
         if self._client is None:
             return
 
         try:
+            self._ensure_collection(namespace)
             vector = self._embedder(text)
+            final_payload = {
+                "namespace": namespace,
+                "doc_id": doc_id,
+                "text": text,
+            }
+            if payload:
+                final_payload.update(payload)
 
             self._client.upsert(
                 collection_name=self._collection_for(
@@ -206,11 +216,7 @@ class VectorStore:
                             doc_id,
                         ),
                         vector=vector,
-                        payload={
-                            "namespace": namespace,
-                            "doc_id": doc_id,
-                            "text": text,
-                        },
+                        payload=final_payload,
                     )
                 ],
             )
@@ -269,6 +275,7 @@ class VectorStore:
             return []
 
         limit = max(1, int(limit))
+        self._ensure_collection(namespace)
 
         return self._search_collection(
             self._collection_for(namespace),
@@ -321,6 +328,7 @@ class VectorStore:
                 "text": (
                     hit.payload or {}
                 ).get("text", ""),
+                "payload": dict(hit.payload or {}),
             }
             for hit in hits
         ]
