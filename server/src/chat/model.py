@@ -49,9 +49,8 @@ class BifrostModelFactory:
 
         virtual_key = self.virtual_key()
 
-        model = (
+        model = self.canonical_model_name(
             model_name
-            or self._settings.chat.default_model
         )
 
         stripped = bifrost_url.rstrip("/")
@@ -100,3 +99,45 @@ class BifrostModelFactory:
             return None
 
         return config.base_url
+
+    def canonical_model_name(
+        self,
+        model_name: str | None,
+    ) -> str:
+        """
+        Return an explicit Bifrost provider/model identifier.
+
+        Bare model names are repaired using the provider from
+        chat.default_model. This is especially important for custom
+        OpenAI-compatible providers such as 9router.
+        """
+        model = (
+            model_name
+            or self._settings.chat.default_model
+        ).strip()
+
+        if not model:
+            raise BifrostConfigurationError(
+                "Model cannot be empty"
+            )
+
+        # Already explicit.
+        if "/" in model:
+            return model
+
+        default_model = (
+            self._settings.chat.default_model.strip()
+        )
+
+        if "/" not in default_model:
+            raise BifrostConfigurationError(
+                "Bifrost model must use provider/model format; "
+                f"got {model!r}. Configure chat.default_model "
+                "with an explicit provider."
+            )
+
+        provider = (
+            default_model.split("/", 1)[0]
+        )
+
+        return f"{provider}/{model}"

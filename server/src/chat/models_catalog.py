@@ -58,10 +58,11 @@ class ModelCatalogService:
                     for item in items:
                         if not isinstance(item, dict) or not item.get("id"):
                             continue
-                        model_id = str(item["id"])
+                        raw_model_id = str(item["id"])
+                        model_id = self._factory.canonical_model_name(raw_model_id)
                         gateway_models[model_id] = ModelInfo(
                             id=model_id,
-                            provider=(model_id.split("/", 1)[0] if "/" in model_id else None),
+                            provider=model_id.split("/", 1)[0],
                             source="bifrost",
                             owned_by=(str(item.get("owned_by")) if item.get("owned_by") else None),
                             metadata={
