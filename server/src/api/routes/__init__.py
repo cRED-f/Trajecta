@@ -8,9 +8,11 @@ from .memory import router as memory_router
 from .tools import router as tools_router
 from .models import router as models_router
 from .traces import router as traces_router
+from .chat import router as chat_router
 from .health import router as health_router
 
 all_routers = [
+    chat_router,
     tasks_router,
     skills_router,
     memory_router,

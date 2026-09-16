@@ -45,8 +45,10 @@ class SQLiteDatabase:
         await self._migrate()
 
     async def _migrate(self) -> None:
-        """Create schema if missing; track schema version."""
+        """Create schema and apply migrations."""
+
         assert self._conn is not None
+
         await self._conn.execute(
             """
             CREATE TABLE IF NOT EXISTS schema_version (
@@ -54,13 +56,36 @@ class SQLiteDatabase:
             )
             """
         )
-        row = await self._conn.execute("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
-        result = await row.fetchone()
-        version = result["version"] if result else 0
+
+        cursor = await self._conn.execute(
+            """
+            SELECT version
+            FROM schema_version
+            ORDER BY version DESC
+            LIMIT 1
+            """
+        )
+
+        row = await cursor.fetchone()
+
+        version = row["version"] if row else 0
 
         if version < 1:
             await self._migrate_v1()
-            await self._conn.execute("INSERT INTO schema_version (version) VALUES (1)")
+
+            await self._conn.execute(
+                "INSERT INTO schema_version(version) VALUES (1)"
+            )
+
+            version = 1
+
+        if version < 2:
+            await self._migrate_v2()
+
+            await self._conn.execute(
+                "INSERT INTO schema_version(version) VALUES (2)"
+            )
+
         await self._conn.commit()
 
     async def _migrate_v1(self) -> None:
@@ -113,6 +138,93 @@ class SQLiteDatabase:
             CREATE INDEX IF NOT EXISTS idx_trajectories_task ON trajectories(task_id);
             CREATE INDEX IF NOT EXISTS idx_memories_tier ON memories(tier);
             CREATE INDEX IF NOT EXISTS idx_memories_ns ON memories(namespace);
+            """
+        )
+
+    async def _migrate_v2(self) -> None:
+        """Schema v2: production chat persistence."""
+
+        assert self._conn is not None
+
+        await self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS conversations (
+                id TEXT PRIMARY KEY,
+                thread_id TEXT NOT NULL UNIQUE,
+
+                title TEXT,
+                model TEXT NOT NULL,
+
+                archived INTEGER NOT NULL DEFAULT 0,
+
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+
+                metadata TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id TEXT PRIMARY KEY,
+
+                conversation_id TEXT NOT NULL
+                    REFERENCES conversations(id)
+                    ON DELETE CASCADE,
+
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+
+                status TEXT NOT NULL DEFAULT 'complete',
+
+                parent_message_id TEXT,
+
+                created_at TEXT NOT NULL,
+
+                metadata TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS attachments (
+                id TEXT PRIMARY KEY,
+
+                conversation_id TEXT NOT NULL
+                    REFERENCES conversations(id)
+                    ON DELETE CASCADE,
+
+                message_id TEXT
+                    REFERENCES chat_messages(id)
+                    ON DELETE SET NULL,
+
+                filename TEXT NOT NULL,
+                mime_type TEXT,
+                kind TEXT NOT NULL,
+
+                virtual_path TEXT NOT NULL,
+                extracted_virtual_path TEXT,
+
+                size_bytes INTEGER NOT NULL,
+                sha256 TEXT NOT NULL,
+
+                status TEXT NOT NULL,
+
+                created_at TEXT NOT NULL,
+
+                metadata TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS
+                idx_conversations_updated
+            ON conversations(updated_at);
+
+            CREATE INDEX IF NOT EXISTS
+                idx_chat_messages_conversation
+            ON chat_messages(conversation_id, created_at);
+
+            CREATE INDEX IF NOT EXISTS
+                idx_attachments_conversation
+            ON attachments(conversation_id);
+
+            CREATE INDEX IF NOT EXISTS
+                idx_attachments_message
+            ON attachments(message_id);
             """
         )
 

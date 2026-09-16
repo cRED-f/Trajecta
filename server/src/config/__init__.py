@@ -15,6 +15,37 @@ class ServerConfig(BaseModel):
     port: int = 8420
 
 
+class ChatConfig(BaseModel):
+    uploads_path: str = ".trajecta/uploads"
+
+    # Desktop/local-agent default.
+    default_model: str = "openai/gpt-4o-mini"
+
+    max_upload_mb: int = 100
+    max_extracted_chars: int = 2_000_000
+
+    stream_heartbeat_seconds: float = 15.0
+
+
+class ToolsConfig(BaseModel):
+    # FastMCP / LangChain MCPConfig shape.
+    #
+    # Example:
+    #
+    # mcp_servers:
+    #   langchain_docs:
+    #     url: "https://docs.langchain.com/mcp"
+    #
+    #   local_tool:
+    #     command: "python"
+    #     args: ["tools/my_server.py"]
+    mcp_servers: dict[str, dict[str, Any]] = Field(
+        default_factory=dict
+    )
+
+    discovery_timeout_seconds: float = 15.0
+
+
 class VectorStoreConfig(BaseModel):
     enabled: bool = True
     mode: str = "embedded"  # "embedded" = in-process qdrant; "server" = remote
@@ -62,6 +93,9 @@ class Settings(BaseSettings):
     server: ServerConfig = ServerConfig()
     llm: LlmConfig = LlmConfig()
     memory: MemoryConfig = MemoryConfig()
+
+    chat: ChatConfig = ChatConfig()
+    tools: ToolsConfig = ToolsConfig()
 
     yaml_defaults_path: Path = Path("config/default.yaml")
     local_config_path: Path = Path(".trajecta/config.yaml")

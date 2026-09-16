@@ -67,8 +67,28 @@ sandbox:
   memory_limit: "512m"
   cpu_limit: "1.0"
 
+chat:
+  uploads_path: ".trajecta/uploads"
+  default_model: "openai/gpt-4o-mini"
+  max_upload_mb: 100
+  max_extracted_chars: 2000000
+  stream_heartbeat_seconds: 15
+
 tools:
-  mcp_servers: []
+  mcp_servers: {}
+
+  # Example:
+  #
+  # mcp_servers:
+  #   langchain_docs:
+  #     url: "https://docs.langchain.com/mcp"
+  #
+  # local_tools:
+  #   command: "python"
+  #   args:
+  #     - "tools/local_server.py"
+
+  discovery_timeout_seconds: 15
 
 observability:
   enabled: true

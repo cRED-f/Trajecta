@@ -17,7 +17,12 @@ from typing import Any
 
 import aiosqlite
 
-from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
+from deepagents.backends import (
+    CompositeBackend,
+    FilesystemBackend,
+    StateBackend,
+    StoreBackend,
+)
 
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.store.sqlite.aio import AsyncSqliteStore
@@ -90,11 +95,37 @@ class MemoryProvider:
         # everything else into thread-scoped state.
         # Namespaces that ignore their Runtime arg work outside graph context.
         ns_local = ("trajecta-local",)
+
+        uploads_root = Path(
+            self._settings.chat.uploads_path
+        ).resolve()
+
+        uploads_root.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
         self.backend = CompositeBackend(
             default=StateBackend(),
             routes={
-                "/memories/": StoreBackend(namespace=lambda _rt: ns_local, store=self.store),
-                "/skills/": StoreBackend(namespace=lambda _rt: ns_local + ("skills",), store=self.store),
+                "/memories/": StoreBackend(
+                    namespace=lambda _rt: ns_local,
+                    store=self.store,
+                ),
+
+                "/skills/": StoreBackend(
+                    namespace=lambda _rt: ns_local + ("skills",),
+                    store=self.store,
+                ),
+
+                # Files uploaded by the desktop app.
+                #
+                # CompositeBackend strips "/uploads/" before
+                # passing the path to FilesystemBackend.
+                "/uploads/": FilesystemBackend(
+                    root_dir=str(uploads_root),
+                    virtual_mode=True,
+                ),
             },
         )
 
