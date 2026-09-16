@@ -4,6 +4,7 @@ import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from pathlib import Path
 
 from fastapi import UploadFile
 
@@ -146,6 +147,73 @@ class ChatService:
             attachment = await self._rag.index_attachment(attachment)
             results.append(attachment)
         return results
+
+    async def resolve_attachment_file(
+        self,
+        conversation_id: str,
+        attachment_id: str,
+    ) -> tuple[Attachment, Path]:
+        await self._require_conversation(
+            conversation_id
+        )
+
+        attachment = (
+            await self._repository
+            .get_attachment(
+                attachment_id
+            )
+        )
+
+        if (
+            attachment is None
+            or attachment.conversation_id
+            != conversation_id
+        ):
+            raise InvalidAttachment(
+                "Attachment not found"
+            )
+
+        uploads_root = Path(
+            self._settings
+            .chat
+            .uploads_path
+        ).resolve()
+
+        prefix = "/uploads/"
+
+        if not attachment.virtual_path.startswith(
+            prefix
+        ):
+            raise InvalidAttachment(
+                "Invalid attachment path"
+            )
+
+        relative = (
+            attachment.virtual_path[
+                len(prefix):
+            ]
+        )
+
+        path = (
+            uploads_root
+            / relative
+        ).resolve()
+
+        try:
+            path.relative_to(
+                uploads_root
+            )
+        except ValueError as exc:
+            raise InvalidAttachment(
+                "Attachment path escaped upload root"
+            ) from exc
+
+        if not path.is_file():
+            raise InvalidAttachment(
+                "Attachment file does not exist"
+            )
+
+        return attachment, path
 
     # ------------------------------------------------------------------
     # Preflight: all errors that can be known before SSE headers

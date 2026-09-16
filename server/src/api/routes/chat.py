@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from server.src.chat.attachments import AttachmentError
 from server.src.chat.model import BifrostConfigurationError
@@ -240,3 +240,43 @@ async def cancel_run(
 ) -> CancelRunResponse:
     cancelled = await _service(request).cancel(conversation_id)
     return CancelRunResponse(cancelled=cancelled)
+
+
+@router.get(
+    "/conversations/"
+    "{conversation_id}/"
+    "attachments/"
+    "{attachment_id}/content"
+)
+async def attachment_content(
+    conversation_id: str,
+    attachment_id: str,
+    request: Request,
+) -> FileResponse:
+    try:
+        attachment, path = (
+            await _service(request)
+            .resolve_attachment_file(
+                conversation_id,
+                attachment_id,
+            )
+        )
+
+    except Exception as exc:
+        _raise_preflight(exc)
+        raise AssertionError(
+            "unreachable"
+        )
+
+    return FileResponse(
+        path=path,
+        media_type=(
+            attachment.mime_type
+            or "application/octet-stream"
+        ),
+        headers={
+            "Content-Disposition":
+                f'inline; filename="'
+                f'{attachment.filename}"'
+        },
+    )
