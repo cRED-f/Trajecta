@@ -1,6 +1,8 @@
 import {
   Search,
+  Settings,
   SquarePen,
+  Trash2,
 } from "lucide-react";
 
 import {
@@ -25,19 +27,22 @@ interface Props {
     | string
     | null;
 
-  backendOnline: boolean;
-
   onNew(): void;
 
   onSelect(id: string): void;
+
+  onDelete(id: string): void;
+
+  onOpenSettings(): void;
 }
 
 export function Sidebar({
   conversations,
   activeId,
-  backendOnline,
   onNew,
   onSelect,
+  onDelete,
+  onOpenSettings,
 }: Props) {
   const [search, setSearch] =
     useState("");
@@ -141,6 +146,20 @@ export function Sidebar({
                   conversation.updated_at,
                 )}
               </span>
+
+              <button
+                className="conversation-card__delete"
+                type="button"
+                onClick={() =>
+                  onDelete(
+                    conversation.id,
+                  )
+                }
+                aria-label="Delete conversation"
+                title="Delete"
+              >
+                <Trash2 size={14} />
+              </button>
             </button>
           ),
         )}
@@ -153,30 +172,22 @@ export function Sidebar({
         )}
       </nav>
 
-      <footer className="sidebar-footer">
+      <footer
+        className="sidebar-footer sidebar-footer--clickable"
+        onClick={onOpenSettings}
+      >
         <div className="hairline" />
 
-        <div className="runtime-status">
-          <span
-            className={`runtime-status__indicator ${
-              backendOnline
-                ? "runtime-status__indicator--online"
-                : ""
-            }`}
-          />
-
-          <div>
-            <div className="runtime-status__title">
-              Local runtime
-            </div>
-
-            <div className="runtime-status__copy">
-              {backendOnline
-                ? "Connected"
-                : "Backend unavailable"}
-            </div>
-          </div>
-        </div>
+        <button
+          className="sidebar-item sidebar-item--action"
+          type="button"
+          onClick={onOpenSettings}
+        >
+          <Settings size={16} />
+          <span>
+            Settings
+          </span>
+        </button>
       </footer>
     </aside>
   );

@@ -127,6 +127,12 @@ class ChatRepository:
             (model, _now(), conversation_id),
         )
 
+    async def delete_conversation(self, conversation_id: str) -> None:
+        await self._db.execute(
+            "DELETE FROM conversations WHERE id = ?",
+            (conversation_id,),
+        )
+
     async def get_branch(self, branch_id: str) -> ChatBranch | None:
         row = await self._db.fetchone(
             "SELECT * FROM chat_branches WHERE id = ?",

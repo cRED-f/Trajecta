@@ -128,6 +128,10 @@ class ChatService:
         assert result is not None
         return result
 
+    async def delete_conversation(self, conversation_id: str) -> None:
+        await self._require_conversation(conversation_id)
+        await self._repository.delete_conversation(conversation_id)
+
     # ------------------------------------------------------------------
     # Attachments
     # ------------------------------------------------------------------

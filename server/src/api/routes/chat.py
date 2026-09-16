@@ -230,6 +230,17 @@ async def regenerate_message(
     return _response_for_prepared(request, service, prepared)
 
 
+@router.delete("/conversations/{conversation_id}")
+async def delete_conversation(
+    conversation_id: str,
+    request: Request,
+) -> None:
+    try:
+        await _service(request).delete_conversation(conversation_id)
+    except ConversationNotFound as exc:
+        raise HTTPException(status_code=404, detail="Conversation not found") from exc
+
+
 @router.post(
     "/conversations/{conversation_id}/cancel",
     response_model=CancelRunResponse,

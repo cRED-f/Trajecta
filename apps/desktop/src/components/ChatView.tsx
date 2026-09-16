@@ -50,7 +50,16 @@ function attachmentsFor(
   );
 }
 
-export function ChatView() {
+interface ChatViewProps {
+  sidebarOpen: boolean;
+
+  onToggleSidebar(): void;
+}
+
+export function ChatView({
+  sidebarOpen,
+  onToggleSidebar,
+}: ChatViewProps) {
   const activeId =
     useChatStore(
       (state) =>
@@ -171,6 +180,12 @@ export function ChatView() {
           branchId
         }
         disabled={running}
+        sidebarOpen={
+          sidebarOpen
+        }
+        onToggleSidebar={
+          onToggleSidebar
+        }
         onModelChange={(
           model,
         ) => {

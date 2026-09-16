@@ -96,6 +96,10 @@ export function MessageItem({
         user
           ? "message--user"
           : "message--assistant"
+      } ${
+        message.status === "pending"
+          ? "message--pending"
+          : ""
       }`}
     >
       <div className="message__content">

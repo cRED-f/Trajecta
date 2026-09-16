@@ -122,7 +122,130 @@ export function useChatActions() {
   const resetComposer = useChatStore((state) => state.resetComposer);
 
   const cancelEdit = useChatStore((state) => state.cancelEdit);
+  function appendOptimisticUserMessage(
+    conversationId: string,
+    content: string,
+    uploaded: Attachment[],
+  ): string {
+    const id = `local-${crypto.randomUUID()}`;
+    const createdAt = new Date().toISOString();
 
+    const message: ChatMessage = {
+      id,
+      conversation_id: conversationId,
+      role: "user",
+      content,
+      status: "pending",
+      parent_message_id: null,
+      revision_of: null,
+      base_checkpoint_id: null,
+      checkpoint_id: null,
+      created_at: createdAt,
+      metadata: {
+        optimistic: true,
+      },
+    };
+
+    queryClient.setQueryData<ConversationDetail>(
+      queryKeys.conversation(conversationId),
+      (previous) => {
+        if (!previous) {
+          return previous;
+        }
+
+        const uploadedIds = new Set(uploaded.map((item) => item.id));
+
+        return {
+          ...previous,
+
+          updated_at: createdAt,
+
+          messages: [...previous.messages, message],
+
+          attachments: [
+            ...previous.attachments.filter((item) => !uploadedIds.has(item.id)),
+
+            ...uploaded.map((item) => ({
+              ...item,
+              message_id: id,
+            })),
+          ],
+        };
+      },
+    );
+
+    return id;
+  }
+
+  function reconcileAcceptedMessage(
+    conversationId: string,
+    optimisticMessageId: string,
+    event: ChatStreamEvent,
+  ) {
+    const value = event.data.message;
+
+    if (typeof value !== "object" || value === null || !("id" in value)) {
+      return;
+    }
+
+    const accepted = value as ChatMessage;
+
+    queryClient.setQueryData<ConversationDetail>(
+      queryKeys.conversation(conversationId),
+
+      (previous) => {
+        if (!previous) {
+          return previous;
+        }
+
+        const messages = previous.messages
+          .filter((message) => message.id !== optimisticMessageId)
+          .filter((message) => message.id !== accepted.id);
+
+        messages.push(accepted);
+
+        return {
+          ...previous,
+
+          messages,
+
+          attachments: previous.attachments.map((attachment) =>
+            attachment.message_id === optimisticMessageId
+              ? {
+                  ...attachment,
+                  message_id: accepted.id,
+                }
+              : attachment,
+          ),
+        };
+      },
+    );
+  }
+
+  function markOptimisticMessageFailed(
+    conversationId: string,
+    optimisticMessageId: string,
+  ) {
+    queryClient.setQueryData<ConversationDetail>(
+      queryKeys.conversation(conversationId),
+
+      (previous) =>
+        previous
+          ? {
+              ...previous,
+
+              messages: previous.messages.map((message) =>
+                message.id === optimisticMessageId
+                  ? {
+                      ...message,
+                      status: "error" as const,
+                    }
+                  : message,
+              ),
+            }
+          : previous,
+    );
+  }
   async function refresh(conversationId: string) {
     const detail = await chatApi.getConversation(conversationId);
 
@@ -180,10 +303,15 @@ export function useChatActions() {
 
   async function runStream(
     conversationId: string,
+
     execute: (
       signal: AbortSignal,
       onEvent: (event: ChatStreamEvent) => Promise<void>,
     ) => Promise<void>,
+
+    options?: {
+      optimisticMessageId?: string;
+    },
   ) {
     const existing = controllers.get(conversationId);
 
@@ -209,10 +337,23 @@ export function useChatActions() {
           if (event.type === "message.accepted") {
             if (!composerReset) {
               resetComposer();
+
               composerReset = true;
             }
 
-            await refresh(conversationId);
+            if (options?.optimisticMessageId) {
+              reconcileAcceptedMessage(
+                conversationId,
+                options.optimisticMessageId,
+                event,
+              );
+
+              await queryClient.invalidateQueries({
+                queryKey: queryKeys.conversations,
+              });
+            } else {
+              await refresh(conversationId);
+            }
           }
 
           if (event.type === "message.completed") {
@@ -226,6 +367,12 @@ export function useChatActions() {
         },
       );
     } catch (error) {
+      if (options?.optimisticMessageId) {
+        markOptimisticMessageFailed(
+          conversationId,
+          options.optimisticMessageId,
+        );
+      }
       if (error instanceof DOMException && error.name === "AbortError") {
         return;
       }
@@ -299,6 +446,13 @@ export function useChatActions() {
       return;
     }
 
+    const optimisticMessageId =
+      appendOptimisticUserMessage(
+        conversationId,
+        content,
+        uploaded,
+      );
+
     await runStream(
       conversationId,
 
@@ -315,6 +469,10 @@ export function useChatActions() {
           signal,
           onEvent,
         ),
+
+      {
+        optimisticMessageId,
+      },
     );
   }
 
@@ -430,6 +588,23 @@ export function useChatActions() {
     cancelEdit();
   }
 
+  async function deleteConversation(
+    conversationId: string,
+  ) {
+    await chatApi.deleteConversation(
+      conversationId,
+    );
+
+    await queryClient.invalidateQueries({
+      queryKey: queryKeys.conversations,
+    });
+
+    if (activeConversationId === conversationId) {
+      setActiveConversation(null);
+      cancelEdit();
+    }
+  }
+
   return {
     send,
     resend,
@@ -438,5 +613,6 @@ export function useChatActions() {
     activateBranch,
     selectModel,
     newChat,
+    deleteConversation,
   };
 }

@@ -13,7 +13,7 @@ llm:
   default_provider: "9_router"
   providers:
     bifrost:
-      enabled: false
+      enabled: true
       base_url: "http://127.0.0.1:8080" # Bifrost HTTP sidecar
     openai:
       enabled: true

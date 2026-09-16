@@ -1,5 +1,7 @@
 import {
   GitBranch,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 
 import type {
@@ -10,6 +12,8 @@ import type {
 import {
   basenameModel,
 } from "../lib/format";
+
+import { Dropdown } from "./Dropdown";
 
 interface Props {
   model: string;
@@ -28,6 +32,10 @@ interface Props {
 
   disabled?: boolean;
 
+  sidebarOpen: boolean;
+
+  onToggleSidebar(): void;
+
   onModelChange(
     model: string,
   ): void;
@@ -43,49 +51,86 @@ export function ChatHeader({
   branches,
   activeBranchId,
   disabled,
+  sidebarOpen,
+  onToggleSidebar,
   onModelChange,
   onBranchChange,
 }: Props) {
+  const modelOptions =
+    models?.models.map(
+      (item) => ({
+        value: item.id,
+
+        label: basenameModel(
+          item.id,
+        ),
+      }),
+    ) ?? [];
+
+  const branchOptions =
+    branches?.map(
+      (branch, index) => ({
+        value: branch.id,
+
+        label:
+          branch.label ??
+          (index === 0
+            ? "Main"
+            : `Branch ${
+                index + 1
+              }`),
+      }),
+    ) ?? [];
+
   return (
     <header className="chat-header">
-      <select
-        className="model-select"
-        value={model}
-        disabled={disabled}
-        onChange={(event) =>
-          onModelChange(
-            event.target.value,
-          )
+      <button
+        className="icon-button chat-header__sidebar-toggle"
+        type="button"
+        onClick={
+          onToggleSidebar
         }
-        aria-label="Model"
+        aria-label={
+          sidebarOpen
+            ? "Hide sidebar"
+            : "Show sidebar"
+        }
+        title={
+          sidebarOpen
+            ? "Hide sidebar"
+            : "Show sidebar"
+        }
       >
-        {models?.models.map(
-          (item) => (
-            <option
-              value={item.id}
-              key={item.id}
-            >
-              {basenameModel(
-                item.id,
-              )}
-            </option>
-          ),
+        {sidebarOpen ? (
+          <PanelLeftClose
+            size={17}
+          />
+        ) : (
+          <PanelLeftOpen
+            size={17}
+          />
         )}
+      </button>
 
-        {!models?.models.some(
-          (item) =>
-            item.id === model,
-        ) && (
-          <option value={model}>
-            {basenameModel(model)}
-          </option>
-        )}
-      </select>
+      <div className="chat-header__divider" />
+
+      <Dropdown
+        value={model}
+        options={modelOptions}
+        disabled={disabled}
+        onChange={(value) =>
+          onModelChange(value)
+        }
+      />
+
+      <div className="chat-header__spacer" />
 
       {branches &&
         branches.length > 1 && (
           <label className="branch-select">
-            <GitBranch size={14} />
+            <GitBranch
+              size={14}
+            />
 
             <select
               value={
@@ -95,35 +140,26 @@ export function ChatHeader({
               disabled={
                 disabled
               }
-              onChange={(event) =>
+              onChange={(
+                event,
+              ) =>
                 onBranchChange(
                   event.target
                     .value,
                 )
               }
-              aria-label="Conversation branch"
             >
-              {branches.map(
-                (
-                  branch,
-                  index,
-                ) => (
+              {branchOptions.map(
+                (option) => (
                   <option
                     key={
-                      branch.id
+                      option.value
                     }
                     value={
-                      branch.id
+                      option.value
                     }
                   >
-                    {branch.label ??
-                      (index ===
-                      0
-                        ? "Main"
-                        : `Branch ${
-                            index +
-                            1
-                          }`)}
+                    {option.label}
                   </option>
                 ),
               )}

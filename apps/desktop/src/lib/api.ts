@@ -314,6 +314,17 @@ export const chatApi = {
     );
   },
 
+  deleteConversation(
+    conversationId: string,
+  ): Promise<void> {
+    return request(
+      `/chat/conversations/${conversationId}`,
+      {
+        method: "DELETE",
+      },
+    );
+  },
+
   attachmentContentUrl(
     conversationId: string,
     attachmentId: string,

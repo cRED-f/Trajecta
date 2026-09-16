@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
 } from "react";
 
 import {
@@ -8,7 +9,9 @@ import {
   useConversationList,
 } from "./hooks/use-chat";
 
-import { useChatStore } from "./stores/chat-store";
+import {
+  useChatStore,
+} from "./stores/chat-store";
 
 import {
   Sidebar,
@@ -17,6 +20,10 @@ import {
 import {
   ChatView,
 } from "./components/ChatView";
+
+import {
+  SettingsModal,
+} from "./components/SettingsModal";
 
 export default function App() {
   const activeId =
@@ -31,6 +38,42 @@ export default function App() {
         state.setActiveConversation,
     );
 
+  const sidebarOpen =
+    useChatStore(
+      (state) =>
+        state.sidebarOpen,
+    );
+
+  const toggleSidebar =
+    useChatStore(
+      (state) =>
+        state.toggleSidebar,
+    );
+
+  const theme =
+    useChatStore(
+      (state) =>
+        state.theme,
+    );
+
+  const setTheme =
+    useChatStore(
+      (state) =>
+        state.setTheme,
+    );
+
+  const showsSettings =
+    useChatStore(
+      (state) =>
+        state.showsSettings,
+    );
+
+  const setShowsSettings =
+    useChatStore(
+      (state) =>
+        state.setShowsSettings,
+    );
+
   const conversations =
     useConversationList();
 
@@ -39,6 +82,34 @@ export default function App() {
 
   const actions =
     useChatActions();
+
+  // Resolve "system" to a concrete light/dark value
+  const resolvedTheme = useMemo(() => {
+    if (theme !== "system") {
+      return theme;
+    }
+
+    if (
+      typeof window !==
+        "undefined" &&
+      window.matchMedia
+    ) {
+      return window.matchMedia(
+        "(prefers-color-scheme: dark)",
+      ).matches
+        ? "dark"
+        : "light";
+    }
+
+    return "light";
+  }, [theme]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute(
+      "data-theme",
+      resolvedTheme,
+    );
+  }, [resolvedTheme]);
 
   useEffect(() => {
     function keydown(
@@ -56,9 +127,14 @@ export default function App() {
       }
 
       if (
-        event.key === "Escape"
+        (event.metaKey ||
+          event.ctrlKey) &&
+        event.key.toLowerCase() ===
+          "b"
       ) {
-        void actions.cancel();
+        event.preventDefault();
+
+        toggleSidebar();
       }
     }
 
@@ -72,12 +148,13 @@ export default function App() {
         "keydown",
         keydown,
       );
-  }, [actions]);
+  }, [actions, toggleSidebar]);
 
   useEffect(() => {
     if (
       activeId &&
       conversations.data &&
+      !conversations.isFetching &&
       !conversations.data.some(
         (conversation) =>
           conversation.id ===
@@ -89,28 +166,57 @@ export default function App() {
   }, [
     activeId,
     conversations.data,
+    conversations.isFetching,
     setActive,
   ]);
 
   return (
-    <div className="app-shell">
+    <div
+      className={`app-shell ${
+        sidebarOpen
+          ? ""
+          : "app-shell--sidebar-hidden"
+      }`}>
+
       <Sidebar
         conversations={
           conversations.data
         }
         activeId={activeId}
-        backendOnline={
-          health.isSuccess
-        }
         onNew={
           actions.newChat
         }
         onSelect={
           setActive
         }
+        onDelete={
+          actions.deleteConversation
+        }
+        onOpenSettings={() =>
+          setShowsSettings(true)
+        }
       />
 
-      <ChatView />
+      <ChatView
+        sidebarOpen={
+          sidebarOpen
+        }
+        onToggleSidebar={
+          toggleSidebar
+        }
+      />
+
+      <SettingsModal
+        open={showsSettings}
+        theme={theme}
+        backendOnline={
+          health.isSuccess
+        }
+        onClose={() =>
+          setShowsSettings(false)
+        }
+        onSetTheme={setTheme}
+      />
     </div>
   );
 }

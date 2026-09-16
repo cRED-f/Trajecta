@@ -29,9 +29,23 @@ interface ChatStore {
 
   newConversationModel: string | null;
 
+  sidebarOpen: boolean;
+
+  theme: "light" | "dark" | "system";
+
+  showsSettings: boolean;
+
   streams: Record<string, StreamState>;
 
   setActiveConversation(id: string | null): void;
+
+  toggleSidebar(): void;
+
+  toggleTheme(): void;
+
+  setTheme(theme: "light" | "dark" | "system"): void;
+
+  setShowsSettings(value: boolean): void;
 
   setDraft(value: string): void;
 
@@ -187,6 +201,12 @@ export const useChatStore = create<ChatStore>()(
 
       newConversationModel: null,
 
+      sidebarOpen: true,
+
+      theme: "system",
+
+      showsSettings: false,
+
       streams: {},
 
       setActiveConversation(id) {
@@ -263,6 +283,32 @@ export const useChatStore = create<ChatStore>()(
         set({
           newConversationModel: model,
         });
+      },
+
+      toggleSidebar() {
+        set((state) => ({
+          sidebarOpen:
+            !state.sidebarOpen,
+        }));
+      },
+
+      toggleTheme() {
+        set((state) => ({
+          theme:
+            state.theme === "dark"
+              ? "system"
+              : state.theme === "system"
+                ? "light"
+                : "dark",
+        }));
+      },
+
+      setTheme(theme) {
+        set({ theme });
+      },
+
+      setShowsSettings(value) {
+        set({ showsSettings: value });
       },
 
       beginStream(conversationId) {
@@ -389,10 +435,20 @@ export const useChatStore = create<ChatStore>()(
       storage: createJSONStorage(() => localStorage),
 
       partialize: (state) => ({
-        activeConversationId: state.activeConversationId,
+        activeConversationId:
+          state.activeConversationId,
 
-        newConversationModel: state.newConversationModel,
+        newConversationModel:
+          state.newConversationModel,
+
+        sidebarOpen:
+          state.sidebarOpen,
+
+        theme:
+          state.theme,
       }),
+
+      // showsSettings is session-only (not persisted)
     },
   ),
 );
