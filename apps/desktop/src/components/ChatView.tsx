@@ -7,7 +7,12 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
 } from "react";
+
+import {
+  ArrowDown,
+} from "lucide-react";
 
 import {
   useBranches,
@@ -103,10 +108,13 @@ export function ChatView({
   const actions =
     useChatActions();
 
-  const bottomRef =
+  const scrollRef =
     useRef<HTMLDivElement>(
       null,
     );
+
+  const [scrolledUp, setScrolledUp] =
+    useState(false);
 
   const detail =
     conversationQuery.data;
@@ -125,22 +133,71 @@ export function ChatView({
   const messages =
     detail?.messages ?? [];
 
+  // Keep pinned to the latest text while at the bottom; once the user
+  // scrolls up, stop following and surface a jump-to-latest button.
+  // Pin the container's scrollTop directly — scrollIntoView can land
+  // short while the message is still streaming and re-laying out.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView(
-      {
-        behavior:
-          running
-            ? "instant"
-            : "smooth",
-        block: "end",
-      },
-    );
+    if (!scrolledUp) {
+      const el = scrollRef.current;
+
+      if (el) {
+        el.scrollTop = el.scrollHeight;
+      }
+    }
   }, [
     messages.length,
     stream?.text,
     stream?.tools.length,
     running,
+    scrolledUp,
   ]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+
+    if (!el) {
+      return;
+    }
+
+    function onScroll() {
+      if (!el) {
+        return;
+      }
+
+      const { scrollTop, scrollHeight, clientHeight } = el;
+
+      const atBottom =
+        scrollHeight -
+          scrollTop -
+          clientHeight <
+        80;
+
+      setScrolledUp(!atBottom);
+    }
+
+    el.addEventListener(
+      "scroll",
+      onScroll,
+      { passive: true },
+    );
+
+    return () =>
+      el.removeEventListener(
+        "scroll",
+        onScroll,
+      );
+  }, []);
+
+  function scrollToLatest() {
+    setScrolledUp(false);
+
+    const el = scrollRef.current;
+
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }
 
   const streamVisible =
     Boolean(
@@ -202,7 +259,7 @@ export function ChatView({
         }}
       />
 
-      <div className="chat-scroll">
+      <div className="chat-scroll" ref={scrollRef}>
         <div className="conversation-column">
           {empty && (
             <div className="welcome">
@@ -301,8 +358,18 @@ export function ChatView({
             </article>
           )}
 
-          <div ref={bottomRef} />
-        </div>
+          </div>
+
+        {scrolledUp && (
+          <button
+            className="scroll-to-latest"
+            type="button"
+            onClick={scrollToLatest}
+            aria-label="Jump to latest"
+          >
+            <ArrowDown size={16} />
+          </button>
+        )}
       </div>
 
       <Composer

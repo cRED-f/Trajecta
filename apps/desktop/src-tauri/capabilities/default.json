@@ -4,6 +4,7 @@
   "description": "Default Trajecta desktop permissions",
   "windows": ["main"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "opener:default"
   ]
 }

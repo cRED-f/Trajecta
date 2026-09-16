@@ -97,6 +97,8 @@ function toolArgumentString(value: unknown): string {
   }
 }
 
+let toolSeq = 0;
+
 function updateTool(
   tools: ToolActivity[],
   event: ChatStreamEvent,
@@ -108,18 +110,37 @@ function updateTool(
 
     const name = typeof data.name === "string" ? data.name : undefined;
 
-    const key = id ?? `${name ?? "tool"}-${tools.length}`;
+    // Only the first chunk carries id/name; later chunks stream args.
+    // Key an id-less chunk to the last running tool so all chunks of one
+    // call accumulate into a single activity row.
+    let index = id != null ? tools.findIndex((tool) => tool.id === id) : -1;
 
-    const index = tools.findIndex((tool) => tool.key === key);
+    if (index === -1 && name != null) {
+      index = tools.findIndex(
+        (tool) => tool.id == null && tool.name === name && !tool.result,
+      );
+    }
+
+    if (index === -1) {
+      for (let i = tools.length - 1; i >= 0; i -= 1) {
+        if (tools[i]!.status === "running" && !tools[i]!.result) {
+          index = i;
+
+          break;
+        }
+      }
+    }
 
     const args = toolArgumentString(data.args);
 
     if (index === -1) {
+      toolSeq += 1;
+
       return [
         ...tools,
 
         {
-          key,
+          key: id ?? `tool-${toolSeq}`,
           id,
           name,
           args,
@@ -140,6 +161,8 @@ function updateTool(
       ...current,
 
       name: name ?? current.name,
+
+      id: id ?? current.id,
 
       args: current.args + args,
     };

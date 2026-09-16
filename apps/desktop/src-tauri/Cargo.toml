@@ -25,6 +25,8 @@ tauri = {
     features = []
 }
 
+tauri-plugin-opener = "2"
+
 serde = {
     version = "1",
     features = ["derive"]

@@ -1,9 +1,12 @@
 import {
+  ExternalLink,
   Search,
   Settings,
   SquarePen,
   Trash2,
 } from "lucide-react";
+
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 import {
   useMemo,
@@ -141,12 +144,6 @@ export function Sidebar({
                   "New conversation"}
               </span>
 
-              <span className="conversation-card__preview">
-                {relativeTime(
-                  conversation.updated_at,
-                )}
-              </span>
-
               <button
                 className="conversation-card__delete"
                 type="button"
@@ -160,6 +157,12 @@ export function Sidebar({
               >
                 <Trash2 size={14} />
               </button>
+
+              <span className="conversation-card__preview">
+                {relativeTime(
+                  conversation.updated_at,
+                )}
+              </span>
             </button>
           ),
         )}
@@ -172,11 +175,21 @@ export function Sidebar({
         )}
       </nav>
 
-      <footer
-        className="sidebar-footer sidebar-footer--clickable"
-        onClick={onOpenSettings}
-      >
+      <footer className="sidebar-footer">
         <div className="hairline" />
+
+        <button
+          className="sidebar-item sidebar-item--action"
+          type="button"
+          onClick={() =>
+            void openUrl(
+              "http://127.0.0.1:8080",
+            )
+          }
+        >
+          <ExternalLink size={16} />
+          <span>Bifrost Dashboard</span>
+        </button>
 
         <button
           className="sidebar-item sidebar-item--action"

@@ -245,11 +245,12 @@ select:disabled {
   display: grid;
   grid-template-columns:
     minmax(0, 1fr)
+    auto
     auto;
 
   align-items: center;
 
-  gap: 8px;
+  gap: 6px;
 
   width: 100%;
 
@@ -276,8 +277,6 @@ select:disabled {
 
   width: 24px;
   height: 24px;
-
-  margin-left: 6px;
 
   color: var(--color-hollow);
 
@@ -314,9 +313,13 @@ select:disabled {
 }
 
 .conversation-card__preview {
+  flex: none;
+
+  white-space: nowrap;
+
   color: var(--color-hollow);
 
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .sidebar-empty {
@@ -794,6 +797,39 @@ select:disabled {
 
 .welcome svg {
   color: var(--color-mid-ash);
+}
+
+.scroll-to-latest {
+  position: sticky;
+
+  bottom: 24px;
+
+  display: flex;
+
+  margin: 0 auto;
+
+  width: 36px;
+  height: 36px;
+
+  align-items: center;
+  justify-content: center;
+
+  background: var(--color-graphite-ink);
+
+  color: var(--color-pure-white);
+
+  border-radius: 50%;
+
+  cursor: pointer;
+
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.25);
+
+  transition: opacity 150ms ease;
+}
+
+.scroll-to-latest:hover {
+  opacity: 0.85;
 }
 
 .welcome h1 {
