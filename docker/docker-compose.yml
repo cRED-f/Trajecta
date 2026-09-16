@@ -13,7 +13,7 @@ services:
     ports:
       - "2024:2024"
     volumes:
-      - trajecta-data:/data   # langgraph.db persists across restarts
+      - trajecta-data:/data # langgraph.db persists across restarts
     environment:
       - TRAJECTA_LANGGRAPH_DB=/data/langgraph.db
 

@@ -59,7 +59,7 @@ class BifrostModelFactory:
         base_url = (
             stripped
             if stripped.endswith("/v1")
-            else f"{stripped}/langchain"
+            else f"{stripped}/v1"
         )
 
         return ChatOpenAI(
@@ -67,8 +67,7 @@ class BifrostModelFactory:
             base_url=base_url,
             api_key=virtual_key,
             default_headers={"x-bf-vk": virtual_key},
-
-            # Let Bifrost own retries/fallback behavior.
+            use_responses_api=False,
             max_retries=0,
             timeout=180,
         )

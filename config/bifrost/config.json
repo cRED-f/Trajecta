@@ -1,0 +1,57 @@
+{
+  "$schema": "https://www.getbifrost.ai/schema",
+
+  "client": {
+    "enable_logging": true
+  },
+
+  "providers": {
+    "9router": {
+      "keys": [
+        {
+          "name": "9router-local",
+          "value": "env.TRAJECTA_9_ROUTER_API_KEY",
+          "models": ["*"],
+          "weight": 1.0
+        }
+      ],
+      "network_config": {
+        "base_url": "http://host.docker.internal:20128",
+        "allow_private_network": true,
+        "extra_headers": {
+          "Accept": "application/json"
+        }
+      },
+      "custom_provider_config": {
+        "base_provider_type": "openai"
+      }
+    }
+  },
+
+  "governance": {
+    "virtual_keys": [
+      {
+        "id": "vk-trajecta-local",
+        "name": "trajecta-local",
+        "value": "env.BIFROST_VIRTUAL_KEY",
+        "is_active": true,
+        "provider_configs": [
+          {
+            "provider": "9router",
+            "allowed_models": ["*"],
+            "key_ids": ["*"],
+            "weight": 1.0
+          }
+        ]
+      }
+    ]
+  },
+
+  "config_store": {
+    "enabled": true,
+    "type": "sqlite",
+    "config": {
+      "path": "./config.db"
+    }
+  }
+}

@@ -1,7 +1,4 @@
-import {
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { chatApi } from "../lib/api";
 
@@ -15,27 +12,14 @@ import type {
   ConversationDetail,
 } from "../types/chat";
 
-const controllers = new Map<
-  string,
-  AbortController
->();
+const controllers = new Map<string, AbortController>();
 
 export const queryKeys = {
-  conversations: [
-    "conversations",
-  ] as const,
+  conversations: ["conversations"] as const,
 
-  conversation: (id: string) =>
-    [
-      "conversation",
-      id,
-    ] as const,
+  conversation: (id: string) => ["conversation", id] as const,
 
-  branches: (id: string) =>
-    [
-      "branches",
-      id,
-    ] as const,
+  branches: (id: string) => ["branches", id] as const,
 
   models: ["models"] as const,
 
@@ -44,41 +28,29 @@ export const queryKeys = {
 
 export function useConversationList() {
   return useQuery({
-    queryKey:
-      queryKeys.conversations,
+    queryKey: queryKeys.conversations,
 
-    queryFn:
-      chatApi.listConversations,
+    queryFn: chatApi.listConversations,
 
     refetchOnWindowFocus: true,
   });
 }
 
-export function useConversation(
-  id: string | null,
-) {
+export function useConversation(id: string | null) {
   return useQuery({
-    queryKey: id
-      ? queryKeys.conversation(id)
-      : ["conversation", "none"],
+    queryKey: id ? queryKeys.conversation(id) : ["conversation", "none"],
 
-    queryFn: () =>
-      chatApi.getConversation(id!),
+    queryFn: () => chatApi.getConversation(id!),
 
     enabled: Boolean(id),
   });
 }
 
-export function useBranches(
-  id: string | null,
-) {
+export function useBranches(id: string | null) {
   return useQuery({
-    queryKey: id
-      ? queryKeys.branches(id)
-      : ["branches", "none"],
+    queryKey: id ? queryKeys.branches(id) : ["branches", "none"],
 
-    queryFn: () =>
-      chatApi.listBranches(id!),
+    queryFn: () => chatApi.listBranches(id!),
 
     enabled: Boolean(id),
   });
@@ -88,8 +60,7 @@ export function useModels() {
   return useQuery({
     queryKey: queryKeys.models,
 
-    queryFn:
-      chatApi.listModels,
+    queryFn: chatApi.listModels,
 
     staleTime: 30_000,
   });
@@ -112,111 +83,58 @@ function messageAttachments(
   message: ChatMessage,
 ): Attachment[] {
   return detail.attachments.filter(
-    (attachment) =>
-      attachment.message_id ===
-      message.id,
+    (attachment) => attachment.message_id === message.id,
   );
 }
 
 export function useChatActions() {
-  const queryClient =
-    useQueryClient();
+  const queryClient = useQueryClient();
+  const clearStream = useChatStore((state) => state.clearStream);
 
-  const activeConversationId =
-    useChatStore(
-      (state) =>
-        state.activeConversationId,
-    );
-
-  const setActiveConversation =
-    useChatStore(
-      (state) =>
-        state.setActiveConversation,
-    );
-
-  const draft = useChatStore(
-    (state) => state.draft,
+  const activeConversationId = useChatStore(
+    (state) => state.activeConversationId,
   );
 
-  const files = useChatStore(
-    (state) =>
-      state.pendingFiles,
+  const setActiveConversation = useChatStore(
+    (state) => state.setActiveConversation,
   );
 
-  const composeMode =
-    useChatStore(
-      (state) =>
-        state.composeMode,
-    );
+  const draft = useChatStore((state) => state.draft);
 
-  const newConversationModel =
-    useChatStore(
-      (state) =>
-        state.newConversationModel,
-    );
+  const files = useChatStore((state) => state.pendingFiles);
 
-  const setNewConversationModel =
-    useChatStore(
-      (state) =>
-        state.setNewConversationModel,
-    );
+  const composeMode = useChatStore((state) => state.composeMode);
 
-  const beginStream =
-    useChatStore(
-      (state) =>
-        state.beginStream,
-    );
+  const newConversationModel = useChatStore(
+    (state) => state.newConversationModel,
+  );
 
-  const consumeEvent =
-    useChatStore(
-      (state) =>
-        state.consumeStreamEvent,
-    );
+  const setNewConversationModel = useChatStore(
+    (state) => state.setNewConversationModel,
+  );
 
-  const failStream =
-    useChatStore(
-      (state) =>
-        state.failStream,
-    );
+  const beginStream = useChatStore((state) => state.beginStream);
 
-  const resetComposer =
-    useChatStore(
-      (state) =>
-        state.resetComposer,
-    );
+  const consumeEvent = useChatStore((state) => state.consumeStreamEvent);
 
-  const cancelEdit =
-    useChatStore(
-      (state) =>
-        state.cancelEdit,
-    );
+  const failStream = useChatStore((state) => state.failStream);
 
-  async function refresh(
-    conversationId: string,
-  ) {
-    const detail =
-      await chatApi.getConversation(
-        conversationId,
-      );
+  const resetComposer = useChatStore((state) => state.resetComposer);
 
-    queryClient.setQueryData(
-      queryKeys.conversation(
-        conversationId,
-      ),
-      detail,
-    );
+  const cancelEdit = useChatStore((state) => state.cancelEdit);
+
+  async function refresh(conversationId: string) {
+    const detail = await chatApi.getConversation(conversationId);
+
+    queryClient.setQueryData(queryKeys.conversation(conversationId), detail);
 
     await Promise.all([
       queryClient.invalidateQueries({
-        queryKey:
-          queryKeys.conversations,
+        queryKey: queryKeys.conversations,
       }),
 
       queryClient.invalidateQueries({
-        queryKey:
-          queryKeys.branches(
-            conversationId,
-          ),
+        queryKey: queryKeys.branches(conversationId),
       }),
     ]);
 
@@ -225,58 +143,36 @@ export function useChatActions() {
 
   async function ensureConversation(): Promise<Conversation> {
     if (activeConversationId) {
-      const cached =
-        queryClient.getQueryData<
-          ConversationDetail
-        >(
-          queryKeys.conversation(
-            activeConversationId,
-          ),
-        );
+      const cached = queryClient.getQueryData<ConversationDetail>(
+        queryKeys.conversation(activeConversationId),
+      );
 
       if (cached) {
         return cached;
       }
 
-      return chatApi.getConversation(
-        activeConversationId,
-      );
+      return chatApi.getConversation(activeConversationId);
     }
 
-    const catalog =
-      queryClient.getQueryData<{
-        default_model: string;
-      }>(queryKeys.models);
+    const catalog = queryClient.getQueryData<{
+      default_model: string;
+    }>(queryKeys.models);
 
-    const conversation =
-      await chatApi.createConversation(
-        {
-          model:
-            newConversationModel ??
-            catalog?.default_model ??
-            undefined,
-        },
-      );
+    const conversation = await chatApi.createConversation({
+      model: newConversationModel ?? catalog?.default_model ?? undefined,
+    });
 
-    setActiveConversation(
-      conversation.id,
-    );
+    setActiveConversation(conversation.id);
 
-    queryClient.setQueryData(
-      queryKeys.conversation(
-        conversation.id,
-      ),
-      {
-        ...conversation,
-        branch: null,
-        messages: [],
-        attachments: [],
-      } satisfies ConversationDetail,
-    );
+    queryClient.setQueryData(queryKeys.conversation(conversation.id), {
+      ...conversation,
+      branch: null,
+      messages: [],
+      attachments: [],
+    } satisfies ConversationDetail);
 
     await queryClient.invalidateQueries({
-      queryKey:
-        queryKeys.conversations,
+      queryKey: queryKeys.conversations,
     });
 
     return conversation;
@@ -286,33 +182,20 @@ export function useChatActions() {
     conversationId: string,
     execute: (
       signal: AbortSignal,
-      onEvent: (
-        event: ChatStreamEvent,
-      ) => Promise<void>,
+      onEvent: (event: ChatStreamEvent) => Promise<void>,
     ) => Promise<void>,
   ) {
-    const existing =
-      controllers.get(
-        conversationId,
-      );
+    const existing = controllers.get(conversationId);
 
     if (existing) {
-      throw new Error(
-        "This conversation is already running.",
-      );
+      throw new Error("This conversation is already running.");
     }
 
-    const controller =
-      new AbortController();
+    const controller = new AbortController();
 
-    controllers.set(
-      conversationId,
-      controller,
-    );
+    controllers.set(conversationId, controller);
 
-    beginStream(
-      conversationId,
-    );
+    beginStream(conversationId);
 
     let composerReset = false;
 
@@ -321,143 +204,90 @@ export function useChatActions() {
         controller.signal,
 
         async (event) => {
-          consumeEvent(
-            conversationId,
-            event,
-          );
+          consumeEvent(conversationId, event);
 
-          if (
-            event.type ===
-            "message.accepted"
-          ) {
+          if (event.type === "message.accepted") {
             if (!composerReset) {
               resetComposer();
               composerReset = true;
             }
 
-            await refresh(
-              conversationId,
-            );
+            await refresh(conversationId);
           }
 
-          if (
-            event.type ===
-            "message.completed"
-          ) {
-            await refresh(
-              conversationId,
-            );
+          if (event.type === "message.completed") {
+            await refresh(conversationId);
+            clearStream(conversationId);
           }
 
-          if (
-            event.type ===
-              "run.error" ||
-            event.type ===
-              "run.cancelled"
-          ) {
-            await refresh(
-              conversationId,
-            );
+          if (event.type === "run.error" || event.type === "run.cancelled") {
+            await refresh(conversationId);
           }
         },
       );
     } catch (error) {
-      if (
-        error instanceof DOMException &&
-        error.name ===
-          "AbortError"
-      ) {
+      if (error instanceof DOMException && error.name === "AbortError") {
         return;
       }
 
       failStream(
         conversationId,
 
-        error instanceof Error
-          ? error.message
-          : "Chat request failed.",
+        error instanceof Error ? error.message : "Chat request failed.",
       );
 
       throw error;
     } finally {
-      controllers.delete(
-        conversationId,
-      );
+      controllers.delete(conversationId);
     }
   }
 
   async function send() {
     const content = draft.trim();
 
-    if (
-      !content &&
-      files.length === 0
-    ) {
+    if (!content && files.length === 0) {
       return;
     }
 
-    const conversation =
-      await ensureConversation();
+    const conversation = await ensureConversation();
 
-    const conversationId =
-      conversation.id;
+    const conversationId = conversation.id;
 
     const uploaded =
       files.length > 0
-        ? await chatApi.uploadAttachments(
-            conversationId,
-            files,
-          )
+        ? await chatApi.uploadAttachments(conversationId, files)
         : [];
 
-    const model =
-      conversation.model;
+    const model = conversation.model;
 
-    if (
-      composeMode.kind ===
-      "edit"
-    ) {
-      const detail =
-        await chatApi.getConversation(
-          conversationId,
-        );
+    if (composeMode.kind === "edit") {
+      const detail = await chatApi.getConversation(conversationId);
 
-      const existingAttachments =
-        messageAttachments(
-          detail,
-          composeMode.message,
-        );
+      const existingAttachments = messageAttachments(
+        detail,
+        composeMode.message,
+      );
 
       const attachmentIds =
         uploaded.length > 0
           ? [
-              ...existingAttachments.map(
-                (item) =>
-                  item.id,
-              ),
+              ...existingAttachments.map((item) => item.id),
 
-              ...uploaded.map(
-                (item) =>
-                  item.id,
-              ),
+              ...uploaded.map((item) => item.id),
             ]
           : null;
 
       await runStream(
         conversationId,
 
-        (
-          signal,
-          onEvent,
-        ) =>
+        (signal, onEvent) =>
           chatApi.streamEdit(
             conversationId,
             composeMode.message.id,
 
             {
               content,
-              attachment_ids:
-                attachmentIds,
+              attachment_ids: attachmentIds,
               model,
             },
 
@@ -472,20 +302,13 @@ export function useChatActions() {
     await runStream(
       conversationId,
 
-      (
-        signal,
-        onEvent,
-      ) =>
+      (signal, onEvent) =>
         chatApi.streamMessage(
           conversationId,
 
           {
             content,
-            attachment_ids:
-              uploaded.map(
-                (item) =>
-                  item.id,
-              ),
+            attachment_ids: uploaded.map((item) => item.id),
             model,
           },
 
@@ -495,32 +318,23 @@ export function useChatActions() {
     );
   }
 
-  async function resend(
-    message: ChatMessage,
-  ) {
+  async function resend(message: ChatMessage) {
     if (!activeConversationId) {
       return;
     }
 
-    const detail =
-      await chatApi.getConversation(
-        activeConversationId,
-      );
+    const detail = await chatApi.getConversation(activeConversationId);
 
     await runStream(
       activeConversationId,
 
-      (
-        signal,
-        onEvent,
-      ) =>
+      (signal, onEvent) =>
         chatApi.streamResend(
           activeConversationId,
           message.id,
 
           {
-            model:
-              detail.model,
+            model: detail.model,
           },
 
           signal,
@@ -529,32 +343,23 @@ export function useChatActions() {
     );
   }
 
-  async function regenerate(
-    message: ChatMessage,
-  ) {
+  async function regenerate(message: ChatMessage) {
     if (!activeConversationId) {
       return;
     }
 
-    const detail =
-      await chatApi.getConversation(
-        activeConversationId,
-      );
+    const detail = await chatApi.getConversation(activeConversationId);
 
     await runStream(
       activeConversationId,
 
-      (
-        signal,
-        onEvent,
-      ) =>
+      (signal, onEvent) =>
         chatApi.streamRegenerate(
           activeConversationId,
           message.id,
 
           {
-            model:
-              detail.model,
+            model: detail.model,
           },
 
           signal,
@@ -568,93 +373,58 @@ export function useChatActions() {
       return;
     }
 
-    await chatApi.cancel(
-      activeConversationId,
-    );
+    await chatApi.cancel(activeConversationId);
 
-    controllers
-      .get(activeConversationId)
-      ?.abort();
+    controllers.get(activeConversationId)?.abort();
 
-    controllers.delete(
-      activeConversationId,
-    );
+    controllers.delete(activeConversationId);
   }
 
-  async function activateBranch(
-    branchId: string,
-  ) {
+  async function activateBranch(branchId: string) {
     if (!activeConversationId) {
       return;
     }
 
-    const detail =
-      await chatApi.activateBranch(
-        activeConversationId,
-        branchId,
-      );
+    const detail = await chatApi.activateBranch(activeConversationId, branchId);
 
     queryClient.setQueryData(
-      queryKeys.conversation(
-        activeConversationId,
-      ),
+      queryKeys.conversation(activeConversationId),
       detail,
     );
 
     await queryClient.invalidateQueries({
-      queryKey:
-        queryKeys.branches(
-          activeConversationId,
-        ),
+      queryKey: queryKeys.branches(activeConversationId),
     });
   }
 
-  async function selectModel(
-    model: string,
-  ) {
+  async function selectModel(model: string) {
     if (!activeConversationId) {
-      setNewConversationModel(
-        model,
-      );
+      setNewConversationModel(model);
 
       return;
     }
 
-    const conversation =
-      await chatApi.selectModel(
-        activeConversationId,
-        model,
-      );
+    const conversation = await chatApi.selectModel(activeConversationId, model);
 
-    queryClient.setQueryData<
-      ConversationDetail
-    >(
-      queryKeys.conversation(
-        activeConversationId,
-      ),
+    queryClient.setQueryData<ConversationDetail>(
+      queryKeys.conversation(activeConversationId),
 
       (previous) =>
         previous
           ? {
               ...previous,
-              model:
-                conversation.model,
+              model: conversation.model,
             }
           : previous,
     );
 
     await queryClient.invalidateQueries({
-      queryKey:
-        queryKeys.conversations,
+      queryKey: queryKeys.conversations,
     });
   }
 
   function newChat() {
-    controllers
-      .get(
-        activeConversationId ?? "",
-      )
-      ?.abort();
+    controllers.get(activeConversationId ?? "")?.abort();
 
     setActiveConversation(null);
     cancelEdit();
