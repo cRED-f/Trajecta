@@ -13,6 +13,8 @@ import type {
   SavedMemory,
 } from "../types/chat";
 
+import type { McpCatalog } from "../types/tools";
+
 const API_ROOT =
   import.meta.env.VITE_TRAJECTA_API_URL ??
   "http://127.0.0.1:8000/api/v1";
@@ -206,6 +208,45 @@ export const chatApi = {
 
   listModels(): Promise<ModelCatalog> {
     return request("/models");
+  },
+
+  listMcpTools(): Promise<McpCatalog> {
+    return request("/tools/mcp");
+  },
+
+  refreshMcpTools(): Promise<McpCatalog> {
+    return request("/tools/mcp/refresh", {
+      method: "POST",
+    });
+  },
+
+  setMcpServerEnabled(
+    serverName: string,
+    enabled: boolean,
+  ): Promise<McpCatalog> {
+    return request(
+      `/tools/mcp/servers/${encodeURIComponent(serverName)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ enabled }),
+      },
+    );
+  },
+
+  setMcpToolEnabled(
+    serverName: string,
+    toolName: string,
+    enabled: boolean,
+  ): Promise<McpCatalog> {
+    return request(
+      `/tools/mcp/servers/${encodeURIComponent(
+        serverName,
+      )}/tools/${encodeURIComponent(toolName)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ enabled }),
+      },
+    );
   },
 
   listMemories(

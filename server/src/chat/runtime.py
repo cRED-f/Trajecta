@@ -19,6 +19,7 @@ from server.src.chat.rag import AttachmentRAGIndex
 from server.src.config import Settings
 from server.src.memory.provider import MemoryProvider
 from server.src.tools.personal import PersonalToolProvider
+from server.src.tools.verification import ConnectorVerificationService
 
 logger = logging.getLogger(__name__)
 
@@ -95,12 +96,14 @@ class DeepAgentRuntime:
         mcp: MCPToolProvider,
         rag: AttachmentRAGIndex,
         personal_tools: PersonalToolProvider,
+        verification: ConnectorVerificationService | None = None,
     ) -> None:
         self._settings = settings
         self._memory = memory
         self._mcp = mcp
         self._rag = rag
         self._personal_tools = personal_tools
+        self._verification = verification
         self._models = BifrostModelFactory(settings)
 
     async def prepare(
@@ -144,13 +147,18 @@ class DeepAgentRuntime:
                     f"Checkpoint {base_checkpoint_id!r} does not exist for this conversation"
                 )
 
+        interrupt_policy = self._personal_tools.interrupt_on() or {}
+
+        if self._verification is not None:
+            interrupt_policy.update(self._verification.interrupt_policy())
+
         agent = create_deep_agent(
             model=model,
             tools=tools,
             system_prompt=SYSTEM_PROMPT,
             middleware=[TodoListMiddleware()],
             permissions=self._personal_tools.permissions(),
-            interrupt_on=self._personal_tools.interrupt_on(),
+            interrupt_on=interrupt_policy or None,
             **self._memory.agent_kwargs(),
         )
         return PreparedAgentRun(

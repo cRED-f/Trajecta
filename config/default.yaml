@@ -137,6 +137,16 @@ tools:
 
   discovery_timeout_seconds: 15
 
+  # Independent read-back verification for mutating connector (MCP) tools.
+  # An action is never considered verified from its own return value.
+  connector_verification:
+    enabled: true
+    fail_closed: true
+
+    rules: {}
+
+    http_rules: {}
+
 observability:
   enabled: true
   otlp_endpoint: "http://localhost:4317"

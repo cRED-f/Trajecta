@@ -140,6 +140,26 @@ class SQLiteDatabase:
                 "INSERT INTO schema_version(version) VALUES (8)"
             )
 
+            version = 8
+
+        if version < 9:
+            await self._migrate_v9()
+
+            await self._conn.execute(
+                "INSERT INTO schema_version(version) VALUES (9)"
+            )
+
+            version = 9
+
+        if version < 10:
+            await self._migrate_v10()
+
+            await self._conn.execute(
+                "INSERT INTO schema_version(version) VALUES (10)"
+            )
+
+            version = 10
+
         await self._conn.commit()
 
     async def _migrate_v1(self) -> None:
@@ -657,6 +677,64 @@ class SQLiteDatabase:
                 ON trajectory_replay_fixtures(trajectory_id);
             CREATE INDEX IF NOT EXISTS idx_replay_fixtures_complete
                 ON trajectory_replay_fixtures(complete, created_at);
+            """
+        )
+
+    async def _migrate_v9(self) -> None:
+        """Schema v9: persistent action receipts and independent connector readbacks."""
+        assert self._conn is not None
+        await self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS action_receipts (
+                id TEXT PRIMARY KEY,
+                connector TEXT NOT NULL,
+                action_tool TEXT NOT NULL,
+                resource_type TEXT,
+                resource_id TEXT,
+                status TEXT NOT NULL,
+                action_args TEXT,
+                action_result TEXT,
+                readback_tool TEXT,
+                readback_args TEXT,
+                readback_result TEXT,
+                comparison_result TEXT,
+                created_at TEXT NOT NULL,
+                verified_at TEXT,
+                metadata TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_action_receipts_status
+                ON action_receipts(status, created_at);
+
+            CREATE INDEX IF NOT EXISTS idx_action_receipts_resource
+                ON action_receipts(connector, resource_id);
+
+            CREATE INDEX IF NOT EXISTS idx_action_receipts_tool
+                ON action_receipts(connector, action_tool, created_at);
+            """
+        )
+
+    async def _migrate_v10(self) -> None:
+        """Schema v10: user-configurable MCP server and tool enable/disable preferences."""
+        assert self._conn is not None
+        await self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS mcp_server_preferences (
+                server_name TEXT PRIMARY KEY,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS mcp_tool_preferences (
+                server_name TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (server_name, tool_name)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_mcp_tool_preferences_server
+            ON mcp_tool_preferences(server_name);
             """
         )
 

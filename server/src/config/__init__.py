@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -67,6 +67,79 @@ class SchedulerToolsConfig(BaseModel):
     poll_seconds: float = 5.0
 
 
+class ReadbackComparisonConfig(BaseModel):
+    """One equality/contains/existence check between requested and actual state."""
+
+    actual_path: str
+    expected_from: str | None = None
+    expected_value: Any | None = None
+    operator: Literal["equals", "contains", "exists", "not_exists"] = "equals"
+    required: bool = True
+
+
+class ConnectorVerificationRuleConfig(BaseModel):
+    """One mutating connector action and the independent tool used to verify the resulting state."""
+
+    action_tool: str
+
+    # Usually the same server as the action's server.
+    readback_tool: str | None = None
+    readback_server: str | None = None
+
+    # Try these result paths until a resource identity is found.
+    resource_id_paths: list[str] = Field(
+        default_factory=lambda: [
+            "id",
+            "resource.id",
+            "message.id",
+            "event.id",
+            "task.id",
+            "data.id",
+        ]
+    )
+
+    # Arguments passed to the readback tool. Values beginning with "$" are
+    # expressions: $receipt.resource_id, $action.args.calendar_id, $action.result.id
+    readback_args: dict[str, Any] = Field(default_factory=dict)
+
+    comparisons: list[ReadbackComparisonConfig] = Field(default_factory=list)
+
+    verification_required: bool = True
+
+    manual_only: bool = False
+
+
+class HttpVerificationRuleConfig(BaseModel):
+    method: str
+    url_regex: str
+
+    # If the response contains an ID.
+    resource_id_paths: list[str] = Field(
+        default_factory=lambda: [
+            "json.id",
+            "json.data.id",
+            "json.resource.id",
+        ]
+    )
+
+    # May contain {resource_id}.
+    readback_url_template: str | None = None
+    readback_method: str = "GET"
+
+    comparisons: list[ReadbackComparisonConfig] = Field(default_factory=list)
+
+
+class ConnectorVerificationConfig(BaseModel):
+    enabled: bool = True
+
+    # Fail closed means a mutating operation configured for verification
+    # cannot be reported as successful if readback fails.
+    fail_closed: bool = True
+
+    rules: dict[str, ConnectorVerificationRuleConfig] = Field(default_factory=dict)
+    http_rules: dict[str, HttpVerificationRuleConfig] = Field(default_factory=dict)
+
+
 class ToolsConfig(BaseModel):
     # FastMCP / LangChain MCPConfig shape.
     mcp_servers: dict[str, dict[str, Any]] = Field(default_factory=dict)
@@ -80,6 +153,8 @@ class ToolsConfig(BaseModel):
     browser: BrowserToolsConfig = BrowserToolsConfig()
     computer: ComputerToolsConfig = ComputerToolsConfig()
     scheduler: SchedulerToolsConfig = SchedulerToolsConfig()
+
+    connector_verification: ConnectorVerificationConfig = ConnectorVerificationConfig()
 
 
 class SkillFixtureConfig(BaseModel):

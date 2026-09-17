@@ -75,8 +75,10 @@ class PersonalToolProvider:
         # Read/search/analyse operations intentionally do not appear here.
         names_editable = {
             "http_request",
+            "verified_http_mutation",
             "browser_navigate",
             "browser_click",
+            "browser_submit_and_verify",
             "browser_type",
             "browser_press",
             "browser_download",
@@ -246,8 +248,32 @@ class PersonalToolProvider:
             priority: str = "normal",
             tags: list[str] | None = None,
         ) -> dict[str, Any]:
-            """Create a persistent personal task."""
-            return await store.create_task(title=title, notes=notes, due_at=due_at, priority=priority, tags=tags)
+            """Create a persistent personal task, then independently read it back."""
+            created = await store.create_task(title=title, notes=notes, due_at=due_at, priority=priority, tags=tags)
+
+            task_id = str(created["id"])
+
+            readback = await store.get_task(task_id)
+
+            if readback is None:
+                return {
+                    "ok": False,
+                    "verification_status": "verification_failed",
+                    "task_id": task_id,
+                    "message": "Task insert returned, but independent SQLite readback failed.",
+                }
+
+            verified = (
+                readback.get("title") == title.strip()
+                and readback.get("priority") == priority
+            )
+
+            return {
+                "ok": verified,
+                "verification_status": "verified" if verified else "verification_failed",
+                "task_id": task_id,
+                "readback": readback,
+            }
 
         @tool
         async def task_list(status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
@@ -265,8 +291,8 @@ class PersonalToolProvider:
             clear_due_at: bool = False,
             tags: list[str] | None = None,
         ) -> dict[str, Any]:
-            """Update a persistent personal task, including marking it complete."""
-            return await store.update_task(
+            """Update a persistent personal task, then independently read it back."""
+            updated = await store.update_task(
                 task_id,
                 title=title,
                 notes=notes,
@@ -277,10 +303,57 @@ class PersonalToolProvider:
                 tags=tags,
             )
 
+            readback = await store.get_task(task_id)
+
+            if readback is None:
+                return {
+                    "ok": False,
+                    "verification_status": "verification_failed",
+                    "task_id": task_id,
+                }
+
+            checks: list[bool] = []
+
+            if title is not None:
+                checks.append(readback["title"] == title)
+            if notes is not None:
+                checks.append(readback["notes"] == notes)
+            if status is not None:
+                checks.append(readback["status"] == status)
+            if priority is not None:
+                checks.append(readback["priority"] == priority)
+            if tags is not None:
+                checks.append(readback["tags"] == tags)
+
+            if clear_due_at:
+                checks.append(readback["due_at"] is None)
+            elif due_at is not None:
+                checks.append(readback["due_at"] == due_at)
+
+            verified = all(checks) if checks else True
+
+            return {
+                "ok": verified,
+                "verification_status": "verified" if verified else "verification_failed",
+                "task_id": task_id,
+                "readback": readback,
+            }
+
         @tool
-        async def task_delete(task_id: str) -> bool:
-            """Delete a persistent personal task."""
-            return await store.delete_task(task_id)
+        async def task_delete(task_id: str) -> dict[str, Any]:
+            """Delete a persistent personal task, then independently confirm it is gone."""
+            deleted = await store.delete_task(task_id)
+
+            readback = await store.get_task(task_id)
+
+            verified = deleted and readback is None
+
+            return {
+                "ok": verified,
+                "verification_status": "verified" if verified else "verification_failed",
+                "task_id": task_id,
+                "exists_after_delete": readback is not None,
+            }
 
         @tool
         async def schedule_create(
@@ -384,6 +457,27 @@ class PersonalToolProvider:
                 query=query,
                 json_body=json_body,
                 text_body=text_body,
+            )
+
+        @tool
+        async def verified_http_mutation(
+            method: str,
+            url: str,
+            readback_url: str,
+            headers: dict[str, str] | None = None,
+            json_body: Any | None = None,
+            text_body: str | None = None,
+            expected_json: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            """Mutate an HTTP API and independently GET the resulting resource before reporting success."""
+            return await network.verified_http_mutation(
+                method=method,
+                url=url,
+                headers=headers,
+                json_body=json_body,
+                text_body=text_body,
+                readback_url=readback_url,
+                expected_json=expected_json,
             )
 
         # ---- Rich documents / images / archives -----------------------
@@ -608,7 +702,7 @@ class PersonalToolProvider:
             task_create, task_list, task_update, task_delete,
             schedule_create, schedule_list, schedule_update, schedule_delete,
             notify_user, notification_list, notification_mark_read,
-            web_search, web_extract, rss_read, url_metadata, http_request,
+            web_search, web_extract, rss_read, url_metadata, http_request, verified_http_mutation,
             document_metadata, document_read, document_search, ocr_image, image_metadata, image_transform,
             archive_extract, archive_create,
             media_metadata, media_convert, video_frame, local_speech_to_text, local_text_to_speech,
@@ -635,6 +729,19 @@ class PersonalToolProvider:
             async def browser_click(element_id: str) -> dict[str, Any]:
                 """Click an element id from browser_snapshot. Approval-gated."""
                 return await browser.click(element_id)
+
+            @tool
+            async def browser_submit_and_verify(
+                element_id: str,
+                expected_url_contains: str | None = None,
+                expected_text: str | None = None,
+            ) -> dict[str, Any]:
+                """Submit/click a browser form action and verify the resulting page state."""
+                return await browser.submit_and_verify(
+                    element_id,
+                    expected_url_contains=expected_url_contains,
+                    expected_text=expected_text,
+                )
 
             @tool
             async def browser_type(element_id: str, text: str, submit: bool = False) -> dict[str, Any]:
@@ -705,7 +812,7 @@ class PersonalToolProvider:
                 browser_navigate, browser_snapshot, browser_click, browser_type, browser_press,
                 browser_scroll, browser_back, browser_forward, browser_tabs, browser_select_tab,
                 browser_new_tab, browser_close_tab, browser_screenshot, browser_download,
-                browser_upload, browser_cookies,
+                browser_upload, browser_cookies, browser_submit_and_verify,
             ])
 
         # ---- Full desktop control (opt-in) ----------------------------

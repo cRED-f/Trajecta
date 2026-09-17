@@ -16,6 +16,8 @@ from fastapi.middleware.cors import (
 
 from server.src.api.routes import all_routers
 from server.src.chat import build_chat_service
+from server.src.chat.mcp import MCPToolProvider
+from server.src.chat.mcp_settings import MCPToolSettingsStore
 from server.src.chat.models_catalog import ModelCatalogService
 from server.src.chat.models import ConversationCreate, SendMessageRequest
 from server.src.config import Settings
@@ -23,6 +25,7 @@ from server.src.memory.provider import MemoryProvider, get_memory_provider
 from server.src.skills.service import build_skills_service
 from server.src.tools.personal import PersonalToolProvider
 from server.src.tools.personal.scheduler import SchedulerService
+from server.src.tools.verification import ConnectorVerificationService
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -36,10 +39,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await memory.open()
 
         personal_tools = PersonalToolProvider(settings, memory)
+
+        # One shared connector-verification service so chat and the receipt API
+        # read/write the same receipts.
+        connector_verification = ConnectorVerificationService(settings, memory.sqlite)
+
+        # One shared MCP provider so the settings UI and chat read/write the
+        # same tool preferences.
+        mcp_preferences = MCPToolSettingsStore(memory.sqlite)
+        mcp_tools = MCPToolProvider(
+            settings,
+            mcp_preferences,
+            verification=connector_verification,
+        )
+
         chat = build_chat_service(
             settings,
             memory,
             personal_tools,
+            connector_verification,
+            mcp_tools,
         )
 
         async def run_scheduled_job(job: dict) -> str:
@@ -76,6 +95,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.settings = settings
         app.state.memory_provider = memory
         app.state.personal_tools = personal_tools
+        app.state.connector_verification = connector_verification
+        app.state.mcp_tools = mcp_tools
         app.state.chat_service = chat
         app.state.skills_service = build_skills_service(settings, memory, personal_tools)
         app.state.scheduler = scheduler

@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, unquote, urljoin, urlparse
 import httpx
 
 from server.src.config import Settings
+from server.src.tools.verification.values import get_path
 
 
 class NetworkTools:
@@ -106,6 +107,78 @@ class NetworkTools:
                 "bytes_read": len(raw),
                 "truncated": truncated,
             }
+
+    async def verified_http_mutation(
+        self,
+        *,
+        method: str,
+        url: str,
+        headers: dict[str, str] | None = None,
+        json_body: Any | None = None,
+        text_body: str | None = None,
+        readback_url: str,
+        readback_headers: dict[str, str] | None = None,
+        expected_json: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Perform HTTP mutation, then GET the resource independently.
+
+        The caller must provide an appropriate readback endpoint.
+        """
+        method = method.upper()
+
+        if method not in {"POST", "PUT", "PATCH", "DELETE"}:
+            raise ValueError("verified_http_mutation requires a mutating HTTP method")
+
+        action = await self.http_request(
+            method=method,
+            url=url,
+            headers=headers,
+            json_body=json_body,
+            text_body=text_body,
+        )
+
+        if not (200 <= int(action["status"]) < 300):
+            return {
+                "ok": False,
+                "verification_status": "action_failed",
+                "action": action,
+            }
+
+        readback = await self.http_request(
+            method="GET",
+            url=readback_url,
+            headers=readback_headers or headers,
+        )
+
+        if not (200 <= int(readback["status"]) < 300):
+            return {
+                "ok": False,
+                "verification_status": "verification_failed",
+                "action": action,
+                "readback": readback,
+            }
+
+        comparisons: dict[str, bool] = {}
+
+        if expected_json:
+            actual_json = readback.get("json")
+
+            if not isinstance(actual_json, dict):
+                comparisons["json_object"] = False
+            else:
+                for key, expected in expected_json.items():
+                    actual = get_path(actual_json, key)
+                    comparisons[key] = actual == expected
+
+        verified = all(comparisons.values()) if comparisons else True
+
+        return {
+            "ok": verified,
+            "verification_status": "verified" if verified else "verification_failed",
+            "action": action,
+            "readback": readback,
+            "comparisons": comparisons,
+        }
 
     async def web_search(self, query: str, *, max_results: int = 8) -> list[dict[str, str]]:
         query = query.strip()

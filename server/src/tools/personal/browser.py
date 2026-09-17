@@ -102,6 +102,78 @@ class BrowserManager:
         await page.locator(f'[data-trajecta-id="{element_id}"]').click()
         return {"ok": True, "url": page.url, "title": await page.title()}
 
+    async def submit_and_verify(
+        self,
+        element_id: str,
+        *,
+        expected_url_contains: str | None = None,
+        expected_text: str | None = None,
+        wait_timeout_ms: int | None = None,
+    ) -> dict[str, Any]:
+        """Submit/click an element, then independently read the resulting page state back.
+
+        This proves browser-visible state, not necessarily an external
+        backend side effect.
+        """
+        page = await self._ensure()
+
+        before_url = page.url
+
+        timeout = wait_timeout_ms or self._cfg.default_timeout_ms
+
+        locator = page.locator(f'[data-trajecta-id="{element_id}"]')
+
+        try:
+            async with page.expect_navigation(
+                timeout=timeout,
+                wait_until="domcontentloaded",
+            ):
+                await locator.click()
+        except Exception:
+            # SPA forms often update without navigation.
+            await locator.click()
+            await page.wait_for_timeout(min(1000, timeout))
+
+        after_url = page.url
+
+        body_text = await page.locator("body").inner_text()
+
+        checks: dict[str, bool] = {}
+
+        if expected_url_contains:
+            checks["url"] = expected_url_contains in after_url
+        if expected_text:
+            checks["text"] = expected_text in body_text
+
+        # Without explicit expected state we only know that the UI was readable
+        # after the action.
+        verified = all(checks.values()) if checks else False
+
+        return {
+            "ok": verified,
+            "verification_status": (
+                "verified"
+                if verified
+                else ("needs_review" if not checks else "verification_failed")
+            ),
+            "receipt": {
+                "before_url": before_url,
+                "after_url": after_url,
+                "checks": checks,
+            },
+            "readback": {
+                "url": after_url,
+                "title": await page.title(),
+                "body_text_excerpt": body_text[:4000],
+            },
+            "note": (
+                "Browser readback proves observable UI state only. "
+                "Financial purchases, email sending, account mutations, "
+                "and similar external effects still require connector/API "
+                "readback or manual review."
+            ),
+        }
+
     async def type(self, element_id: str, text: str, *, submit: bool = False) -> dict[str, Any]:
         page = await self._ensure()
         locator = page.locator(f'[data-trajecta-id="{element_id}"]')

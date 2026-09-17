@@ -9,6 +9,7 @@ virtual table in a single transaction for consistency.
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -21,6 +22,21 @@ def _fts_rowid(memory_id: str) -> int:
         hashlib.sha256(memory_id.encode()).digest()[:8],
         "big",
     ) & 0x7FFFFFFFFFFFFFFF
+
+
+def _fts_query(query: str) -> str:
+    """Degrade a free-text query into a safe FTS5 MATCH expression.
+
+    `memory_search` receives arbitrary user phrasing, which FTS5 parses as a
+    query language. A raw phrase like `user's name` or `foo:bar` is a syntax
+    error (and `"` would otherwise break out of quoted phrases), so we split
+    into word tokens and OR them as quoted phrases.
+    """
+    tokens = re.findall(r"[\w-]+", str(query).lower(), flags=re.UNICODE)
+    if not tokens:
+        return '""'
+    # FTS5 OR keeps natural-language queries useful without exposing raw syntax.
+    return " OR ".join(f'"{token.replace(chr(34), "")}"' for token in tokens[:24])
 
 
 class FTSIndex:
@@ -111,11 +127,16 @@ class FTSIndex:
 
         limit = max(1, int(limit))
 
+        fts = _fts_query(query)
+
+        if fts == '""':
+            return []
+
         conditions = [
             "memories_fts MATCH ?",
         ]
 
-        params: list[Any] = [query]
+        params: list[Any] = [fts]
 
         if tier is not None:
             conditions.append("tier = ?")

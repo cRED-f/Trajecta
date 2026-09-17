@@ -35,6 +35,7 @@ from server.src.memory.provider import MemoryProvider
 from server.src.tools.personal import PersonalToolProvider
 from server.src.skills.evaluation.fixtures import ReplayFixtureStore
 from server.src.skills.trajectory_store import TrajectoryStore
+from server.src.tools.verification import ConnectorVerificationService
 
 
 class ConversationNotFound(RuntimeError):
@@ -1000,6 +1001,8 @@ def build_chat_service(
     settings: Settings,
     memory: MemoryProvider,
     personal_tools: PersonalToolProvider | None = None,
+    connector_verification: ConnectorVerificationService | None = None,
+    mcp_tools: MCPToolProvider | None = None,
 ) -> ChatService:
     if memory.sqlite is None:
         raise RuntimeError("MemoryProvider must be opened before ChatService")
@@ -1018,9 +1021,18 @@ def build_chat_service(
         uploads_root=settings.chat.uploads_path,
         config=settings.chat.rag,
     )
-    mcp = MCPToolProvider(settings)
+    verification = connector_verification or ConnectorVerificationService(settings, memory.sqlite)
+    if mcp_tools is None:
+        from server.src.chat.mcp_settings import MCPToolSettingsStore
+
+        mcp_tools = MCPToolProvider(
+            settings,
+            MCPToolSettingsStore(memory.sqlite),
+            verification=verification,
+        )
+    mcp = mcp_tools
     tools = personal_tools or PersonalToolProvider(settings, memory)
-    runtime = DeepAgentRuntime(settings, memory, mcp, rag, tools)
+    runtime = DeepAgentRuntime(settings, memory, mcp, rag, tools, verification=verification)
     runs = ChatRunRegistry()
     trajectories = TrajectoryStore(memory.sqlite)
     replay_fixtures = ReplayFixtureStore(settings, memory.sqlite)

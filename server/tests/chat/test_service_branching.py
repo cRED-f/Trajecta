@@ -17,6 +17,8 @@ from server.src.chat.runtime import PreparedAgentRun
 from server.src.chat.service import ChatService, InvalidAttachment
 from server.src.config import Settings
 from server.src.memory.storage.sqlite import SQLiteDatabase
+from server.src.skills.evaluation.fixtures import ReplayFixtureStore
+from server.src.skills.trajectory_store import TrajectoryStore
 
 
 class DummyAttachments:
@@ -79,18 +81,21 @@ async def test_edit_and_regenerate_create_langgraph_style_branches(tmp_path) -> 
     try:
         repo = ChatRepository(db)
         runtime = FakeRuntime()
+        settings = Settings.model_validate(
+            {
+                "chat": {"default_model": "test/model"},
+                "memory": {"db_path": str(tmp_path / "chat.db")},
+            }
+        )
         service = ChatService(
-            Settings.model_validate(
-                {
-                    "chat": {"default_model": "test/model"},
-                    "memory": {"db_path": str(tmp_path / "chat.db")},
-                }
-            ),
+            settings,
             repo,
             DummyAttachments(),  # type: ignore[arg-type]
             DummyRag(),  # type: ignore[arg-type]
             runtime,  # type: ignore[arg-type]
             ChatRunRegistry(),
+            TrajectoryStore(db),
+            ReplayFixtureStore(settings, db),
         )
         conversation = await service.create_conversation(
             ConversationCreate(model="test/model")
@@ -154,13 +159,19 @@ async def test_invalid_attachment_fails_during_preflight(tmp_path) -> None:
     await db.open()
     try:
         repo = ChatRepository(db)
+        settings = Settings.model_validate(
+            {"chat": {"default_model": "test/model"},
+             "memory": {"db_path": str(tmp_path / "chat.db")}}
+        )
         service = ChatService(
-            Settings.model_validate({"chat": {"default_model": "test/model"}}),
+            settings,
             repo,
             DummyAttachments(),  # type: ignore[arg-type]
             DummyRag(),  # type: ignore[arg-type]
             FakeRuntime(),  # type: ignore[arg-type]
             ChatRunRegistry(),
+            TrajectoryStore(db),
+            ReplayFixtureStore(settings, db),
         )
         conversation = await service.create_conversation(ConversationCreate(model="test/model"))
         with pytest.raises(InvalidAttachment):
