@@ -15,12 +15,10 @@ Because everything runs locally-first, you keep full control: your own LLM gatew
 - [Architecture](#architecture)
 - [Tech Stack](#tech-stack)
 - [Repository Layout](#repository-layout)
-- [API Surface](#api-surface)
 - [Configuration](#configuration)
 - [Getting Started](#getting-started)
 - [Testing & Verification](#testing--verification)
 - [Documentation](#documentation)
-- [Roadmap / Status](#roadmap--status)
 
 ---
 
@@ -500,20 +498,6 @@ pnpm build        # runs `tsc --noEmit` then `vite build`
 - [Evaluation System](evals/REQUIREMENTS.md)
 - [Tool Runtime](server/src/tools/REQUIREMENTS.md)
 - [Docker & Sandboxing](infra-docker/REQUIREMENTS.md)
-
----
-
-## Roadmap / Status
-
-The following are implementation milestones on the Trajecta roadmap:
-
-- [x] Multimodal chat backend: attachments, large-document RAG, preflight-safe SSE, LangGraph branching, model selection APIs.
-- [x] Tauri + React desktop chat UI over the FastAPI/SSE contract.
-- [x] Verified skill learning pipeline: trajectory capture, replay fixtures, mining, evaluation, versioning, promotion, REST APIs.
-- [x] Deterministic permission engine + Settings control center (permissions, memory, skills, scheduled tasks, MCP tools).
-- [ ] Guardrails AI integration in the runtime consumption path (currently deferred in favor of the deterministic policy engine).
-- [ ] Production packaging (installers, code signing), multi-platform builds.
-- [ ] Cloud / hosted deployment options with the local-first runtime intact.
 
 ---
 
