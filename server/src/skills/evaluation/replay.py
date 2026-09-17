@@ -58,6 +58,11 @@ from server.src.memory.provider import (
 )
 
 from server.src.skills.evaluation.fixtures import ReplayFixtureStore
+from server.src.skills.evaluation.tool_verifier import (
+    ToolEffectVerifier,
+    ToolExecutionEvent,
+    ToolVerificationResult,
+)
 from server.src.skills.evaluation.verifier import (
     OutcomeVerificationResult,
     OutcomeVerifier,
@@ -232,6 +237,19 @@ class ReplayResult(
         | None
     ) = None
 
+    tool_events: list[
+        ToolExecutionEvent
+    ] = (
+        Field(
+            default_factory=list
+        )
+    )
+
+    tool_verification: (
+        ToolVerificationResult
+        | None
+    ) = None
+
     metadata: dict[
         str,
         Any,
@@ -344,6 +362,39 @@ class ReplayJudge:
 
                         "judge_reason":
                             result.error,
+                    }
+                )
+            )
+
+        tool_verification = (
+            result.tool_verification
+        )
+
+        # -----------------------------------
+        # Required tool-execution assertion
+        # failed is authoritative.
+        # -----------------------------------
+
+        if (
+            tool_verification is not None
+            and tool_verification.available
+            and tool_verification
+            .required_failures
+            > 0
+        ):
+            return (
+                result.model_copy(
+                    update={
+                        "success":
+                            False,
+
+                        "score":
+                            0.0,
+
+                        "judge_reason":
+                            "required tool "
+                            "execution assertion "
+                            "failed",
                     }
                 )
             )
@@ -486,6 +537,21 @@ class ReplayJudge:
                     else None
                 ),
 
+            "tool_verification":
+                (
+                    result
+                    .tool_verification
+                    .model_dump(
+                        mode="json"
+                    )
+
+                    if result
+                    .tool_verification
+                    is not None
+
+                    else None
+                ),
+
             "rubric":
                 case.rubric
                 or [
@@ -518,15 +584,18 @@ class ReplayJudge:
 
             "instruction": (
                 "Judge observable completion only. "
-                "The observable_state_verification "
-                "contains deterministic evidence from "
-                "the actual post-run environment. "
-                "Treat failed required assertions as "
-                "task failure. Never let confident "
-                "assistant prose override contradictory "
-                "state evidence. Return JSON only with: "
-                "success:boolean, score:number between "
-                "0 and 1, reason:string."
+                "Deterministic filesystem/document "
+                "verification is stronger evidence "
+                "than assistant prose. "
+                "Tool verification proves that a "
+                "tool was actually invoked and "
+                "reported success, but does not by "
+                "itself prove an external real-world "
+                "side effect. Never let confident "
+                "assistant text override failed "
+                "deterministic assertions. "
+                "Return JSON only with success, "
+                "score and reason."
             ),
         }
 
@@ -796,6 +865,10 @@ class DeepAgentReplayExecutor:
             OutcomeVerifier(
                 replay_fixtures
             )
+        )
+
+        self._tool_verifier = (
+            ToolEffectVerifier()
         )
 
     async def run(
@@ -1402,6 +1475,20 @@ class DeepAgentReplayExecutor:
                 set()
             )
 
+            tool_events: list[
+                ToolExecutionEvent
+            ] = []
+
+            pending_tool_calls: dict[
+                str,
+                dict[str, Any],
+            ] = {}
+
+            tool_call_id_to_key: dict[
+                str,
+                str,
+            ] = {}
+
             try:
                 stream = (
                     agent.astream(
@@ -1480,6 +1567,92 @@ class DeepAgentReplayExecutor:
                             token,
                             AIMessageChunk,
                         ):
+                            for call_chunk in (
+                                token.tool_call_chunks
+                                or []
+                            ):
+                                if not isinstance(
+                                    call_chunk,
+                                    Mapping,
+                                ):
+                                    continue
+
+                                call_id = str(
+                                    call_chunk.get(
+                                        "id"
+                                    )
+                                    or ""
+                                )
+
+                                call_index = (
+                                    call_chunk.get(
+                                        "index"
+                                    )
+                                )
+
+                                key = (
+                                    call_id
+                                    or (
+                                        "index:"
+                                        f"{call_index}"
+                                    )
+                                )
+
+                                if not key:
+                                    continue
+
+                                if call_id:
+                                    tool_call_id_to_key[
+                                        call_id
+                                    ] = key
+
+                                pending = (
+                                    pending_tool_calls
+                                    .setdefault(
+                                        key,
+                                        {
+                                            "name": "",
+                                            "args_text": "",
+                                            "args": {},
+                                        },
+                                    )
+                                )
+
+                                name = (
+                                    call_chunk.get(
+                                        "name"
+                                    )
+                                )
+
+                                if name:
+                                    pending[
+                                        "name"
+                                    ] = str(
+                                        name
+                                    )
+
+                                args = (
+                                    call_chunk.get(
+                                        "args"
+                                    )
+                                )
+
+                                if isinstance(
+                                    args,
+                                    str,
+                                ):
+                                    pending[
+                                        "args_text"
+                                    ] += args
+
+                                elif isinstance(
+                                    args,
+                                    dict,
+                                ):
+                                    pending[
+                                        "args"
+                                    ] = args
+
                             if (
                                 source
                                 == "main"
@@ -1526,9 +1699,119 @@ class DeepAgentReplayExecutor:
                             token,
                             ToolMessage,
                         ):
+                            call_id = str(
+                                getattr(
+                                    token,
+                                    "tool_call_id",
+                                    "",
+                                )
+                                or ""
+                            )
+
+                            key = (
+                                tool_call_id_to_key
+                                .get(
+                                    call_id,
+                                    call_id,
+                                )
+                            )
+
+                            pending = (
+                                pending_tool_calls
+                                .get(
+                                    key,
+                                    {},
+                                )
+                            )
+
                             name = str(
                                 token.name
+
+                                or pending.get(
+                                    "name"
+                                )
+
                                 or "unknown"
+                            )
+
+                            arguments = (
+                                pending.get(
+                                    "args"
+                                )
+                            )
+
+                            if not isinstance(
+                                arguments,
+                                dict,
+                            ):
+                                arguments = {}
+
+                            if not arguments:
+                                args_text = str(
+                                    pending.get(
+                                        "args_text"
+                                    )
+                                    or ""
+                                ).strip()
+
+                                if args_text:
+                                    try:
+                                        parsed_args = (
+                                            json.loads(
+                                                args_text
+                                            )
+                                        )
+
+                                        if isinstance(
+                                            parsed_args,
+                                            dict,
+                                        ):
+                                            arguments = (
+                                                parsed_args
+                                            )
+
+                                    except json.JSONDecodeError:
+                                        pass
+
+                            content = (
+                                self
+                                ._content_text(
+                                    token.content
+                                )
+                            )
+
+                            status = str(
+                                getattr(
+                                    token,
+                                    "status",
+                                    "",
+                                )
+                                or "success"
+                            ).lower()
+
+                            tool_events.append(
+                                ToolExecutionEvent(
+                                    name=name,
+
+                                    tool_call_id=(
+                                        call_id
+                                        or None
+                                    ),
+
+                                    status=status,
+
+                                    arguments=arguments,
+
+                                    result_excerpt=(
+                                        content[
+                                            :4000
+                                        ]
+                                    ),
+                                )
+                            )
+
+                            tool_names.append(
+                                name
                             )
 
                             # If this tool previously failed and is being
@@ -1539,20 +1822,11 @@ class DeepAgentReplayExecutor:
                             ):
                                 result.retry_count += 1
 
-                            tool_names.append(
-                                name
-                            )
-
-                            status = str(
-                                getattr(
-                                    token,
-                                    "status",
-                                    "",
-                                )
-                                or ""
-                            ).lower()
-
-                            if status == "error":
+                            if status in {
+                                "error",
+                                "failed",
+                                "failure",
+                            }:
                                 result.tool_errors += 1
 
                                 failed_tools.add(
@@ -1624,6 +1898,20 @@ class DeepAgentReplayExecutor:
 
                 result.output_tokens = (
                     output_tokens
+                )
+
+                result.tool_events = (
+                    tool_events
+                )
+
+                result.tool_verification = (
+                    self
+                    ._tool_verifier
+                    .verify(
+                        case=case,
+
+                        events=tool_events,
+                    )
                 )
 
                 if (

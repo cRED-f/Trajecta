@@ -23,6 +23,9 @@ from server.src.skills.evaluation.fixtures import (
     ReplayFixtureManifest,
     ReplayFixtureStore,
 )
+from server.src.skills.evaluation.format_verifier import (
+    FormatVerifier,
+)
 from server.src.skills.representation.skill import (
     OutcomeAssertion,
     OutcomeAssertionType,
@@ -74,10 +77,17 @@ class OutcomeVerifier:
         OutcomeAssertionType.FILE_JSON_EQUALS: 1.00,
         OutcomeAssertionType.SQLITE_QUERY_EQUALS: 1.00,
         OutcomeAssertionType.SQLITE_ROW_COUNT: 0.80,
+        OutcomeAssertionType.PDF_SEMANTIC_EQUALS: 1.00,
+        OutcomeAssertionType.DOCX_SEMANTIC_EQUALS: 1.00,
+        OutcomeAssertionType.XLSX_SEMANTIC_EQUALS: 1.00,
+        OutcomeAssertionType.CSV_SEMANTIC_EQUALS: 1.00,
+        OutcomeAssertionType.ZIP_SEMANTIC_EQUALS: 1.00,
+        OutcomeAssertionType.IMAGE_SEMANTIC_EQUALS: 1.00,
     }
 
     def __init__(self, fixtures: ReplayFixtureStore) -> None:
         self._fixtures = fixtures
+        self._formats = FormatVerifier(fixtures)
 
     async def verify(
         self,
@@ -187,6 +197,31 @@ class OutcomeVerifier:
         path: Path | None = None
         if assertion.path:
             path = self._resolve_path(assertion.path, workspace=workspace, uploads=uploads)
+
+        format_assertions = {
+            OutcomeAssertionType.PDF_SEMANTIC_EQUALS,
+            OutcomeAssertionType.DOCX_SEMANTIC_EQUALS,
+            OutcomeAssertionType.XLSX_SEMANTIC_EQUALS,
+            OutcomeAssertionType.CSV_SEMANTIC_EQUALS,
+            OutcomeAssertionType.ZIP_SEMANTIC_EQUALS,
+            OutcomeAssertionType.IMAGE_SEMANTIC_EQUALS,
+        }
+
+        if kind in format_assertions:
+            if path is None:
+                raise ValueError("format assertion requires a path")
+
+            verified = await self._formats.verify(assertion, path)
+
+            return self._result(
+                assertion,
+                passed=verified.passed,
+                score=verified.score,
+                strength=strength,
+                reason=verified.reason,
+                actual=verified.actual,
+                expected=verified.expected,
+            )
 
         if kind == OutcomeAssertionType.FILE_EXISTS:
             assert path is not None

@@ -92,6 +92,39 @@ class OutcomeAssertionType(StrEnum):
     FILE_JSON_EQUALS = "file_json_equals"
     SQLITE_QUERY_EQUALS = "sqlite_query_equals"
     SQLITE_ROW_COUNT = "sqlite_row_count"
+    PDF_SEMANTIC_EQUALS = "pdf_semantic_equals"
+    DOCX_SEMANTIC_EQUALS = "docx_semantic_equals"
+    XLSX_SEMANTIC_EQUALS = "xlsx_semantic_equals"
+    CSV_SEMANTIC_EQUALS = "csv_semantic_equals"
+    ZIP_SEMANTIC_EQUALS = "zip_semantic_equals"
+    IMAGE_SEMANTIC_EQUALS = "image_semantic_equals"
+
+
+class ToolAssertionType(StrEnum):
+    TOOL_SUCCEEDED = "tool_succeeded"
+    TOOL_NOT_USED = "tool_not_used"
+    TOOL_CALLS_AT_LEAST = "tool_calls_at_least"
+    TOOL_CALLS_AT_MOST = "tool_calls_at_most"
+
+
+class ToolAssertion(BaseModel):
+    """Assertion over observable tool-execution events.
+
+    Important: tool success is evidence that Trajecta invoked a tool and the
+    tool reported success. It is NOT independent proof that an external
+    service changed. External effects still require read-back/manual
+    verification.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: ToolAssertionType
+    tool_name: str = Field(min_length=1)
+    required: bool = True
+    weight: float = Field(default=1.0, ge=0.0)
+    count: int | None = Field(default=None, ge=0)
+    result_contains: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class OutcomeAssertion(BaseModel):
@@ -132,6 +165,7 @@ class SkillEvalCase(BaseModel):
     expected_contains: list[str] = Field(default_factory=list)
     allowed_tools: list[str] = Field(default_factory=list)
     outcome_assertions: list[OutcomeAssertion] = Field(default_factory=list)
+    tool_assertions: list[ToolAssertion] = Field(default_factory=list)
     mode: EvaluationMode = EvaluationMode.SANDBOX
     source_trajectory_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)

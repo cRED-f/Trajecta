@@ -505,6 +505,85 @@ class ReplayFixtureStore:
     ) -> OutcomeAssertion:
         suffix = host_path.suffix.lower()
 
+        # Structured document formats are compared semantically, so
+        # encoding/metadata/formatting noise does not create false failures.
+        if suffix == ".pdf":
+            return OutcomeAssertion(
+                type=OutcomeAssertionType.PDF_SEMANTIC_EQUALS,
+                path=virtual_path,
+                required=True,
+                weight=1.0,
+                expected_object_sha256=final_hash,
+                similarity_threshold=0.95,
+                metadata={"change": change},
+            )
+
+        if suffix == ".docx":
+            return OutcomeAssertion(
+                type=OutcomeAssertionType.DOCX_SEMANTIC_EQUALS,
+                path=virtual_path,
+                required=True,
+                weight=1.0,
+                expected_object_sha256=final_hash,
+                similarity_threshold=0.95,
+                metadata={"change": change},
+            )
+
+        if suffix in {".xlsx", ".xlsm"}:
+            return OutcomeAssertion(
+                type=OutcomeAssertionType.XLSX_SEMANTIC_EQUALS,
+                path=virtual_path,
+                required=True,
+                weight=1.0,
+                expected_object_sha256=final_hash,
+                similarity_threshold=1.0,
+                metadata={"change": change},
+            )
+
+        if suffix == ".csv":
+            return OutcomeAssertion(
+                type=OutcomeAssertionType.CSV_SEMANTIC_EQUALS,
+                path=virtual_path,
+                required=True,
+                weight=1.0,
+                expected_object_sha256=final_hash,
+                similarity_threshold=1.0,
+                metadata={"change": change},
+            )
+
+        if suffix == ".zip":
+            return OutcomeAssertion(
+                type=OutcomeAssertionType.ZIP_SEMANTIC_EQUALS,
+                path=virtual_path,
+                required=True,
+                weight=1.0,
+                expected_object_sha256=final_hash,
+                metadata={"change": change},
+            )
+
+        if suffix in {
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".webp",
+            ".bmp",
+            ".gif",
+            ".tif",
+            ".tiff",
+        }:
+            return OutcomeAssertion(
+                type=OutcomeAssertionType.IMAGE_SEMANTIC_EQUALS,
+                path=virtual_path,
+                required=True,
+                weight=1.0,
+                expected_object_sha256=final_hash,
+                # Allows encoding/resampling differences while still
+                # requiring same dimensions and highly similar visual
+                # content.
+                similarity_threshold=0.85,
+                metadata={"change": change},
+            )
+
         # JSON can be compared structurally, so whitespace/order formatting
         # does not create false failures.
         if suffix in _JSON_EXTENSIONS:
