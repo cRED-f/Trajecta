@@ -63,7 +63,10 @@ interface ChatStore {
 
   setNewConversationModel(model: string | null): void;
 
-  beginStream(conversationId: string): void;
+  beginStream(
+    conversationId: string,
+    preserve?: boolean,
+  ): void;
 
   consumeStreamEvent(conversationId: string, event: ChatStreamEvent): void;
 
@@ -334,17 +337,32 @@ export const useChatStore = create<ChatStore>()(
         set({ showsSettings: value });
       },
 
-      beginStream(conversationId) {
-        set((state) => ({
-          streams: {
-            ...state.streams,
+      beginStream(
+        conversationId,
+        preserve = false,
+      ) {
+        set((state) => {
+          const current =
+            state.streams[conversationId] ??
+            EMPTY_STREAM;
 
-            [conversationId]: {
-              ...EMPTY_STREAM,
-              running: true,
+          return {
+            streams: {
+              ...state.streams,
+
+              [conversationId]: preserve
+                ? {
+                    ...current,
+                    running: true,
+                    error: null,
+                  }
+                : {
+                    ...EMPTY_STREAM,
+                    running: true,
+                  },
             },
-          },
-        }));
+          };
+        });
       },
 
       consumeStreamEvent(conversationId, event) {
@@ -405,6 +423,7 @@ export const useChatStore = create<ChatStore>()(
 
           if (
             event.type === "run.cancelled" ||
+            event.type === "run.interrupted" ||
             event.type === "message.completed"
           ) {
             next = {

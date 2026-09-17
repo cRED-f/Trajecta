@@ -1,6 +1,7 @@
 import { consumeSSE } from "./sse";
 
 import type {
+  ApprovalDecision,
   Attachment,
   ChatBranch,
   ChatStreamEvent,
@@ -8,6 +9,7 @@ import type {
   ConversationDetail,
   HealthResponse,
   ModelCatalog,
+  PendingApproval,
 } from "../types/chat";
 
 const API_ROOT =
@@ -298,6 +300,43 @@ export const chatApi = {
     return streamRequest(
       `/chat/conversations/${conversationId}/messages/${messageId}/regenerate/stream`,
       body,
+      signal,
+      onEvent,
+    );
+  },
+
+  async getPendingApproval(
+    conversationId: string,
+  ): Promise<PendingApproval | null> {
+    try {
+      return await request(
+        `/chat/conversations/${conversationId}/approval`,
+      );
+    } catch (error) {
+      if (
+        error instanceof ApiError &&
+        error.status === 404
+      ) {
+        return null;
+      }
+
+      throw error;
+    }
+  },
+
+  streamApproval(
+    conversationId: string,
+    decisions: ApprovalDecision[],
+    signal: AbortSignal,
+    onEvent: (
+      event: ChatStreamEvent,
+    ) => void | Promise<void>,
+  ) {
+    return streamRequest(
+      `/chat/conversations/${conversationId}/approval/stream`,
+      {
+        decisions,
+      },
       signal,
       onEvent,
     );

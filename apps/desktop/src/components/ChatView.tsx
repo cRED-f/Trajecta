@@ -19,6 +19,7 @@ import {
   useChatActions,
   useConversation,
   useModels,
+  usePendingApproval,
 } from "../hooks/use-chat";
 
 import { useChatStore } from "../stores/chat-store";
@@ -38,6 +39,10 @@ import {
 import {
   StreamActivity,
 } from "./StreamActivity";
+
+import {
+  ApprovalModal,
+} from "./ApprovalModal";
 
 import type {
   Attachment,
@@ -105,6 +110,11 @@ export function ChatView({
   const modelQuery =
     useModels();
 
+  const approvalQuery =
+    usePendingApproval(
+      activeId,
+    );
+
   const actions =
     useChatActions();
 
@@ -129,6 +139,10 @@ export function ChatView({
   const running =
     stream?.running ??
     false;
+
+const approval =
+    approvalQuery.data ??
+    null;
 
   const messages =
     detail?.messages ?? [];
@@ -236,7 +250,10 @@ export function ChatView({
         activeBranchId={
           branchId
         }
-        disabled={running}
+        disabled={
+          running ||
+          Boolean(approval)
+        }
         sidebarOpen={
           sidebarOpen
         }
@@ -371,6 +388,19 @@ export function ChatView({
           </button>
         )}
       </div>
+
+      <ApprovalModal
+        approval={approval}
+        submitting={running && Boolean(approval)}
+        error={
+          approvalQuery.error instanceof Error
+            ? approvalQuery.error.message
+            : null
+        }
+        onSubmit={async (decisions) => {
+          await actions.resumeApproval(decisions);
+        }}
+      />
 
       <Composer
         running={running}

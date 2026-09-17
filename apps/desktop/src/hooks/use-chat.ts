@@ -5,6 +5,7 @@ import { chatApi } from "../lib/api";
 import { useChatStore } from "../stores/chat-store";
 
 import type {
+  ApprovalDecision,
   Attachment,
   ChatMessage,
   ChatStreamEvent,
@@ -24,6 +25,8 @@ export const queryKeys = {
   models: ["models"] as const,
 
   health: ["health"] as const,
+
+  approval: (id: string) => ["approval", id] as const,
 };
 
 export function useConversationList() {
@@ -63,6 +66,23 @@ export function useModels() {
     queryFn: chatApi.listModels,
 
     staleTime: 30_000,
+  });
+}
+
+export function usePendingApproval(
+  id: string | null,
+) {
+  return useQuery({
+    queryKey: id
+      ? queryKeys.approval(id)
+      : ["approval", "none"],
+
+    queryFn: () =>
+      chatApi.getPendingApproval(id!),
+
+    enabled: Boolean(id),
+
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -311,6 +331,7 @@ export function useChatActions() {
 
     options?: {
       optimisticMessageId?: string;
+      preserveStream?: boolean;
     },
   ) {
     const existing = controllers.get(conversationId);
@@ -323,7 +344,10 @@ export function useChatActions() {
 
     controllers.set(conversationId, controller);
 
-    beginStream(conversationId);
+    beginStream(
+      conversationId,
+      options?.preserveStream ?? false,
+    );
 
     let composerReset = false;
 
@@ -358,7 +382,20 @@ export function useChatActions() {
 
           if (event.type === "message.completed") {
             await refresh(conversationId);
+
             clearStream(conversationId);
+
+            await queryClient.invalidateQueries({
+              queryKey: queryKeys.approval(conversationId),
+            });
+          }
+
+          if (event.type === "run.interrupted") {
+            await refresh(conversationId);
+
+            await queryClient.invalidateQueries({
+              queryKey: queryKeys.approval(conversationId),
+            });
           }
 
           if (event.type === "run.error" || event.type === "run.cancelled") {
@@ -526,6 +563,51 @@ export function useChatActions() {
     );
   }
 
+  async function resumeApproval(
+    decisions: ApprovalDecision[],
+  ) {
+    if (!activeConversationId) {
+      return;
+    }
+
+    const conversationId =
+      activeConversationId;
+
+    // Close the permission window immediately.
+    // If resume fails, we refetch and show it again.
+    queryClient.setQueryData(
+      queryKeys.approval(conversationId),
+      null,
+    );
+
+    try {
+      await runStream(
+        conversationId,
+
+        (signal, onEvent) =>
+          chatApi.streamApproval(
+            conversationId,
+            decisions,
+            signal,
+            onEvent,
+          ),
+
+        {
+          preserveStream: true,
+        },
+      );
+    } catch (error) {
+      await queryClient.invalidateQueries({
+        queryKey:
+          queryKeys.approval(
+            conversationId,
+          ),
+      });
+
+      throw error;
+    }
+  }
+
   async function cancel() {
     if (!activeConversationId) {
       return;
@@ -609,6 +691,7 @@ export function useChatActions() {
     send,
     resend,
     regenerate,
+    resumeApproval,
     cancel,
     activateBranch,
     selectModel,

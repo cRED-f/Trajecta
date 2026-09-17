@@ -98,6 +98,54 @@ export interface ModelCatalog {
   gateway_reachable: boolean;
 }
 
+export type ApprovalDecisionType =
+  | "approve"
+  | "edit"
+  | "reject"
+  | "respond";
+
+export interface ApprovalActionRequest {
+  name: string;
+  args: Record<string, unknown>;
+  description?: string;
+}
+
+export interface ApprovalReviewConfig {
+  action_name: string;
+  allowed_decisions: ApprovalDecisionType[];
+  args_schema?: Record<string, unknown>;
+}
+
+export interface ApprovalInterruptData {
+  action_requests?: ApprovalActionRequest[];
+  review_configs?: ApprovalReviewConfig[];
+  interrupts?: ApprovalInterruptData[];
+}
+
+export interface PendingApproval {
+  id: string;
+  conversation_id: string;
+  branch_id: string;
+  thread_id: string;
+  checkpoint_id: string;
+  user_message_id: string;
+  model_name: string;
+  interrupt_data: ApprovalInterruptData;
+  partial_text: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApprovalDecision {
+  type: ApprovalDecisionType;
+  message?: string;
+
+  edited_action?: {
+    name: string;
+    args: Record<string, unknown>;
+  };
+}
+
 export interface ChatStreamEvent {
   type: string;
   conversation_id: string;
