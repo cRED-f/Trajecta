@@ -122,6 +122,15 @@ class SQLiteDatabase:
                 "INSERT INTO schema_version(version) VALUES (6)"
             )
 
+            version = 6
+
+        if version < 7:
+            await self._migrate_v7()
+
+            await self._conn.execute(
+                "INSERT INTO schema_version(version) VALUES (7)"
+            )
+
         await self._conn.commit()
 
     async def _migrate_v1(self) -> None:
@@ -572,6 +581,50 @@ class SQLiteDatabase:
             );
             CREATE INDEX IF NOT EXISTS idx_pending_approvals_branch
                 ON pending_approvals(branch_id);
+            """
+        )
+
+    async def _migrate_v7(self) -> None:
+        """Schema v7: immutable skill versions + baseline/candidate evaluations."""
+        assert self._conn is not None
+        await self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS skill_versions (
+                id TEXT PRIMARY KEY,
+                skill_name TEXT NOT NULL,
+                version TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'staged',
+                bundle_json TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                source_candidate_id TEXT,
+                source_evaluation_id TEXT,
+                created_at TEXT NOT NULL,
+                metadata TEXT,
+                UNIQUE(skill_name, version)
+            );
+
+            CREATE TABLE IF NOT EXISTS skill_evaluations (
+                id TEXT PRIMARY KEY,
+                candidate_id TEXT NOT NULL,
+                skill_name TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                completed_at TEXT,
+                verdict TEXT,
+                baseline_metrics TEXT,
+                candidate_metrics TEXT,
+                comparison TEXT,
+                case_results TEXT,
+                metadata TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_skill_versions_name
+                ON skill_versions(skill_name, created_at);
+            CREATE INDEX IF NOT EXISTS idx_skill_versions_status
+                ON skill_versions(status, created_at);
+            CREATE INDEX IF NOT EXISTS idx_skill_evaluations_candidate
+                ON skill_evaluations(candidate_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_skill_evaluations_name
+                ON skill_evaluations(skill_name, created_at);
             """
         )
 

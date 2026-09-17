@@ -151,3 +151,74 @@ class TrajectoryStore:
             value["metadata"] = _loads(value.get("metadata"), {})
             result.append(value)
         return result
+
+    async def list_with_tasks(
+        self,
+        *,
+        outcome: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Return trajectories together with their original task goal.
+
+        SkillMiner needs the goal, not only raw event steps.
+        """
+        limit = max(1, min(limit, 500))
+
+        if outcome:
+            rows = await self._db.fetch(
+                """
+                SELECT tr.*, t.goal AS goal, t.result AS task_result,
+                       t.status AS task_status, t.thread_id AS thread_id,
+                       t.user_id AS user_id, t.metadata AS task_metadata
+                FROM trajectories tr
+                JOIN tasks t ON t.id = tr.task_id
+                WHERE tr.outcome = ?
+                ORDER BY tr.created_at DESC
+                LIMIT ?
+                """,
+                (outcome, limit),
+            )
+        else:
+            rows = await self._db.fetch(
+                """
+                SELECT tr.*, t.goal AS goal, t.result AS task_result,
+                       t.status AS task_status, t.thread_id AS thread_id,
+                       t.user_id AS user_id, t.metadata AS task_metadata
+                FROM trajectories tr
+                JOIN tasks t ON t.id = tr.task_id
+                ORDER BY tr.created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            value = dict(row)
+            value["steps"] = _loads(value.get("steps"), [])
+            value["metadata"] = _loads(value.get("metadata"), {})
+            value["task_metadata"] = _loads(value.get("task_metadata"), {})
+            result.append(value)
+        return result
+
+    async def get_with_task(self, trajectory_id: str) -> dict[str, Any] | None:
+        rows = await self._db.fetch(
+            """
+            SELECT tr.*, t.goal AS goal, t.result AS task_result,
+                   t.status AS task_status, t.thread_id AS thread_id,
+                   t.user_id AS user_id, t.metadata AS task_metadata
+            FROM trajectories tr
+            JOIN tasks t ON t.id = tr.task_id
+            WHERE tr.id = ?
+            LIMIT 1
+            """,
+            (trajectory_id,),
+        )
+        if not rows:
+            return None
+
+        value = dict(rows[0])
+        value["steps"] = _loads(value.get("steps"), [])
+        value["metadata"] = _loads(value.get("metadata"), {})
+        value["task_metadata"] = _loads(value.get("task_metadata"), {})
+        return value
