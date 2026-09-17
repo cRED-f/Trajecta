@@ -382,26 +382,6 @@ trajecta/
 └── .trajecta/                # Local agent state (DBs, uploads, skills cache)
 ```
 
----
-
-## API Surface
-
-All routes are mounted under `/api/v1`.
-
-| Area        | Routes                                                                                                                                                                                                                                                                                                                              |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Chat | `POST/GET /chat/conversations`, `GET /chat/conversations/{id}`, `PUT /chat/conversations/{id}/branches/{id}/activate`, `PUT /chat/conversations/{id}/model`, `POST /chat/conversations/{id}/messages/stream`, `POST /chat/conversations/{id}/messages/{msg_id}/{edit,resend,regenerate}/stream`, `POST /chat/conversations/{id}/attachments`, `GET/POST /chat/conversations/{id}/approval`, `DELETE /chat/conversations/{id}`, `POST /chat/conversations/{id}/cancel` |
-| Memory      | `GET /memory` (settings + counts + items), `PATCH /memory/settings`, `GET /memory/semantic/{key}`, `GET/POST /memory/{type}`, `DELETE /memory/{type}/{key}`                                                                                                                                                                         |
-| Permissions | `GET /permissions`, `PATCH /permissions/{permission_id}`                                                                                                                                                                                                                                                                            |
-| Skills      | `GET /skills` (registry + candidates + summary), `POST /skills/candidates/{id}/evaluate`, `POST /skills/candidates/{id}/promote`, `POST /skills/candidates/{id}/reject`, `GET /skills/candidates/{id}`, `GET /skills/evaluations`, `GET /skills/fixtures/{id}`, `GET /skills/{name}` + `…/versions`, `PATCH /skills/{name}/enabled` |
-| Tasks       | `GET/POST /tasks/schedules`, `GET/PATCH/DELETE /tasks/schedules/{job_id}`                                                                                                                                                                                                                                                           |
-| Tools / MCP | `GET /tools`, `GET/POST /tools/mcp`, `PATCH /tools/mcp/servers/{server}`, `PATCH /tools/mcp/servers/{server}/tools/{tool}`, `GET /tools/receipts/{id}`                                                                                                                                                                              |
-| Models      | `GET /models`                                                                                                                                                                                                                                                                                                                       |
-| Traces      | `GET /traces` (OTel traces)                                                                                                                                                                                                                                                                                                         |
-| Health      | `GET /health`                                                                                                                                                                                                                                                                                                                       |
-
----
-
 ## Configuration
 
 Configuration lives in `config/default.yaml` and is loaded through `server/src/config` (Pydantic-settings). Key sections:
