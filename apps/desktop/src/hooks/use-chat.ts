@@ -27,6 +27,8 @@ export const queryKeys = {
   health: ["health"] as const,
 
   approval: (id: string) => ["approval", id] as const,
+
+  memories: ["memories"] as const,
 };
 
 export function useConversationList() {
@@ -81,6 +83,16 @@ export function usePendingApproval(
       chatApi.getPendingApproval(id!),
 
     enabled: Boolean(id),
+
+    refetchOnWindowFocus: true,
+  });
+}
+
+export function useSavedMemories() {
+  return useQuery({
+    queryKey: queryKeys.memories,
+
+    queryFn: () => chatApi.listMemories("semantic"),
 
     refetchOnWindowFocus: true,
   });
@@ -608,6 +620,27 @@ export function useChatActions() {
     }
   }
 
+  async function saveMemory(
+    key: string,
+    content: string,
+  ) {
+    await chatApi.saveMemory("semantic", { key, content });
+
+    await queryClient.invalidateQueries({
+      queryKey: queryKeys.memories,
+    });
+  }
+
+  async function deleteMemory(
+    key: string,
+  ) {
+    await chatApi.deleteMemory("semantic", key);
+
+    await queryClient.invalidateQueries({
+      queryKey: queryKeys.memories,
+    });
+  }
+
   async function cancel() {
     if (!activeConversationId) {
       return;
@@ -697,5 +730,7 @@ export function useChatActions() {
     selectModel,
     newChat,
     deleteConversation,
+    saveMemory,
+    deleteMemory,
   };
 }

@@ -20,6 +20,7 @@ import {
   useConversation,
   useModels,
   usePendingApproval,
+  useSavedMemories,
 } from "../hooks/use-chat";
 
 import { useChatStore } from "../stores/chat-store";
@@ -43,6 +44,10 @@ import {
 import {
   ApprovalModal,
 } from "./ApprovalModal";
+
+import {
+  MemoryPanel,
+} from "./MemoryPanel";
 
 import type {
   Attachment,
@@ -113,6 +118,21 @@ export function ChatView({
   const approvalQuery =
     usePendingApproval(
       activeId,
+    );
+
+  const memoryQuery =
+    useSavedMemories();
+
+  const memoryPanelOpen =
+    useChatStore(
+      (state) =>
+        state.memoryPanelOpen,
+    );
+
+  const setMemoryPanelOpen =
+    useChatStore(
+      (state) =>
+        state.setMemoryPanelOpen,
     );
 
   const actions =
@@ -388,6 +408,23 @@ const approval =
           </button>
         )}
       </div>
+
+      {memoryPanelOpen && (
+        <MemoryPanel
+          memories={memoryQuery.data}
+          loading={memoryQuery.isLoading}
+          error={
+            memoryQuery.error instanceof Error
+              ? memoryQuery.error.message
+              : null
+          }
+          onClose={() =>
+            setMemoryPanelOpen(false)
+          }
+          onSave={actions.saveMemory}
+          onDelete={actions.deleteMemory}
+        />
+      )}
 
       <ApprovalModal
         approval={approval}

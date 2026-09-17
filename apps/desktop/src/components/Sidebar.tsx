@@ -1,4 +1,5 @@
 import {
+  BookMarked,
   ExternalLink,
   Search,
   Settings,
@@ -36,6 +37,8 @@ interface Props {
 
   onDelete(id: string): void;
 
+  onOpenMemory(): void;
+
   onOpenSettings(): void;
 }
 
@@ -45,6 +48,7 @@ export function Sidebar({
   onNew,
   onSelect,
   onDelete,
+  onOpenMemory,
   onOpenSettings,
 }: Props) {
   const [search, setSearch] =
@@ -177,6 +181,15 @@ export function Sidebar({
 
       <footer className="sidebar-footer">
         <div className="hairline" />
+
+        <button
+          className="sidebar-item sidebar-item--action"
+          type="button"
+          onClick={onOpenMemory}
+        >
+          <BookMarked size={16} />
+          <span>Saved memory</span>
+        </button>
 
         <button
           className="sidebar-item sidebar-item--action"

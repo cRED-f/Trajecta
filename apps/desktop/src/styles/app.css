@@ -345,6 +345,76 @@ select:disabled {
   margin-top: 8px;
 }
 
+.saved-memory {
+  display: flex;
+  flex-direction: column;
+
+  gap: 4px;
+
+  max-height: 190px;
+
+  overflow-y: auto;
+
+  margin: 2px 2px 8px;
+
+  padding-right: 4px;
+}
+
+.saved-memory__label {
+  padding: 6px 8px 2px;
+
+  color: var(--color-hollow);
+
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.saved-memory__empty {
+  padding: 4px 8px 8px;
+
+  color: var(--color-hollow);
+
+  font-size: 12px;
+}
+
+.saved-memory__item {
+  display: flex;
+  flex-direction: column;
+
+  gap: 1px;
+
+  padding: 6px 8px;
+
+  color: var(--color-graphite-ink);
+
+  border-radius: 9px;
+}
+
+.saved-memory__item:hover {
+  background: var(--color-hover-veil);
+}
+
+.saved-memory__key {
+  font-size: 12px;
+  font-weight: 600;
+
+  text-transform: capitalize;
+
+  color: var(--color-graphite-ink);
+}
+
+.saved-memory__snippet {
+  color: var(--color-mid-ash);
+
+  font-size: 11px;
+  line-height: 1.4;
+
+  white-space: nowrap;
+
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* -------------------------------- */
 /* Settings modal                   */
 /* -------------------------------- */
@@ -2048,5 +2118,339 @@ select:disabled {
 
   .approval-continue {
     width: 100%;
+  }
+}
+
+/* -------------------------------- */
+/* Saved memory panel               */
+/* -------------------------------- */
+
+.memory-panel {
+  position: absolute;
+  top: 52px;
+  right: 0;
+  bottom: 0;
+
+  display: flex;
+  flex-direction: column;
+
+  z-index: 30;
+
+  width: min(380px, 100%);
+
+  border-left: 1px solid var(--color-hairline);
+
+  background: var(--surface-elevated-panel);
+
+  box-shadow: -12px 0 28px rgba(0, 0, 0, 0.08);
+}
+
+.memory-panel__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+
+  gap: 12px;
+
+  padding: 16px 18px 12px;
+
+  border-bottom: 1px solid var(--color-hairline);
+}
+
+.memory-panel__header h2 {
+  margin: 0;
+
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.memory-panel__header p {
+  margin: 3px 0 0;
+
+  color: var(--color-mid-ash);
+
+  font-size: 12px;
+}
+
+.memory-panel__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 28px;
+  height: 28px;
+
+  color: var(--color-hollow);
+
+  background: transparent;
+
+  border: 0;
+  border-radius: 8px;
+
+  cursor: pointer;
+}
+
+.memory-panel__close:hover {
+  background: var(--color-hover-veil);
+}
+
+.memory-panel__body {
+  flex: 1;
+
+  min-height: 0;
+
+  overflow-y: auto;
+
+  padding: 14px 16px 18px;
+}
+
+.memory-form {
+  display: flex;
+  flex-direction: column;
+
+  gap: 10px;
+
+  padding: 14px;
+
+  background: var(--surface-conversation-canvas);
+
+  border: 1px solid var(--color-hairline);
+
+  border-radius: 12px;
+}
+
+.memory-form__title {
+  color: var(--color-mid-ash);
+
+  font-size: 11px;
+  font-weight: 600;
+
+  letter-spacing: 0.04em;
+
+  text-transform: uppercase;
+}
+
+.memory-form__field {
+  display: flex;
+  flex-direction: column;
+
+  gap: 5px;
+}
+
+.memory-form__field > span {
+  color: var(--color-mid-ash);
+
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.memory-form__field input,
+.memory-form__field textarea {
+  width: 100%;
+
+  padding: 9px 10px;
+
+  color: var(--color-graphite-ink);
+
+  background: var(--surface-conversation-canvas);
+
+  border: 1px solid var(--color-hairline);
+
+  border-radius: 8px;
+
+  outline: 0;
+
+  font: inherit;
+  font-size: 13px;
+}
+
+.memory-form__field input:focus,
+.memory-form__field textarea:focus {
+  border-color: var(--color-hollow);
+}
+
+.memory-form__field textarea {
+  resize: vertical;
+}
+
+.memory-form__actions {
+  display: flex;
+  justify-content: flex-end;
+
+  gap: 8px;
+}
+
+.memory-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  gap: 6px;
+
+  padding: 7px 12px;
+
+  border-radius: 8px;
+
+  cursor: pointer;
+
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.memory-btn:disabled {
+  cursor: not-allowed;
+
+  opacity: 0.5;
+}
+
+.memory-btn--primary {
+  color: var(--color-pure-white);
+
+  background: var(--color-graphite-ink);
+
+  border: 0;
+}
+
+.memory-btn--ghost {
+  color: var(--color-mid-ash);
+
+  background: transparent;
+
+  border: 1px solid var(--color-hairline);
+}
+
+[data-theme="dark"] .memory-btn--primary {
+  background: var(--color-ink-press);
+}
+
+.memory-form__error {
+  padding: 8px 10px;
+
+  color: #f85f57;
+
+  background: var(--color-hover-veil);
+
+  border-radius: 8px;
+
+  font-size: 12px;
+}
+
+.memory-spinner {
+  animation: memory-spin 800ms linear infinite;
+}
+
+@keyframes memory-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.memory-list {
+  display: flex;
+  flex-direction: column;
+
+  gap: 6px;
+
+  margin-top: 18px;
+}
+
+.memory-list__label {
+  color: var(--color-mid-ash);
+
+  font-size: 11px;
+  font-weight: 600;
+
+  letter-spacing: 0.04em;
+
+  text-transform: uppercase;
+}
+
+.memory-list__empty {
+  padding: 10px 4px;
+
+  color: var(--color-hollow);
+
+  font-size: 13px;
+}
+
+.memory-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+
+  gap: 10px;
+
+  padding: 11px 12px;
+
+  background: var(--surface-conversation-canvas);
+
+  border: 1px solid var(--color-hairline);
+
+  border-radius: 10px;
+}
+
+.memory-row__body {
+  min-width: 0;
+}
+
+.memory-row__key {
+  display: inline-flex;
+  align-items: center;
+
+  gap: 5px;
+
+  color: var(--color-graphite-ink);
+
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.memory-row__body p {
+  margin: 5px 0 0;
+
+  color: var(--color-mid-ash);
+
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.memory-row__actions {
+  display: flex;
+  flex-direction: column;
+
+  gap: 4px;
+}
+
+.memory-row__action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 26px;
+  height: 26px;
+
+  color: var(--color-hollow);
+
+  background: transparent;
+
+  border: 0;
+  border-radius: 7px;
+
+  cursor: pointer;
+}
+
+.memory-row__action:hover {
+  color: var(--color-graphite-ink);
+
+  background: var(--color-hover-veil);
+}
+
+@media (max-width: 640px) {
+  .memory-panel {
+    right: 0;
+
+    left: 0;
+
+    width: auto;
   }
 }

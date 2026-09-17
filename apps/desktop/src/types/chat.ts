@@ -176,3 +176,13 @@ export interface HealthResponse {
   status: string;
   service: string;
 }
+
+export interface SavedMemory {
+  id: string;
+  tier: string;
+  namespace: string;
+  key: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}

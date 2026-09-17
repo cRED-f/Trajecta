@@ -10,6 +10,7 @@ import type {
   HealthResponse,
   ModelCatalog,
   PendingApproval,
+  SavedMemory,
 } from "../types/chat";
 
 const API_ROOT =
@@ -205,6 +206,31 @@ export const chatApi = {
 
   listModels(): Promise<ModelCatalog> {
     return request("/models");
+  },
+
+  listMemories(
+    tier: "semantic" | "episodic" | "procedural",
+  ): Promise<SavedMemory[]> {
+    return request(`/memory/${tier}`);
+  },
+
+  saveMemory(
+    tier: "semantic",
+    body: { key: string; content: string },
+  ): Promise<{ ok: boolean; key: string; tier: string }> {
+    return request(`/memory/${tier}`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  deleteMemory(
+    tier: "semantic",
+    key: string,
+  ): Promise<{ ok: boolean; key: string; tier: string }> {
+    return request(`/memory/${tier}/${encodeURIComponent(key)}`, {
+      method: "DELETE",
+    });
   },
 
   async uploadAttachments(
