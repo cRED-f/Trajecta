@@ -31,6 +31,7 @@ from server.src.chat.repository import ChatRepository
 from server.src.chat.runtime import DeepAgentRuntime, PreparedAgentRun
 from server.src.chat.runs import ChatRunRegistry
 from server.src.config import Settings
+from server.src.guardrails.policy import PermissionPolicyStore
 from server.src.memory.provider import MemoryProvider
 from server.src.tools.personal import PersonalToolProvider
 from server.src.skills.evaluation.fixtures import ReplayFixtureStore
@@ -1003,9 +1004,12 @@ def build_chat_service(
     personal_tools: PersonalToolProvider | None = None,
     connector_verification: ConnectorVerificationService | None = None,
     mcp_tools: MCPToolProvider | None = None,
+    permission_policy: PermissionPolicyStore | None = None,
 ) -> ChatService:
     if memory.sqlite is None:
         raise RuntimeError("MemoryProvider must be opened before ChatService")
+
+    permission_policy = permission_policy or PermissionPolicyStore(memory.sqlite)
 
     repository = ChatRepository(memory.sqlite)
     attachment_service = AttachmentService(
@@ -1032,7 +1036,7 @@ def build_chat_service(
         )
     mcp = mcp_tools
     tools = personal_tools or PersonalToolProvider(settings, memory)
-    runtime = DeepAgentRuntime(settings, memory, mcp, rag, tools, verification=verification)
+    runtime = DeepAgentRuntime(settings, memory, mcp, rag, tools, verification=verification, permission_policy=permission_policy)
     runs = ChatRunRegistry()
     trajectories = TrajectoryStore(memory.sqlite)
     replay_fixtures = ReplayFixtureStore(settings, memory.sqlite)

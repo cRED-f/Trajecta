@@ -1,0 +1,1 @@
+"""Guardrails: deterministic permission policy and safety layers."""

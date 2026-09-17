@@ -2,7 +2,8 @@
 name = "trajecta"
 version = "0.1.0"
 description = "Local-first autonomous desktop agent that learns reusable skills from successful task trajectories"
-authors = []
+license = "MIT"
+authors = ["Trajecta"]
 readme = "README.md"
 packages = [{include = "server", from = "."}]
 

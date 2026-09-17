@@ -15,6 +15,18 @@ import type {
 
 import type { McpCatalog } from "../types/tools";
 
+import type {
+  MemoryCatalog,
+  PermissionCatalog,
+  PermissionMode,
+  ScheduleCatalog,
+  ScheduleCreateInput,
+  ScheduledTask,
+  ScheduleUpdateInput,
+  SkillCatalog,
+  SkillPromotionResult,
+} from "../types/settings";
+
 const API_ROOT =
   import.meta.env.VITE_TRAJECTA_API_URL ??
   "http://127.0.0.1:8000/api/v1";
@@ -439,6 +451,142 @@ export const chatApi = {
       `${API_ROOT}/chat/conversations/` +
       `${conversationId}/attachments/` +
       `${attachmentId}/content`
+    );
+  },
+};
+
+export const settingsApi = {
+  permissions(): Promise<PermissionCatalog> {
+    return request("/permissions");
+  },
+
+  setPermission(
+    permissionId: string,
+    mode: PermissionMode,
+  ): Promise<PermissionCatalog> {
+    return request(
+      `/permissions/${encodeURIComponent(permissionId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ mode }),
+      },
+    );
+  },
+
+  memory(query = ""): Promise<MemoryCatalog> {
+    const params = new URLSearchParams();
+    if (query) params.set("query", query);
+    const qs = params.toString();
+    return request(`/memory${qs ? `?${qs}` : ""}`);
+  },
+
+  setAutomaticMemory(
+    automaticMemory: boolean,
+  ): Promise<{ automatic_memory: boolean }> {
+    return request("/memory/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ automatic_memory: automaticMemory }),
+    });
+  },
+
+  saveMemory(
+    key: string,
+    content: string,
+  ): Promise<{ ok: boolean; key: string; tier: string }> {
+    return request("/memory/semantic", {
+      method: "POST",
+      body: JSON.stringify({ key, content }),
+    });
+  },
+
+  deleteMemory(
+    key: string,
+  ): Promise<{ ok: boolean; key: string; tier: string }> {
+    return request(`/memory/semantic/${encodeURIComponent(key)}`, {
+      method: "DELETE",
+    });
+  },
+
+  skills(): Promise<SkillCatalog> {
+    return request("/skills");
+  },
+
+  evaluateSkill(
+    candidateId: string,
+  ): Promise<Record<string, unknown>> {
+    return request(
+      `/skills/candidates/${encodeURIComponent(candidateId)}/evaluate`,
+      { method: "POST" },
+    );
+  },
+
+  promoteSkill(
+    candidateId: string,
+  ): Promise<SkillPromotionResult> {
+    return request(
+      `/skills/candidates/${encodeURIComponent(candidateId)}/promote`,
+      { method: "POST" },
+    );
+  },
+
+  rejectSkill(
+    candidateId: string,
+    reason: string,
+  ): Promise<Record<string, unknown>> {
+    return request(
+      `/skills/candidates/${encodeURIComponent(candidateId)}/reject`,
+      {
+        method: "POST",
+        body: JSON.stringify({ reason }),
+      },
+    );
+  },
+
+  setSkillEnabled(
+    skillName: string,
+    enabled: boolean,
+  ): Promise<{ name: string; enabled: boolean }> {
+    return request(
+      `/skills/${encodeURIComponent(skillName)}/enabled`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ enabled }),
+      },
+    );
+  },
+
+  schedules(): Promise<ScheduleCatalog> {
+    return request("/tasks/schedules");
+  },
+
+  createSchedule(
+    body: ScheduleCreateInput,
+  ): Promise<ScheduledTask> {
+    return request("/tasks/schedules", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  updateSchedule(
+    scheduleId: string,
+    body: ScheduleUpdateInput,
+  ): Promise<ScheduledTask> {
+    return request(
+      `/tasks/schedules/${encodeURIComponent(scheduleId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      },
+    );
+  },
+
+  deleteSchedule(
+    scheduleId: string,
+  ): Promise<{ deleted: boolean; id: string }> {
+    return request(
+      `/tasks/schedules/${encodeURIComponent(scheduleId)}`,
+      { method: "DELETE" },
     );
   },
 };

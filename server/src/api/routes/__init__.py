@@ -6,6 +6,7 @@ from .tasks import router as tasks_router
 from .skills import router as skills_router
 from .memory import router as memory_router
 from .tools import router as tools_router
+from .permissions import router as permissions_router
 from .models import router as models_router
 from .traces import router as traces_router
 from .chat import router as chat_router
@@ -17,6 +18,7 @@ all_routers = [
     skills_router,
     memory_router,
     tools_router,
+    permissions_router,
     models_router,
     traces_router,
     health_router,

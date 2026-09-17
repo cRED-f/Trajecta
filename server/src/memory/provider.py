@@ -184,8 +184,13 @@ class MemoryProvider:
 
     # -- agent runtime interface ------------------------------------------
 
-    def agent_kwargs(self) -> dict[str, Any]:
-        """Keyword arguments for `create_deep_agent(model, **agent_kwargs())`."""
+    def agent_kwargs(self, *, allow_execute: bool = True) -> dict[str, Any]:
+        """Keyword arguments for `create_deep_agent(model, **agent_kwargs())`.
+
+        With ``allow_execute=False`` (Terminal permission = DENY) the runtime
+        backend is replaced by a StateBackend that has no ``execute`` tool, so
+        Deep Agents does not surface local process execution to the model.
+        """
         if (
             self.checkpointer is None
             or self.store is None
@@ -195,13 +200,57 @@ class MemoryProvider:
                 "MemoryProvider is not open — call await provider.open() first"
             )
 
+        backend = self.backend if allow_execute else self._backend_without_execute()
+
         return {
             "checkpointer": self.checkpointer,
             "store": self.store,
-            "backend": self.backend,
+            "backend": backend,
             "memory": self.memory_files,
             "skills": [self.skills_path],
         }
+
+    def _backend_without_execute(self) -> CompositeBackend:
+        """Runtime backend used when Terminal permission is DENY.
+
+        StateBackend has no ``execute`` capability, so Deep Agents does not
+        create the built-in ``execute`` tool. The route backends mirror ``open()``
+        but never include the Docker sandbox default.
+        """
+        if (
+            self.store is None
+            or self.checkpointer is None
+        ):
+            raise RuntimeError(
+                "MemoryProvider is not open — call await provider.open() first"
+            )
+
+        ns_local = ("trajecta-local",)
+
+        uploads_root = Path(self._settings.chat.uploads_path).resolve()
+        workspace_root = Path(self._settings.tools.workspace_root).resolve()
+
+        return CompositeBackend(
+            default=StateBackend(),
+            routes={
+                "/memories/": StoreBackend(
+                    namespace=lambda _rt: ns_local,
+                    store=self.store,
+                ),
+                "/skills/": StoreBackend(
+                    namespace=lambda _rt: ns_local + ("skills",),
+                    store=self.store,
+                ),
+                "/workspace/": FilesystemBackend(
+                    root_dir=str(workspace_root),
+                    virtual_mode=True,
+                ),
+                "/uploads/": FilesystemBackend(
+                    root_dir=str(uploads_root),
+                    virtual_mode=True,
+                ),
+            },
+        )
 
 
 # ---------------------------------------------------------------------------

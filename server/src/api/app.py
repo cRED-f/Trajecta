@@ -21,6 +21,7 @@ from server.src.chat.mcp_settings import MCPToolSettingsStore
 from server.src.chat.models_catalog import ModelCatalogService
 from server.src.chat.models import ConversationCreate, SendMessageRequest
 from server.src.config import Settings
+from server.src.guardrails.policy import PermissionPolicyStore
 from server.src.memory.provider import MemoryProvider, get_memory_provider
 from server.src.skills.service import build_skills_service
 from server.src.tools.personal import PersonalToolProvider
@@ -53,12 +54,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             verification=connector_verification,
         )
 
+        if memory.sqlite is None:
+            raise RuntimeError("Memory store is not ready (SQLite unavailable)")
+
+        permission_policy = PermissionPolicyStore(memory.sqlite)
+
         chat = build_chat_service(
             settings,
             memory,
             personal_tools,
             connector_verification,
             mcp_tools,
+            permission_policy,
         )
 
         async def run_scheduled_job(job: dict) -> str:
@@ -94,6 +101,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         app.state.settings = settings
         app.state.memory_provider = memory
+        app.state.permission_policy = permission_policy
         app.state.personal_tools = personal_tools
         app.state.connector_verification = connector_verification
         app.state.mcp_tools = mcp_tools

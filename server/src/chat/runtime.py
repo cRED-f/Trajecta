@@ -17,6 +17,7 @@ from server.src.chat.model import BifrostModelFactory
 from server.src.chat.models import Attachment, ChatEvent, Conversation
 from server.src.chat.rag import AttachmentRAGIndex
 from server.src.config import Settings
+from server.src.guardrails.policy import PermissionPolicyStore
 from server.src.memory.provider import MemoryProvider
 from server.src.tools.personal import PersonalToolProvider
 from server.src.tools.verification import ConnectorVerificationService
@@ -97,6 +98,7 @@ class DeepAgentRuntime:
         rag: AttachmentRAGIndex,
         personal_tools: PersonalToolProvider,
         verification: ConnectorVerificationService | None = None,
+        permission_policy: PermissionPolicyStore | None = None,
     ) -> None:
         self._settings = settings
         self._memory = memory
@@ -104,6 +106,7 @@ class DeepAgentRuntime:
         self._rag = rag
         self._personal_tools = personal_tools
         self._verification = verification
+        self._permission_policy = permission_policy
         self._models = BifrostModelFactory(settings)
 
     async def prepare(
@@ -120,7 +123,25 @@ class DeepAgentRuntime:
         )
         model = self._models.create(chosen_model)
         mcp_tools = await self._mcp.get_tools()
-        native_tools = self._personal_tools.get_tools()
+        if self._permission_policy is None:
+            raise RuntimeError("No permission policy store wired into the runtime")
+        policy = await self._permission_policy.snapshot()
+
+        native_tools = self._personal_tools.filter_tools(
+            self._personal_tools.get_tools(),
+            policy,
+        )
+
+        automatic_memory = await self._permission_policy.get_setting(
+            "automatic_memory", True
+        )
+        if not automatic_memory:
+            native_tools = [
+                tool
+                for tool in native_tools
+                if tool.name != "memory_save"
+            ]
+
         tools = [*native_tools, *mcp_tools]
         if self._rag.enabled:
             tools.append(self._rag.as_tool(conversation_id=conversation.id))
@@ -147,9 +168,10 @@ class DeepAgentRuntime:
                     f"Checkpoint {base_checkpoint_id!r} does not exist for this conversation"
                 )
 
-        interrupt_policy = self._personal_tools.interrupt_on() or {}
+        interrupt_policy = self._personal_tools.interrupt_on(policy)
 
         if self._verification is not None:
+            interrupt_policy = interrupt_policy or {}
             interrupt_policy.update(self._verification.interrupt_policy())
 
         agent = create_deep_agent(
@@ -157,9 +179,11 @@ class DeepAgentRuntime:
             tools=tools,
             system_prompt=SYSTEM_PROMPT,
             middleware=[TodoListMiddleware()],
-            permissions=self._personal_tools.permissions(),
+            permissions=self._personal_tools.permissions(policy),
             interrupt_on=interrupt_policy or None,
-            **self._memory.agent_kwargs(),
+            **self._memory.agent_kwargs(
+                allow_execute=policy.mode("terminal") != "deny",
+            ),
         )
         return PreparedAgentRun(
             agent=agent,

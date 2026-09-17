@@ -3,6 +3,7 @@ name = "trajecta-desktop"
 version = "0.1.0"
 description = "Trajecta desktop agent"
 authors = ["Trajecta"]
+license = "MIT"
 edition = "2021"
 
 [lib]

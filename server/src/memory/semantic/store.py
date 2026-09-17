@@ -252,3 +252,77 @@ class SemanticMemory:
                     break
 
         return results[:limit]
+
+    # ------------------------------------------------------------------
+    # Settings/UI listing
+    # ------------------------------------------------------------------
+
+    async def alist(
+        self,
+        *,
+        query: str = "",
+        limit: int = 100,
+    ) -> list[dict]:
+        """Settings/UI listing of semantic memories.
+
+        Canonical content remains in /memories/, while SQLite (the FTS mirror
+        table) is used for metadata/search listing.
+        """
+
+        if self._provider.sqlite is None:
+            return []
+
+        limit = max(1, min(limit, 500))
+        query = query.strip()
+
+        if query:
+            pattern = f"%{query}%"
+
+            return await self._provider.sqlite.fetch(
+                """
+                SELECT
+                    id,
+                    tier,
+                    namespace,
+                    key,
+                    content,
+                    created_at,
+                    updated_at
+
+                FROM memories
+
+                WHERE
+                    tier = 'semantic'
+                    AND (
+                        key LIKE ?
+                        OR content LIKE ?
+                    )
+
+                ORDER BY updated_at DESC
+
+                LIMIT ?
+                """,
+                (pattern, pattern, limit),
+            )
+
+        return await self._provider.sqlite.fetch(
+            """
+            SELECT
+                id,
+                tier,
+                namespace,
+                key,
+                content,
+                created_at,
+                updated_at
+
+            FROM memories
+
+            WHERE tier = 'semantic'
+
+            ORDER BY updated_at DESC
+
+            LIMIT ?
+            """,
+            (limit,),
+        )

@@ -16,6 +16,10 @@ from deepagents import FilesystemPermission
 from langchain_core.tools import BaseTool, tool
 
 from server.src.config import Settings
+from server.src.guardrails.policy import (
+    PermissionSnapshot,
+    TOOL_PERMISSION_GROUPS,
+)
 from server.src.memory.provider import MemoryProvider
 from server.src.tools.personal.browser import BrowserManager
 from server.src.tools.personal.computer import ComputerManager
@@ -49,71 +53,79 @@ class PersonalToolProvider:
         self.notifications = NotificationService(self.store)
         self._tools: list[BaseTool] | None = None
 
-    def permissions(self) -> list[FilesystemPermission]:
-        """Permissions for Deep Agents' built-in filesystem tools.
+    def permissions(self, policy: PermissionSnapshot) -> list[FilesystemPermission]:
+        """Permissions for Deep Agents' built-in filesystem + execution tools.
 
         Custom/MCP/browser/computer tools are outside this permission system and
-        are controlled by HITL ``interrupt_on`` plus path/domain restrictions in
-        their implementations.
+        are controlled by HITL ``interrupt_on`` plus the deterministic policy's
+        ``filter_tools``. The workspace write permission is derived from the
+        ``filesystem-write`` policy mode so settings changes take effect.
         """
         permissions = [
             FilesystemPermission(operations=["write"], paths=["/uploads/**"], mode="deny"),
             FilesystemPermission(operations=["write"], paths=["/skills/**"], mode="deny"),
         ]
-        if self.settings.guardrails.hitl_enabled:
+
+        workspace_mode = policy.mode("filesystem-write")
+
+        if workspace_mode == "deny":
+            permissions.append(
+                FilesystemPermission(operations=["write"], paths=["/workspace/**"], mode="deny")
+            )
+        elif workspace_mode == "ask" and self.settings.guardrails.hitl_enabled:
             permissions.append(
                 FilesystemPermission(operations=["write"], paths=["/workspace/**"], mode="interrupt")
             )
+        # allow -> no explicit workspace rule; Deep Agents grants write freely.
+
         return permissions
 
-    def interrupt_on(self) -> dict[str, Any] | None:
-        """Risk-based Deep Agents HITL policy for custom action tools."""
+    def filter_tools(self, tools: list[BaseTool], policy: PermissionSnapshot) -> list[BaseTool]:
+        """Drop tools whose permission category is DENY.
+
+        DENY removes the tool completely — the model cannot even see it. This is
+        the deterministic-policy half of tool surface control (the other half is
+        MCP tool enable/disable preferences).
+        """
+
+        result: list[BaseTool] = []
+
+        for tool in tools:
+            category = TOOL_PERMISSION_GROUPS.get(tool.name)
+
+            if category is not None and policy.mode(category) == "deny":
+                continue
+
+            result.append(tool)
+
+        return result
+
+    def interrupt_on(self, policy: PermissionSnapshot) -> dict[str, Any] | None:
+        """Risk-based Deep Agents HITL policy for custom action tools.
+
+        Tools belonging to a permission category set to ``ask`` require explicit
+        approval before execution. Always-sensitive destructive application
+        actions (memory/task/schedule deletion) and ``request_approval`` always
+        interrupt regardless of category.
+        """
         if not self.settings.guardrails.hitl_enabled:
             return None
+
         approve_edit_reject = {"allowed_decisions": ["approve", "edit", "reject"]}
         approve_reject = {"allowed_decisions": ["approve", "reject"]}
-        # Read/search/analyse operations intentionally do not appear here.
-        names_editable = {
-            "http_request",
-            "verified_http_mutation",
-            "browser_navigate",
-            "browser_click",
-            "browser_submit_and_verify",
-            "browser_type",
-            "browser_press",
-            "browser_download",
-            "browser_upload",
-            "browser_new_tab",
-            "browser_close_tab",
-            "computer_click",
-            "computer_move",
-            "computer_drag",
-            "computer_scroll",
-            "computer_type",
-            "computer_key",
-            "computer_shortcut",
-            "clipboard_write",
-            "wake_on_lan",
-            "process_start",
-            "process_input",
-            "process_stop",
-            "sqlite_execute",
-            "archive_extract",
-            "archive_create",
-            "image_transform",
-            "media_convert",
-            "local_text_to_speech",
+
+        policy_result: dict[str, Any] = {
+            tool_name: approve_edit_reject
+            for tool_name, category in TOOL_PERMISSION_GROUPS.items()
+            if policy.mode(category) == "ask"
         }
-        names_approve = {
-            "memory_forget",
-            "task_delete",
-            "schedule_delete",
-            "request_approval",
-        }
-        policy: dict[str, Any] = {name: approve_edit_reject for name in names_editable}
-        policy.update({name: approve_reject for name in names_approve})
-        policy["ask_user"] = {"allowed_decisions": ["respond"]}
-        return policy
+
+        policy_result.update(
+            {name: approve_reject for name in {"memory_forget", "task_delete", "schedule_delete", "request_approval"}}
+        )
+        policy_result["ask_user"] = {"allowed_decisions": ["respond"]}
+
+        return policy_result or None
 
     def get_tools(self) -> list[BaseTool]:
         if self._tools is not None:

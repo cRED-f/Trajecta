@@ -425,6 +425,22 @@ class SkillRepository:
             result.append(value)
         return result
 
+    async def list_registered(self) -> list[dict[str, Any]]:
+        rows = await self._db.fetch("SELECT * FROM skills ORDER BY name")
+
+        result = []
+        for row in rows:
+            value = dict(row)
+            value["metadata"] = _loads(value.get("metadata"), {})
+            result.append(value)
+        return result
+
+    async def set_registry_status(self, skill_name: str, status: str) -> None:
+        await self._db.execute(
+            "UPDATE skills SET status = ? WHERE id = ?",
+            (status, skill_name),
+        )
+
     # -------------------------------------------------
     # Decoders
     # -------------------------------------------------

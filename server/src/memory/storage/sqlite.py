@@ -160,6 +160,15 @@ class SQLiteDatabase:
 
             version = 10
 
+        if version < 11:
+            await self._migrate_v11()
+
+            await self._conn.execute(
+                "INSERT INTO schema_version(version) VALUES (11)"
+            )
+
+            version = 11
+
         await self._conn.commit()
 
     async def _migrate_v1(self) -> None:
@@ -735,6 +744,29 @@ class SQLiteDatabase:
 
             CREATE INDEX IF NOT EXISTS idx_mcp_tool_preferences_server
             ON mcp_tool_preferences(server_name);
+            """
+        )
+
+    async def _migrate_v11(self) -> None:
+        """Schema v11: agent permission preferences and user-controlled agent settings."""
+
+        assert self._conn is not None
+        await self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS agent_permissions (
+                permission_id TEXT PRIMARY KEY,
+                mode TEXT NOT NULL
+                    CHECK (
+                        mode IN ('allow', 'ask', 'deny')
+                    ),
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_settings (
+                key TEXT PRIMARY KEY,
+                value_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             """
         )
 

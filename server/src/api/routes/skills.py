@@ -31,6 +31,103 @@ class RejectSkillRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=2000)
 
 
+class SkillEnabledUpdate(BaseModel):
+    enabled: bool
+
+
+@router.get("")
+async def list_skills(request: Request) -> dict[str, Any]:
+    service = _service(request)
+
+    registered = await service.repository.list_registered()
+    candidates = await service.repository.list_candidates(limit=200)
+
+    return {
+        "skills": registered,
+        "candidates": candidates,
+        "summary": {
+            "active": sum(
+                1 for item in registered if item.get("status") == "active"
+            ),
+            "disabled": sum(
+                1 for item in registered if item.get("status") == "disabled"
+            ),
+            "candidate": sum(
+                1 for item in candidates if item.get("status") == "candidate"
+            ),
+            "evaluating": sum(
+                1 for item in candidates if item.get("status") == "evaluating"
+            ),
+        },
+    }
+
+
+@router.post("/candidates/{candidate_id}/evaluate")
+async def evaluate_candidate(
+    candidate_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    try:
+        report = await _service(request).evaluator.evaluate(candidate_id)
+        return report.model_dump(mode="json")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/candidates/{candidate_id}/promote")
+async def promote_candidate(
+    candidate_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    try:
+        result = await _service(request).promoter.promote(candidate_id=candidate_id)
+        return {
+            "skill_name": result.skill_name,
+            "version": result.version,
+            "version_id": result.version_id,
+            "previous_version": result.previous_version,
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.patch("/{skill_name}/enabled")
+async def set_skill_enabled(
+    skill_name: str,
+    body: SkillEnabledUpdate,
+    request: Request,
+) -> dict[str, Any]:
+    service = _service(request)
+
+    active = await service.repository.get_active(skill_name)
+
+    if active is None:
+        raise HTTPException(status_code=404, detail="Skill not found")
+
+    if not body.enabled:
+        await request.app.state.memory_provider.procedural.adelete(skill_name)
+        await service.repository.set_registry_status(skill_name, "disabled")
+        return {"name": skill_name, "enabled": False}
+
+    version = str(active["version"])
+
+    skill = await service.repository.get_version_skill(skill_name, version)
+
+    if skill is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Active skill version snapshot is missing",
+        )
+
+    await request.app.state.memory_provider.procedural.apromote_bundle(
+        skill.name,
+        skill.bundle_files(),
+    )
+    await service.repository.set_registry_status(skill_name, "active")
+
+    return {"name": skill_name, "enabled": True}
+
+
 @router.get("/candidates/{candidate_id}")
 async def get_candidate(
     candidate_id: str,
