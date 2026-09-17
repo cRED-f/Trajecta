@@ -27,10 +27,42 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from server.src.config import Settings
 from server.src.memory.storage.sqlite import SQLiteDatabase
+from server.src.skills.representation.skill import (
+    OutcomeAssertion,
+    OutcomeAssertionType,
+)
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+_TEXT_EXTENSIONS = {
+    ".txt",
+    ".md",
+    ".markdown",
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".css",
+    ".html",
+    ".htm",
+    ".xml",
+    ".csv",
+    ".sql",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".log",
+}
+
+
+_JSON_EXTENSIONS = {
+    ".json",
+    ".jsonl",
+}
 
 
 class ReplayFixtureFile(BaseModel):
@@ -170,6 +202,86 @@ class ReplayFixtureStore:
         return manifest
 
     # ------------------------------------------------------------------
+    # Outcome capture
+    # ------------------------------------------------------------------
+
+    async def capture_outcome(
+        self,
+        trajectory_id: str,
+    ) -> list[OutcomeAssertion]:
+        """Compare successful final state against the initial fixture.
+
+        This produces observable outcome assertions for future held-out
+        replay.
+        """
+        fixture = await self.get_for_trajectory(trajectory_id)
+
+        if fixture is None:
+            await self._attach_outcome(
+                trajectory_id,
+                assertions=[],
+                complete=False,
+                metadata={"reason": "initial replay fixture missing"},
+            )
+            return []
+
+        if not fixture.complete:
+            await self._attach_outcome(
+                trajectory_id,
+                assertions=[],
+                complete=False,
+                metadata={"reason": "initial replay fixture incomplete"},
+            )
+            return []
+
+        try:
+            assertions = await asyncio.to_thread(
+                self._capture_outcome_sync,
+                fixture,
+            )
+        except Exception as exc:
+            await self._attach_outcome(
+                trajectory_id,
+                assertions=[],
+                complete=False,
+                metadata={"error": f"{type(exc).__name__}: {exc}"},
+            )
+            return []
+
+        await self._attach_outcome(
+            trajectory_id,
+            assertions=assertions,
+            complete=True,
+            metadata={"change_count": len(assertions)},
+        )
+
+        return assertions
+
+    async def read_object(
+        self,
+        digest: str,
+    ) -> bytes:
+        """Read one immutable fixture/outcome object after checksum validation."""
+        if (
+            len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest.lower())
+        ):
+            raise ValueError("invalid SHA-256 digest")
+
+        return await asyncio.to_thread(self._read_object_sync, digest.lower())
+
+    def _read_object_sync(self, digest: str) -> bytes:
+        path = self._object_path(digest)
+
+        if not path.is_file():
+            raise FileNotFoundError(f"fixture object {digest} not found")
+
+        if self._sha256(path) != digest:
+            raise RuntimeError(f"fixture object {digest} failed checksum validation")
+
+        return path.read_bytes()
+
+    # ------------------------------------------------------------------
     # Capture
     # ------------------------------------------------------------------
 
@@ -285,6 +397,155 @@ class ReplayFixtureStore:
                 **metadata,
                 "workspace_root_captured": self._config.capture_workspace,
             },
+        )
+
+    def _capture_outcome_sync(
+        self,
+        fixture: ReplayFixtureManifest,
+    ) -> list[OutcomeAssertion]:
+        """Build assertions from initial workspace vs successful final workspace."""
+        initial = {
+            self._normalise_virtual_path(item.virtual_path): item
+            for item in fixture.files
+            if item.virtual_path.startswith("/workspace/")
+        }
+
+        final: dict[str, tuple[Path, str]] = {}
+
+        if self._workspace_root.exists():
+            for host_path in self._iter_workspace_files(self._workspace_root):
+                relative = host_path.relative_to(self._workspace_root).as_posix()
+                virtual = f"/workspace/{relative}"
+                digest = self._sha256(host_path)
+                final[self._normalise_virtual_path(virtual)] = (host_path, digest)
+
+        assertions: list[OutcomeAssertion] = []
+        all_paths = sorted(set(initial) | set(final))
+
+        for virtual_path in all_paths:
+            before = initial.get(virtual_path)
+            after = final.get(virtual_path)
+
+            # Deleted file
+            if before is not None and after is None:
+                assertions.append(
+                    OutcomeAssertion(
+                        type=OutcomeAssertionType.FILE_NOT_EXISTS,
+                        path=virtual_path,
+                        required=True,
+                        weight=1.0,
+                        metadata={"change": "deleted"},
+                    )
+                )
+                continue
+
+            # Created file
+            if before is None and after is not None:
+                host_path, final_hash = after
+                self._store_object(host_path, final_hash)
+
+                assertions.append(
+                    OutcomeAssertion(
+                        type=OutcomeAssertionType.FILE_EXISTS,
+                        path=virtual_path,
+                        required=True,
+                        weight=0.5,
+                        metadata={"change": "created"},
+                    )
+                )
+                assertions.append(
+                    self._content_assertion(
+                        virtual_path=virtual_path,
+                        host_path=host_path,
+                        final_hash=final_hash,
+                        change="created",
+                    )
+                )
+                continue
+
+            assert before is not None and after is not None
+            host_path, final_hash = after
+
+            # Unchanged files are not outcome evidence.
+            if before.sha256 == final_hash:
+                continue
+
+            self._store_object(host_path, final_hash)
+
+            assertions.append(
+                OutcomeAssertion(
+                    type=OutcomeAssertionType.FILE_CHANGED_FROM_FIXTURE,
+                    path=virtual_path,
+                    required=True,
+                    weight=0.5,
+                    metadata={
+                        "change": "modified",
+                        "initial_sha256": before.sha256,
+                    },
+                )
+            )
+            assertions.append(
+                self._content_assertion(
+                    virtual_path=virtual_path,
+                    host_path=host_path,
+                    final_hash=final_hash,
+                    change="modified",
+                )
+            )
+
+        return assertions
+
+    def _content_assertion(
+        self,
+        *,
+        virtual_path: str,
+        host_path: Path,
+        final_hash: str,
+        change: str,
+    ) -> OutcomeAssertion:
+        suffix = host_path.suffix.lower()
+
+        # JSON can be compared structurally, so whitespace/order formatting
+        # does not create false failures.
+        if suffix in _JSON_EXTENSIONS:
+            try:
+                json.loads(host_path.read_text(encoding="utf-8"))
+                return OutcomeAssertion(
+                    type=OutcomeAssertionType.FILE_JSON_EQUALS,
+                    path=virtual_path,
+                    required=True,
+                    weight=1.0,
+                    expected_object_sha256=final_hash,
+                    metadata={"change": change},
+                )
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                pass
+
+        if suffix in _TEXT_EXTENSIONS and host_path.stat().st_size <= 2 * 1024 * 1024:
+            try:
+                host_path.read_text(encoding="utf-8")
+                return OutcomeAssertion(
+                    type=OutcomeAssertionType.FILE_TEXT_SIMILARITY,
+                    path=virtual_path,
+                    required=True,
+                    weight=1.0,
+                    expected_object_sha256=final_hash,
+                    # We replay the exact same held-out task and initial state,
+                    # but natural-language text can legitimately differ.
+                    similarity_threshold=0.90,
+                    metadata={"change": change},
+                )
+            except UnicodeDecodeError:
+                pass
+
+        # Binary / unknown content must match exactly.
+        return OutcomeAssertion(
+            type=OutcomeAssertionType.FILE_SHA256,
+            path=virtual_path,
+            required=True,
+            weight=1.0,
+            expected_sha256=final_hash,
+            metadata={"change": change},
         )
 
     def _iter_workspace_files(self, root: Path):
@@ -473,3 +734,44 @@ class ReplayFixtureStore:
         while "//" in value:
             value = value.replace("//", "/")
         return value
+
+    # ------------------------------------------------------------------
+    # Link captured outcome to trajectory
+    # ------------------------------------------------------------------
+
+    async def _attach_outcome(
+        self,
+        trajectory_id: str,
+        *,
+        assertions: list[OutcomeAssertion],
+        complete: bool,
+        metadata: dict[str, Any],
+    ) -> None:
+        row = await self._db.fetchone(
+            "SELECT metadata FROM trajectories WHERE id = ?",
+            (trajectory_id,),
+        )
+        if row is None:
+            return
+
+        try:
+            trajectory_metadata = json.loads(row.get("metadata") or "{}")
+        except json.JSONDecodeError:
+            trajectory_metadata = {}
+        if not isinstance(trajectory_metadata, dict):
+            trajectory_metadata = {}
+
+        trajectory_metadata["outcome_capture_complete"] = complete
+        trajectory_metadata["outcome_assertions"] = [
+            assertion.model_dump(mode="json") for assertion in assertions
+        ]
+        trajectory_metadata["outcome_change_count"] = len(assertions)
+        trajectory_metadata["outcome_capture"] = metadata
+
+        await self._db.execute(
+            "UPDATE trajectories SET metadata = ? WHERE id = ?",
+            (
+                json.dumps(trajectory_metadata, ensure_ascii=False),
+                trajectory_id,
+            ),
+        )

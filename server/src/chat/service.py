@@ -623,6 +623,7 @@ class ChatService:
                 turn.branch.id,
                 final_checkpoint_id,
             )
+            await self._capture_success_outcome(trajectory_id)
             await self._trajectories.finish(
                 trajectory_id,
                 outcome="success",
@@ -687,6 +688,45 @@ class ChatService:
             await self._trajectories.append(
                 trajectory_id,
                 event_type="replay.fixture.error",
+                data={"error": f"{type(exc).__name__}: {exc}"},
+                source="trajecta",
+            )
+
+    async def _capture_success_outcome(
+        self,
+        trajectory_id: str,
+    ) -> None:
+        """Capture observable post-task state.
+
+        Failure to capture verification evidence must never fail the user's
+        actual task.
+        """
+
+        try:
+            assertions = await self._replay_fixtures.capture_outcome(
+                trajectory_id
+            )
+
+            await self._trajectories.append(
+                trajectory_id,
+                event_type="replay.outcome.captured",
+                data={
+                    "assertion_count": len(assertions),
+                    "assertions": [
+                        {
+                            "type": item.type.value,
+                            "path": item.path,
+                        }
+                        for item in assertions[:100]
+                    ],
+                },
+                source="trajecta",
+            )
+
+        except Exception as exc:
+            await self._trajectories.append(
+                trajectory_id,
+                event_type="replay.outcome.error",
                 data={"error": f"{type(exc).__name__}: {exc}"},
                 source="trajecta",
             )
@@ -779,6 +819,7 @@ class ChatService:
             )
             await self._repository.update_branch_head(turn.branch.id, final_checkpoint_id)
             await self._repository.clear_pending_approval(turn.conversation.id)
+            await self._capture_success_outcome(trajectory_id)
             await self._trajectories.finish(
                 trajectory_id, outcome="success", result=final_text[:100_000],
                 metadata={"checkpoint_id": final_checkpoint_id, "approval_resume": True},

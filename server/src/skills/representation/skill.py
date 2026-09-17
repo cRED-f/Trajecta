@@ -83,6 +83,45 @@ class SkillWorkflow(BaseModel):
         return result
 
 
+class OutcomeAssertionType(StrEnum):
+    FILE_EXISTS = "file_exists"
+    FILE_NOT_EXISTS = "file_not_exists"
+    FILE_SHA256 = "file_sha256"
+    FILE_CHANGED_FROM_FIXTURE = "file_changed_from_fixture"
+    FILE_TEXT_SIMILARITY = "file_text_similarity"
+    FILE_JSON_EQUALS = "file_json_equals"
+    SQLITE_QUERY_EQUALS = "sqlite_query_equals"
+    SQLITE_ROW_COUNT = "sqlite_row_count"
+
+
+class OutcomeAssertion(BaseModel):
+    """One deterministic claim about the expected resulting state.
+
+    These assertions describe observable state only.
+
+    They never inspect model reasoning.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: OutcomeAssertionType
+    path: str | None = None
+    required: bool = True
+    weight: float = Field(default=1.0, ge=0.0)
+
+    # File verification
+    expected_sha256: str | None = None
+    expected_object_sha256: str | None = None
+    similarity_threshold: float = Field(default=0.90, ge=0.0, le=1.0)
+
+    # SQLite verification
+    query: str | None = None
+    expected_rows: list[list[Any]] | None = None
+    expected_row_count: int | None = Field(default=None, ge=0)
+
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class SkillEvalCase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -92,6 +131,7 @@ class SkillEvalCase(BaseModel):
     rubric: list[str] = Field(default_factory=list)
     expected_contains: list[str] = Field(default_factory=list)
     allowed_tools: list[str] = Field(default_factory=list)
+    outcome_assertions: list[OutcomeAssertion] = Field(default_factory=list)
     mode: EvaluationMode = EvaluationMode.SANDBOX
     source_trajectory_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)

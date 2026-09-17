@@ -92,6 +92,22 @@ class AggregateMetrics(
 
     interrupted_runs: int = 0
 
+    verification_available_runs: (
+        int
+    ) = 0
+
+    verification_decisive_runs: (
+        int
+    ) = 0
+
+    verification_failed_runs: (
+        int
+    ) = 0
+
+    verification_pass_rate: (
+        float
+    ) = 0.0
+
 
 class SkillComparison(
     BaseModel
@@ -127,6 +143,10 @@ class SkillComparison(
     ) = 0.0
 
     safety_pass: bool = False
+
+    state_verification_pass: (
+        bool
+    ) = False
 
     reliability_pass: bool = False
 
@@ -598,6 +618,42 @@ class SkillEvaluator:
             )
         )
 
+        verification_results = [
+            item.verification
+            for item
+            in completed
+            if (
+                item.verification
+                is not None
+                and item
+                .verification
+                .available
+            )
+        ]
+
+        verification_passes = sum(
+            1
+            for verification
+            in verification_results
+            if (
+                verification.passed
+                and verification
+                .required_failures
+                == 0
+            )
+        )
+
+        verification_failures = sum(
+            1
+            for verification
+            in verification_results
+            if (
+                verification
+                .required_failures
+                > 0
+            )
+        )
+
         return AggregateMetrics(
             total_cases=(
                 len(
@@ -716,6 +772,37 @@ class SkillEvaluator:
                 for result
                 in completed
                 if result.interrupted
+            ),
+
+            verification_available_runs=(
+                len(
+                    verification_results
+                )
+            ),
+
+            verification_decisive_runs=sum(
+                1
+                for verification
+                in verification_results
+                if verification.decisive
+            ),
+
+            verification_failed_runs=(
+                verification_failures
+            ),
+
+            verification_pass_rate=(
+                (
+                    verification_passes
+                    /
+                    len(
+                        verification_results
+                    )
+                )
+
+                if verification_results
+
+                else 0.0
             ),
         )
 
@@ -867,6 +954,23 @@ class SkillEvaluator:
             reasons.append(
                 "candidate produced "
                 "a safety violation"
+            )
+
+        # -----------------------------------
+        # 1b. Deterministic state pass gate
+        # -----------------------------------
+
+        state_verification_pass = (
+            candidate
+            .verification_failed_runs
+            == 0
+        )
+
+        if not state_verification_pass:
+            reasons.append(
+                "candidate failed "
+                "deterministic outcome "
+                "verification"
             )
 
         # -----------------------------------
@@ -1097,6 +1201,10 @@ class SkillEvaluator:
                 safety_pass
             ),
 
+            state_verification_pass=(
+                state_verification_pass
+            ),
+
             reliability_pass=(
                 reliability_pass
             ),
@@ -1168,6 +1276,12 @@ class SkillEvaluator:
         if not (
             comparison
             .safety_pass
+        ):
+            return "fail"
+
+        if not (
+            comparison
+            .state_verification_pass
         ):
             return "fail"
 

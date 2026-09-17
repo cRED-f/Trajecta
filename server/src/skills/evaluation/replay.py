@@ -58,6 +58,10 @@ from server.src.memory.provider import (
 )
 
 from server.src.skills.evaluation.fixtures import ReplayFixtureStore
+from server.src.skills.evaluation.verifier import (
+    OutcomeVerificationResult,
+    OutcomeVerifier,
+)
 from server.src.skills.representation.skill import (
     EvaluationMode,
     Skill,
@@ -223,6 +227,11 @@ class ReplayResult(
         str | None
     ) = None
 
+    verification: (
+        OutcomeVerificationResult
+        | None
+    ) = None
+
     metadata: dict[
         str,
         Any,
@@ -339,6 +348,68 @@ class ReplayJudge:
                 )
             )
 
+        verification = (
+            result.verification
+        )
+
+        # -----------------------------------
+        # Deterministic state failure is
+        # authoritative.
+        # -----------------------------------
+
+        if (
+            verification is not None
+            and verification.available
+            and verification
+            .required_failures
+            > 0
+        ):
+            return (
+                result.model_copy(
+                    update={
+                        "success":
+                            False,
+
+                        "score":
+                            0.0,
+
+                        "judge_reason":
+                            "deterministic "
+                            "outcome verification "
+                            "failed",
+                    }
+                )
+            )
+
+        # -----------------------------------
+        # Strong state evidence can establish
+        # success without an LLM judge.
+        # -----------------------------------
+
+        if (
+            verification is not None
+            and verification.available
+            and verification.decisive
+            and verification.passed
+        ):
+            return (
+                result.model_copy(
+                    update={
+                        "success":
+                            True,
+
+                        "score":
+                            verification
+                            .score,
+
+                        "judge_reason":
+                            "deterministic "
+                            "outcome verification "
+                            "passed",
+                    }
+                )
+            )
+
         # -----------------------------------
         # Deterministic assertion
         # -----------------------------------
@@ -402,6 +473,19 @@ class ReplayJudge:
             "task":
                 case.task,
 
+            "observable_state_verification":
+                (
+                    verification
+                    .model_dump(
+                        mode="json"
+                    )
+
+                    if verification
+                    is not None
+
+                    else None
+                ),
+
             "rubric":
                 case.rubric
                 or [
@@ -434,11 +518,15 @@ class ReplayJudge:
 
             "instruction": (
                 "Judge observable completion only. "
-                "Do not reward confident claims without evidence. "
-                "Return JSON only with: "
-                "success:boolean, "
-                "score:number between 0 and 1, "
-                "reason:string."
+                "The observable_state_verification "
+                "contains deterministic evidence from "
+                "the actual post-run environment. "
+                "Treat failed required assertions as "
+                "task failure. Never let confident "
+                "assistant prose override contradictory "
+                "state evidence. Return JSON only with: "
+                "success:boolean, score:number between "
+                "0 and 1, reason:string."
             ),
         }
 
@@ -701,6 +789,12 @@ class DeepAgentReplayExecutor:
         self._judge = (
             ReplayJudge(
                 settings
+            )
+        )
+
+        self._verifier = (
+            OutcomeVerifier(
+                replay_fixtures
             )
         )
 
@@ -1129,70 +1223,6 @@ class DeepAgentReplayExecutor:
             )
 
             # -----------------------------------
-            # Replay fixtures
-            # -----------------------------------
-
-            fixture_files = (
-                case
-                .metadata
-                .get(
-                    "replay_fixture_files",
-                    {},
-                )
-            )
-
-            if isinstance(
-                fixture_files,
-                dict,
-            ):
-                for (
-                    relative_path,
-                    content,
-                ) in fixture_files.items():
-                    path = str(
-                        relative_path
-                    )
-
-                    if not path.startswith(
-                        "/workspace/"
-                    ):
-                        path = (
-                            "/workspace/"
-                            + path.lstrip(
-                                "/"
-                            )
-                        )
-
-                    response = (
-                        await backend
-                        .awrite(
-                            path,
-                            str(
-                                content
-                            ),
-                        )
-                    )
-
-                    if response.error:
-                        return ReplayResult(
-                            case_id=(
-                                case.id
-                            ),
-
-                            repetition=(
-                                repetition
-                            ),
-
-                            variant=variant,
-
-                            error=(
-                                "failed to stage "
-                                "evaluation fixture: "
-                                f"{response.error}"
-                            ),
-                        )
-
-            # -----------------------------------
             # Candidate skill
             # -----------------------------------
 
@@ -1595,6 +1625,21 @@ class DeepAgentReplayExecutor:
                 result.output_tokens = (
                     output_tokens
                 )
+
+                if (
+                    not result.error
+                    and not result.interrupted
+                    and result.completed
+                ):
+                    result.verification = (
+                        await self
+                        ._verifier
+                        .verify(
+                            case=case,
+                            workspace_root=workspace,
+                            uploads_root=uploads,
+                        )
+                    )
 
                 # Custom external-side-effect tools were not even supplied.
                 # If one somehow appears anyway, treat it as a hard violation.

@@ -42,6 +42,7 @@ from server.src.skills.repository import (
 
 from server.src.skills.representation.skill import (
     EvaluationMode,
+    OutcomeAssertion,
     Skill,
     SkillEvalCase,
     SkillMetadata,
@@ -482,6 +483,25 @@ class SkillMiner:
             fixture_id = trajectory.metadata.get("replay_fixture_id")
             fixture_complete = trajectory.metadata.get("replay_fixture_complete")
 
+            raw_assertions = trajectory.metadata.get("outcome_assertions")
+            if not isinstance(raw_assertions, list):
+                raw_assertions = []
+
+            outcome_assertions: list[OutcomeAssertion] = []
+            for raw_assertion in raw_assertions:
+                if not isinstance(raw_assertion, dict):
+                    continue
+                try:
+                    outcome_assertions.append(
+                        OutcomeAssertion.model_validate(raw_assertion)
+                    )
+                except ValueError:
+                    continue
+
+            outcome_complete = bool(
+                trajectory.metadata.get("outcome_capture_complete")
+            )
+
             eval_cases.append(
                 SkillEvalCase(
                     id=f"heldout-{index:03d}",
@@ -495,6 +515,7 @@ class SkillMiner:
                         "Verify the result before claiming success.",
                     ],
                     allowed_tools=sorted(set(trajectory.tool_sequence)),
+                    outcome_assertions=outcome_assertions,
                     mode=mode,
                     source_trajectory_id=trajectory.trajectory_id,
                     metadata={
@@ -503,6 +524,8 @@ class SkillMiner:
                         "requires_replay_fixture": needs_fixture,
                         "replay_fixture_id": fixture_id,
                         "replay_fixture_complete": fixture_complete,
+                        "outcome_capture_complete": outcome_complete,
+                        "outcome_assertion_count": len(outcome_assertions),
                     },
                 )
             )
@@ -597,9 +620,19 @@ class SkillMiner:
         tools = set(trajectory.tool_sequence)
 
         if tools & _LOCAL_STATE_DEPENDENT_TOOLS:
-            if not trajectory.metadata.get("replay_fixture_id"):
+            # For state-changing local work, automatic evaluation is only
+            # trustworthy when we have both:
+            #
+            # 1. exact initial state
+            # 2. observable successful outcome
+            fixture_id = trajectory.metadata.get("replay_fixture_id")
+            fixture_complete = trajectory.metadata.get("replay_fixture_complete")
+            outcome_complete = trajectory.metadata.get("outcome_capture_complete")
+            outcome_assertions = trajectory.metadata.get("outcome_assertions")
+
+            if not (fixture_id and fixture_complete):
                 return EvaluationMode.MANUAL
-            if not trajectory.metadata.get("replay_fixture_complete"):
+            if not (outcome_complete and outcome_assertions):
                 return EvaluationMode.MANUAL
 
         return EvaluationMode.SANDBOX
