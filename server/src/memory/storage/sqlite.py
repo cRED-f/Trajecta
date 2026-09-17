@@ -131,6 +131,15 @@ class SQLiteDatabase:
                 "INSERT INTO schema_version(version) VALUES (7)"
             )
 
+            version = 7
+
+        if version < 8:
+            await self._migrate_v8()
+
+            await self._conn.execute(
+                "INSERT INTO schema_version(version) VALUES (8)"
+            )
+
         await self._conn.commit()
 
     async def _migrate_v1(self) -> None:
@@ -625,6 +634,29 @@ class SQLiteDatabase:
                 ON skill_evaluations(candidate_id, created_at);
             CREATE INDEX IF NOT EXISTS idx_skill_evaluations_name
                 ON skill_evaluations(skill_name, created_at);
+            """
+        )
+
+    async def _migrate_v8(self) -> None:
+        """Schema v8: immutable trajectory replay fixture manifests."""
+        assert self._conn is not None
+        await self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS trajectory_replay_fixtures (
+                id TEXT PRIMARY KEY,
+                trajectory_id TEXT NOT NULL UNIQUE REFERENCES trajectories(id) ON DELETE CASCADE,
+                created_at TEXT NOT NULL,
+                complete INTEGER NOT NULL DEFAULT 0,
+                file_count INTEGER NOT NULL DEFAULT 0,
+                total_bytes INTEGER NOT NULL DEFAULT 0,
+                manifest_json TEXT NOT NULL,
+                metadata TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_replay_fixtures_trajectory
+                ON trajectory_replay_fixtures(trajectory_id);
+            CREATE INDEX IF NOT EXISTS idx_replay_fixtures_complete
+                ON trajectory_replay_fixtures(complete, created_at);
             """
         )
 

@@ -477,6 +477,11 @@ class SkillMiner:
         for index, trajectory in enumerate(held_out, start=1):
             mode = self._evaluation_mode(trajectory, risk=risk)
 
+            item_tools = set(trajectory.tool_sequence)
+            needs_fixture = bool(item_tools & _LOCAL_STATE_DEPENDENT_TOOLS)
+            fixture_id = trajectory.metadata.get("replay_fixture_id")
+            fixture_complete = trajectory.metadata.get("replay_fixture_complete")
+
             eval_cases.append(
                 SkillEvalCase(
                     id=f"heldout-{index:03d}",
@@ -495,9 +500,9 @@ class SkillMiner:
                     metadata={
                         "source_task_id": trajectory.task_id,
                         "source_created_at": trajectory.created_at,
-                        "replay_fixture_files": trajectory.metadata.get(
-                            "replay_fixture_files", {}
-                        ),
+                        "requires_replay_fixture": needs_fixture,
+                        "replay_fixture_id": fixture_id,
+                        "replay_fixture_complete": fixture_complete,
                     },
                 )
             )
@@ -592,10 +597,9 @@ class SkillMiner:
         tools = set(trajectory.tool_sequence)
 
         if tools & _LOCAL_STATE_DEPENDENT_TOOLS:
-            fixture_files = trajectory.metadata.get("replay_fixture_files")
-            if not isinstance(fixture_files, dict):
+            if not trajectory.metadata.get("replay_fixture_id"):
                 return EvaluationMode.MANUAL
-            if not fixture_files:
+            if not trajectory.metadata.get("replay_fixture_complete"):
                 return EvaluationMode.MANUAL
 
         return EvaluationMode.SANDBOX

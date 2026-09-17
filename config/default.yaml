@@ -52,9 +52,25 @@ memory:
 
 skills:
   storage_path: ".trajecta/skills"
-  evaluation:
-    min_samples: 3
-    confidence_threshold: 0.8
+  fixtures:
+    enabled: true
+    root: ".trajecta/data/replay-fixtures"
+    capture_workspace: true
+    max_files: 1000
+    max_file_mb: 8
+    max_total_mb: 100
+    exclude_globs:
+      - ".git/**"
+      - ".trajecta/**"
+      - "node_modules/**"
+      - ".venv/**"
+      - "venv/**"
+      - "__pycache__/**"
+      - ".pytest_cache/**"
+      - ".mypy_cache/**"
+      - ".ruff_cache/**"
+      - "dist/**"
+      - "build/**"
 
 guardrails:
   default_risk_level: "SENSITIVE"

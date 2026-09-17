@@ -82,6 +82,35 @@ class ToolsConfig(BaseModel):
     scheduler: SchedulerToolsConfig = SchedulerToolsConfig()
 
 
+class SkillFixtureConfig(BaseModel):
+    enabled: bool = True
+    root: str = ".trajecta/data/replay-fixtures"
+    capture_workspace: bool = True
+    max_files: int = 1000
+    max_file_mb: int = 8
+    max_total_mb: int = 100
+    exclude_globs: list[str] = Field(
+        default_factory=lambda: [
+            ".git/**",
+            ".trajecta/**",
+            "node_modules/**",
+            ".venv/**",
+            "venv/**",
+            "__pycache__/**",
+            ".pytest_cache/**",
+            ".mypy_cache/**",
+            ".ruff_cache/**",
+            "dist/**",
+            "build/**",
+        ]
+    )
+
+
+class SkillsConfig(BaseModel):
+    storage_path: str = ".trajecta/skills"
+    fixtures: SkillFixtureConfig = SkillFixtureConfig()
+
+
 class SandboxConfig(BaseModel):
     enabled: bool = True
     image: str = "trajecta-sandbox:latest"
@@ -150,6 +179,7 @@ class Settings(BaseSettings):
 
     chat: ChatConfig = ChatConfig()
     tools: ToolsConfig = ToolsConfig()
+    skills: SkillsConfig = SkillsConfig()
     sandbox: SandboxConfig = SandboxConfig()
     guardrails: GuardrailsConfig = GuardrailsConfig()
 

@@ -33,6 +33,7 @@ from server.src.chat.runs import ChatRunRegistry
 from server.src.config import Settings
 from server.src.memory.provider import MemoryProvider
 from server.src.tools.personal import PersonalToolProvider
+from server.src.skills.evaluation.fixtures import ReplayFixtureStore
 from server.src.skills.trajectory_store import TrajectoryStore
 
 
@@ -85,6 +86,7 @@ class ChatService:
         runtime: DeepAgentRuntime,
         runs: ChatRunRegistry,
         trajectories: TrajectoryStore,
+        replay_fixtures: ReplayFixtureStore,
     ) -> None:
         self._settings = settings
         self._models = BifrostModelFactory(settings)
@@ -94,6 +96,7 @@ class ChatService:
         self._runtime = runtime
         self._runs = runs
         self._trajectories = trajectories
+        self._replay_fixtures = replay_fixtures
 
     # ------------------------------------------------------------------
     # Conversations
@@ -509,6 +512,23 @@ class ChatService:
             },
             source="user",
         )
+        await self._capture_replay_fixture(
+            trajectory_id,
+            attachment_paths=[
+                path
+                for attachment in turn.attachments
+                for path in (
+                    attachment.virtual_path,
+                    attachment.extracted_virtual_path,
+                )
+                if path
+            ],
+            metadata={
+                "conversation_id": turn.conversation.id,
+                "branch_id": turn.branch.id,
+                "user_message_id": turn.user_message.id,
+            },
+        )
         try:
             yield ChatEvent(
                 type="message.accepted",
@@ -629,6 +649,47 @@ class ChatService:
             raise
         finally:
             await self._runs.unregister(turn.conversation.id, turn.run_id)
+
+    async def _capture_replay_fixture(
+        self,
+        trajectory_id: str,
+        *,
+        attachment_paths: list[str],
+        metadata: dict,
+    ) -> None:
+        """Best-effort initial-state snapshot.
+
+        Failure to capture a fixture must NEVER break the user's real task.
+        It only makes future automatic replay unavailable.
+        """
+
+        try:
+            fixture = await self._replay_fixtures.capture_initial_state(
+                trajectory_id=trajectory_id,
+                attachment_paths=attachment_paths,
+                metadata=metadata,
+            )
+
+            if fixture is not None:
+                await self._trajectories.append(
+                    trajectory_id,
+                    event_type="replay.fixture.captured",
+                    data={
+                        "fixture_id": fixture.id,
+                        "complete": fixture.complete,
+                        "file_count": fixture.file_count,
+                        "total_bytes": fixture.total_bytes,
+                    },
+                    source="trajecta",
+                )
+
+        except Exception as exc:
+            await self._trajectories.append(
+                trajectory_id,
+                event_type="replay.fixture.error",
+                data={"error": f"{type(exc).__name__}: {exc}"},
+                source="trajecta",
+            )
 
     async def stream_resume(self, turn: PreparedResume) -> AsyncIterator[ChatEvent]:
         assistant_text: list[str] = [turn.partial_text]
@@ -921,6 +982,7 @@ def build_chat_service(
     runtime = DeepAgentRuntime(settings, memory, mcp, rag, tools)
     runs = ChatRunRegistry()
     trajectories = TrajectoryStore(memory.sqlite)
+    replay_fixtures = ReplayFixtureStore(settings, memory.sqlite)
     return ChatService(
         settings,
         repository,
@@ -929,4 +991,5 @@ def build_chat_service(
         runtime,
         runs,
         trajectories,
+        replay_fixtures,
     )

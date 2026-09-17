@@ -178,17 +178,98 @@ class ProceduralMemory:
 
         return result.file_data.get("content")
 
+    def _skill_dir(self, name: str) -> str:
+        name = _validate_skill_name(name)
+        return f"{SKILLS_DIR}{name}/"
+
+    @staticmethod
+    def _validate_relative_bundle_path(path: str) -> str:
+        normalised = path.replace("\\", "/").strip("/")
+        if not normalised or ".." in normalised.split("/"):
+            raise ValueError(f"Invalid skill bundle path: {path!r}")
+        return normalised
+
+    async def apromote_bundle(
+        self,
+        name: str,
+        files: dict[str, str],
+    ) -> None:
+        """Replace the complete currently active skill bundle."""
+
+        name = _validate_skill_name(name)
+
+        if "SKILL.md" not in files:
+            raise ValueError("A promoted skill bundle must contain SKILL.md")
+
+        # Remove resources left over from an older version.
+        await self._delete_tree(self._skill_dir(name))
+
+        for relative, content in sorted(files.items()):
+            relative = self._validate_relative_bundle_path(relative)
+            target = f"{self._skill_dir(name)}{relative}"
+
+            result = await self._backend().awrite(target, content)
+            if result.error:
+                raise RuntimeError(
+                    f"Failed to write promoted skill file {target!r}: {result.error}"
+                )
+
+    async def aload_bundle(self, name: str) -> dict[str, str]:
+        name = _validate_skill_name(name)
+        result: dict[str, str] = {}
+        root = self._skill_dir(name)
+        await self._collect_files(root, root, result)
+        return result
+
+    async def _collect_files(
+        self,
+        current: str,
+        root: str,
+        result: dict[str, str],
+    ) -> None:
+        listing = await self._backend().als(current)
+        if listing.error:
+            return
+
+        for entry in listing.entries or []:
+            path = str(entry.get("path") or "")
+            if not path:
+                continue
+
+            if entry.get("is_dir"):
+                await self._collect_files(path.rstrip("/") + "/", root, result)
+                continue
+
+            read = await self._backend().aread(path)
+            if read.error or read.file_data is None:
+                continue
+
+            relative = path.removeprefix(root).lstrip("/")
+            result[relative] = str(read.file_data.get("content") or "")
+
+    async def _delete_tree(self, path: str) -> None:
+        listing = await self._backend().als(path)
+        if listing.error:
+            return
+
+        for entry in listing.entries or []:
+            entry_path = str(entry.get("path") or "")
+            if not entry_path:
+                continue
+
+            if entry.get("is_dir"):
+                await self._delete_tree(entry_path.rstrip("/") + "/")
+            else:
+                deleted = await self._backend().adelete(entry_path)
+                if deleted.error:
+                    raise RuntimeError(
+                        f"Failed to delete stale skill file {entry_path!r}: {deleted.error}"
+                    )
+
     async def adelete(self, name: str) -> None:
-        """Delete the promoted SKILL.md."""
+        """Delete every file belonging to the active skill."""
 
-        result = await self._backend().adelete(
-            self._skill_path(name)
-        )
-
-        if result.error:
-            raise RuntimeError(
-                f"Failed to delete skill {name!r}: {result.error}"
-            )
+        await self._delete_tree(self._skill_dir(name))
 
     async def asearch(
         self,

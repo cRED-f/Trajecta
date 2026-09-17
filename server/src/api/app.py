@@ -20,6 +20,7 @@ from server.src.chat.models_catalog import ModelCatalogService
 from server.src.chat.models import ConversationCreate, SendMessageRequest
 from server.src.config import Settings
 from server.src.memory.provider import MemoryProvider, get_memory_provider
+from server.src.skills.service import build_skills_service
 from server.src.tools.personal import PersonalToolProvider
 from server.src.tools.personal.scheduler import SchedulerService
 
@@ -76,6 +77,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.memory_provider = memory
         app.state.personal_tools = personal_tools
         app.state.chat_service = chat
+        app.state.skills_service = build_skills_service(settings, memory, personal_tools)
         app.state.scheduler = scheduler
         app.state.model_catalog = ModelCatalogService(settings)
 

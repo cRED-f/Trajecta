@@ -57,6 +57,7 @@ from server.src.memory.provider import (
     MemoryProvider,
 )
 
+from server.src.skills.evaluation.fixtures import ReplayFixtureStore
 from server.src.skills.representation.skill import (
     EvaluationMode,
     Skill,
@@ -669,6 +670,9 @@ class DeepAgentReplayExecutor:
         personal_tools: (
             PersonalToolProvider
         ),
+        replay_fixtures: (
+            ReplayFixtureStore
+        ),
     ) -> None:
         if memory.store is None:
             raise RuntimeError(
@@ -682,6 +686,10 @@ class DeepAgentReplayExecutor:
 
         self._personal_tools = (
             personal_tools
+        )
+
+        self._replay_fixtures = (
+            replay_fixtures
         )
 
         self._models = (
@@ -833,6 +841,103 @@ class DeepAgentReplayExecutor:
                 parents=True,
                 exist_ok=True,
             )
+
+            # -----------------------------------
+            # Restore initial-state fixture
+            # -----------------------------------
+
+            fixture_id = (
+                case
+                .metadata
+                .get(
+                    "replay_fixture_id"
+                )
+            )
+
+            requires_fixture = bool(
+                case
+                .metadata
+                .get(
+                    "requires_replay_fixture"
+                )
+            )
+
+            if (
+                requires_fixture
+                and not fixture_id
+            ):
+                return ReplayResult(
+                    case_id=case.id,
+
+                    repetition=(
+                        repetition
+                    ),
+
+                    variant=variant,
+
+                    skipped=True,
+
+                    error=(
+                        "evaluation case "
+                        "requires a replay "
+                        "fixture, but none "
+                        "was captured"
+                    ),
+
+                    duration_seconds=(
+                        time.perf_counter()
+                        - started
+                    ),
+                )
+
+            if fixture_id:
+                try:
+                    manifest = (
+                        await self
+                        ._replay_fixtures
+                        .materialize(
+                            str(
+                                fixture_id
+                            ),
+
+                            workspace_root=(
+                                workspace
+                            ),
+
+                            uploads_root=(
+                                uploads
+                            ),
+                        )
+                    )
+
+                except Exception as exc:
+                    return ReplayResult(
+                        case_id=case.id,
+
+                        repetition=(
+                            repetition
+                        ),
+
+                        variant=variant,
+
+                        skipped=True,
+
+                        error=(
+                            "failed to "
+                            "materialize replay "
+                            "fixture: "
+                            f"{type(exc).__name__}: "
+                            f"{exc}"
+                        ),
+
+                        duration_seconds=(
+                            time.perf_counter()
+                            - started
+                        ),
+                    )
+
+            else:
+                manifest = None
 
             # -----------------------------------
             # Default isolated backend
@@ -1239,6 +1344,20 @@ class DeepAgentReplayExecutor:
                 ),
 
                 variant=variant,
+
+                metadata={
+                    "replay_fixture_id": (
+                        str(fixture_id)
+                        if fixture_id
+                        else None
+                    ),
+
+                    "replay_fixture_file_count": (
+                        manifest.file_count
+                        if manifest
+                        else 0
+                    ),
+                },
             )
 
             text_chunks: list[str] = []

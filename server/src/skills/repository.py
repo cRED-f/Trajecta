@@ -262,6 +262,36 @@ class SkillRepository:
             return None
         return self._decode_evaluation(row)
 
+    async def list_evaluations(
+        self,
+        *,
+        skill_name: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        limit = max(1, min(limit, 500))
+
+        if skill_name:
+            rows = await self._db.fetch(
+                """
+                SELECT * FROM skill_evaluations
+                WHERE skill_name = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (skill_name, limit),
+            )
+        else:
+            rows = await self._db.fetch(
+                """
+                SELECT * FROM skill_evaluations
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+
+        return [self._decode_evaluation(row) for row in rows]
+
     # -------------------------------------------------
     # Versions
     # -------------------------------------------------
