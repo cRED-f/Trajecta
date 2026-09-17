@@ -11,6 +11,7 @@ adapters over these primitives (see memory.*.store modules).
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,9 @@ from server.src.memory.procedural.store import ProceduralMemory
 from server.src.memory.semantic.store import SemanticMemory
 from server.src.memory.short_term.store import ShortTermStore
 from server.src.memory.storage import SQLiteDatabase, FTSIndex, VectorStore
+from server.src.tools.sandbox import DockerSandboxBackend
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryProvider:
@@ -48,6 +52,7 @@ class MemoryProvider:
         self.checkpointer: AsyncSqliteSaver | None = None
         self.store: AsyncSqliteStore | None = None
         self.backend: CompositeBackend | None = None
+        self.sandbox: DockerSandboxBackend | None = None
 
         self.db_path = cfg.db_path
         self.langgraph_db_path = cfg.langgraph_db_path
@@ -91,37 +96,54 @@ class MemoryProvider:
         self.store = AsyncSqliteStore(conn_store)
         await self.store.setup()
 
-        # Deep Agents backend routes /memories/ and /skills/ into the store,
-        # everything else into thread-scoped state.
-        # Namespaces that ignore their Runtime arg work outside graph context.
+        # Deep Agents backend routing. Persistent memories/skills live in the
+        # LangGraph Store, user-selected host files are exposed at /workspace/,
+        # chat uploads are read-only at /uploads/, and arbitrary execution goes
+        # to an isolated Docker sandbox when available.
         ns_local = ("trajecta-local",)
 
-        uploads_root = Path(
-            self._settings.chat.uploads_path
-        ).resolve()
+        uploads_root = Path(self._settings.chat.uploads_path).resolve()
+        uploads_root.mkdir(parents=True, exist_ok=True)
 
-        uploads_root.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
+        workspace_root = Path(self._settings.tools.workspace_root).resolve()
+        workspace_root.mkdir(parents=True, exist_ok=True)
+
+        default_backend: Any = StateBackend()
+        if self._settings.sandbox.enabled:
+            try:
+                self.sandbox = DockerSandboxBackend(
+                    image=self._settings.sandbox.image,
+                    workspace_root=str(workspace_root),
+                    uploads_root=str(uploads_root),
+                    timeout_seconds=self._settings.sandbox.timeout_seconds,
+                    memory_limit=self._settings.sandbox.memory_limit,
+                    cpu_limit=self._settings.sandbox.cpu_limit,
+                    network_enabled=self._settings.sandbox.network_enabled,
+                    auto_remove=self._settings.sandbox.auto_remove,
+                )
+                default_backend = self.sandbox
+            except Exception:
+                # Chat must remain usable when Docker is unavailable or the
+                # sandbox image has not been built yet. In that case Deep
+                # Agents simply omits its built-in `execute` tool.
+                logger.exception("Docker sandbox unavailable; using StateBackend")
+                self.sandbox = None
 
         self.backend = CompositeBackend(
-            default=StateBackend(),
+            default=default_backend,
             routes={
                 "/memories/": StoreBackend(
                     namespace=lambda _rt: ns_local,
                     store=self.store,
                 ),
-
                 "/skills/": StoreBackend(
                     namespace=lambda _rt: ns_local + ("skills",),
                     store=self.store,
                 ),
-
-                # Files uploaded by the desktop app.
-                #
-                # CompositeBackend strips "/uploads/" before
-                # passing the path to FilesystemBackend.
+                "/workspace/": FilesystemBackend(
+                    root_dir=str(workspace_root),
+                    virtual_mode=True,
+                ),
                 "/uploads/": FilesystemBackend(
                     root_dir=str(uploads_root),
                     virtual_mode=True,
@@ -140,6 +162,9 @@ class MemoryProvider:
 
     async def close(self) -> None:
         self.vector.close()
+        if self.sandbox is not None:
+            self.sandbox.close()
+            self.sandbox = None
         if self.fts is not None:
             self.fts = None
         if self.sqlite is not None:

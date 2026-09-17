@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from server.src.chat.attachments import AttachmentError
 from server.src.chat.model import BifrostConfigurationError
 from server.src.chat.models import (
+    ApprovalResumeRequest,
     Attachment,
     CancelRunResponse,
     ChatBranch,
@@ -28,6 +29,7 @@ from server.src.chat.service import (
     InvalidAttachment,
     InvalidMessageOperation,
     MessageNotFound,
+    PreparedResume,
     PreparedTurn,
 )
 from server.src.chat.streaming import sse_stream
@@ -71,6 +73,32 @@ def _response_for_prepared(
             heartbeat_seconds=(
                 request.app.state.settings.chat.stream_heartbeat_seconds
             ),
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _response_for_resume(
+    request: Request,
+    service: ChatService,
+    prepared: PreparedResume,
+) -> StreamingResponse:
+    async def source() -> AsyncIterator:
+        async for event in service.stream_resume(prepared):
+            if await request.is_disconnected():
+                await service.cancel(prepared.conversation.id)
+                break
+            yield event
+
+    return StreamingResponse(
+        sse_stream(
+            source(),
+            heartbeat_seconds=request.app.state.settings.chat.stream_heartbeat_seconds,
         ),
         media_type="text/event-stream",
         headers={
@@ -228,6 +256,34 @@ async def regenerate_message(
         _raise_preflight(exc)
         raise AssertionError("unreachable")
     return _response_for_prepared(request, service, prepared)
+
+
+@router.get("/conversations/{conversation_id}/approval")
+async def get_pending_approval(conversation_id: str, request: Request) -> dict:
+    try:
+        pending = await _service(request).get_pending_approval(conversation_id)
+    except Exception as exc:
+        _raise_preflight(exc)
+        raise AssertionError("unreachable")
+    if pending is None:
+        raise HTTPException(status_code=404, detail="No pending approval")
+    return pending
+
+
+@router.post("/conversations/{conversation_id}/approval/stream")
+async def resume_pending_approval(
+    conversation_id: str,
+    body: ApprovalResumeRequest,
+    request: Request,
+) -> StreamingResponse:
+    service = _service(request)
+    decisions = [item.model_dump(exclude_none=True) for item in body.decisions]
+    try:
+        prepared = await service.prepare_resume(conversation_id, decisions)
+    except Exception as exc:
+        _raise_preflight(exc)
+        raise AssertionError("unreachable")
+    return _response_for_resume(request, service, prepared)
 
 
 @router.delete("/conversations/{conversation_id}")

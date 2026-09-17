@@ -1,8 +1,7 @@
-"""Process management tool — start, stop, inspect background processes."""
+"""Compatibility re-export for Trajecta's managed host-process service."""
 
+from server.src.tools.personal.process import ProcessManager
 
-class ProcessTool:
-    """Manages long-running background processes."""
+ProcessTools = ProcessManager
 
-    # TODO: spawn/kill background processes, stdout/stderr capture, status queries
-    pass
+__all__ = ["ProcessManager", "ProcessTools"]

@@ -6,8 +6,8 @@ FROM python:3.12
 WORKDIR /app
 
 # Runtime deps for the memory graph + the langgraph dev server.
-# (requirements-memory.txt lives beside this Dockerfile in docker/langgraph/.)
-COPY docker/langgraph/requirements-memory.txt ./requirements-memory.txt
+# (requirements-memory.txt lives beside this Dockerfile in infra-docker/langgraph/.)
+COPY infra-docker/langgraph/requirements-memory.txt ./requirements-memory.txt
 RUN pip install --no-cache-dir -r requirements-memory.txt "langgraph-cli[inmem]"
 
 # Source tree (not installed as a package — langgraph.json + PYTHONPATH suffice).

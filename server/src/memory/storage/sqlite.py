@@ -104,6 +104,24 @@ class SQLiteDatabase:
                 "INSERT INTO schema_version(version) VALUES (4)"
             )
 
+            version = 4
+
+        if version < 5:
+            await self._migrate_v5()
+
+            await self._conn.execute(
+                "INSERT INTO schema_version(version) VALUES (5)"
+            )
+
+            version = 5
+
+        if version < 6:
+            await self._migrate_v6()
+
+            await self._conn.execute(
+                "INSERT INTO schema_version(version) VALUES (6)"
+            )
+
         await self._conn.commit()
 
     async def _migrate_v1(self) -> None:
@@ -449,6 +467,111 @@ class SQLiteDatabase:
                 WHERE conversations.id = chat_branches.conversation_id
             )
             WHERE thread_id IS NULL OR thread_id = ''
+            """
+        )
+
+    async def _migrate_v5(self) -> None:
+        """Schema v5: personal-agent tasks, schedules, notifications and audit."""
+
+        assert self._conn is not None
+
+        await self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS personal_tasks (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                notes TEXT,
+                status TEXT NOT NULL DEFAULT 'open',
+                priority TEXT NOT NULL DEFAULT 'normal',
+                due_at TEXT,
+                tags TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS scheduled_jobs (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                schedule_type TEXT NOT NULL,
+                schedule_expr TEXT NOT NULL,
+                timezone TEXT NOT NULL DEFAULT 'UTC',
+                next_run_at TEXT,
+                last_run_at TEXT,
+                conversation_id TEXT,
+                last_result TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                metadata TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS notifications (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                level TEXT NOT NULL DEFAULT 'info',
+                created_at TEXT NOT NULL,
+                read_at TEXT,
+                metadata TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS skill_candidates (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                content TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'candidate',
+                source_trajectory_ids TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                metadata TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS tool_audit (
+                id TEXT PRIMARY KEY,
+                run_id TEXT,
+                tool_name TEXT NOT NULL,
+                risk TEXT NOT NULL,
+                arguments TEXT,
+                result TEXT,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_personal_tasks_status
+                ON personal_tasks(status, due_at);
+            CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_next_run
+                ON scheduled_jobs(enabled, next_run_at);
+            CREATE INDEX IF NOT EXISTS idx_notifications_created
+                ON notifications(created_at);
+            CREATE INDEX IF NOT EXISTS idx_skill_candidates_name
+                ON skill_candidates(name, status);
+            CREATE INDEX IF NOT EXISTS idx_tool_audit_name
+                ON tool_audit(tool_name, created_at);
+            """
+        )
+
+    async def _migrate_v6(self) -> None:
+        """Schema v6: durable Deep Agents human-in-the-loop approvals."""
+        assert self._conn is not None
+        await self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS pending_approvals (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL UNIQUE REFERENCES conversations(id) ON DELETE CASCADE,
+                branch_id TEXT NOT NULL REFERENCES chat_branches(id) ON DELETE CASCADE,
+                thread_id TEXT NOT NULL,
+                checkpoint_id TEXT NOT NULL,
+                user_message_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+                model_name TEXT NOT NULL,
+                interrupt_data TEXT NOT NULL,
+                partial_text TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_pending_approvals_branch
+                ON pending_approvals(branch_id);
             """
         )
 

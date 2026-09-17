@@ -1,8 +1,13 @@
-"""Shell execution tool (sandboxed when configured)."""
+"""Compatibility wrapper around Deep Agents' SandboxBackendProtocol."""
+
+from __future__ import annotations
+
+from deepagents.backends.protocol import ExecuteResponse, SandboxBackendProtocol
 
 
-class ShellTool:
-    """Executes shell commands with permission + risk classification."""
+class ShellTools:
+    def __init__(self, sandbox: SandboxBackendProtocol) -> None:
+        self.sandbox = sandbox
 
-    # TODO: safe shell execution, env isolation, timeout, output capture
-    pass
+    def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        return self.sandbox.execute(command, timeout=timeout)

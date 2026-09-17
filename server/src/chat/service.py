@@ -32,6 +32,8 @@ from server.src.chat.runtime import DeepAgentRuntime, PreparedAgentRun
 from server.src.chat.runs import ChatRunRegistry
 from server.src.config import Settings
 from server.src.memory.provider import MemoryProvider
+from server.src.tools.personal import PersonalToolProvider
+from server.src.skills.trajectory_store import TrajectoryStore
 
 
 class ConversationNotFound(RuntimeError):
@@ -61,6 +63,18 @@ class PreparedTurn:
     cancel_event: asyncio.Event
 
 
+@dataclass(slots=True)
+class PreparedResume:
+    run_id: str
+    conversation: Conversation
+    branch: ChatBranch
+    user_message: ChatMessage
+    runtime: PreparedAgentRun
+    cancel_event: asyncio.Event
+    decisions: list[dict]
+    partial_text: str
+
+
 class ChatService:
     def __init__(
         self,
@@ -70,6 +84,7 @@ class ChatService:
         rag: AttachmentRAGIndex,
         runtime: DeepAgentRuntime,
         runs: ChatRunRegistry,
+        trajectories: TrajectoryStore,
     ) -> None:
         self._settings = settings
         self._models = BifrostModelFactory(settings)
@@ -78,6 +93,7 @@ class ChatService:
         self._rag = rag
         self._runtime = runtime
         self._runs = runs
+        self._trajectories = trajectories
 
     # ------------------------------------------------------------------
     # Conversations
@@ -230,6 +246,7 @@ class ChatService:
         conversation_id: str,
         request: SendMessageRequest,
     ) -> PreparedTurn:
+        await self._ensure_no_pending_approval(conversation_id)
         conversation = await self._require_conversation(conversation_id)
         branch = await self._require_active_branch(conversation_id)
         attachments = await self._validate_attachments(
@@ -262,6 +279,7 @@ class ChatService:
         message_id: str,
         request: EditMessageRequest,
     ) -> PreparedTurn:
+        await self._ensure_no_pending_approval(conversation_id)
         original = await self._require_user_message(conversation_id, message_id)
         attachments = (
             await self._validate_attachments(conversation_id, request.attachment_ids)
@@ -285,6 +303,7 @@ class ChatService:
         message_id: str,
         request: ResendMessageRequest,
     ) -> PreparedTurn:
+        await self._ensure_no_pending_approval(conversation_id)
         original = await self._require_user_message(conversation_id, message_id)
         attachments = await self._repository.get_message_attachments(original.id)
         return await self._prepare_fork_from_user(
@@ -303,6 +322,7 @@ class ChatService:
         assistant_message_id: str,
         request: RegenerateMessageRequest,
     ) -> PreparedTurn:
+        await self._ensure_no_pending_approval(conversation_id)
         assistant = await self._require_message(conversation_id, assistant_message_id)
         if assistant.role != MessageRole.ASSISTANT or not assistant.parent_message_id:
             raise InvalidMessageOperation(
@@ -469,6 +489,26 @@ class ChatService:
     async def stream_prepared(self, turn: PreparedTurn) -> AsyncIterator[ChatEvent]:
         assistant_text: list[str] = []
         final_checkpoint_id: str | None = None
+        _task_id, trajectory_id = await self._trajectories.begin(
+            goal=turn.user_message.content or "[attachment-only task]",
+            thread_id=turn.branch.thread_id,
+            metadata={
+                "conversation_id": turn.conversation.id,
+                "branch_id": turn.branch.id,
+                "user_message_id": turn.user_message.id,
+                "model": turn.runtime.model_name,
+                "attachments": [item.id for item in turn.attachments],
+            },
+        )
+        await self._trajectories.append(
+            trajectory_id,
+            event_type="user.task",
+            data={
+                "content": turn.user_message.content[:20_000],
+                "attachment_ids": [item.id for item in turn.attachments],
+            },
+            source="user",
+        )
         try:
             yield ChatEvent(
                 type="message.accepted",
@@ -488,6 +528,16 @@ class ChatService:
                 cancel_event=turn.cancel_event,
             ):
                 event.run_id = turn.run_id
+                if event.type in {
+                    "run.started", "tool.call.delta", "tool.result", "agent.step",
+                    "run.finished", "run.interrupted", "run.cancelled", "run.error",
+                }:
+                    await self._trajectories.append(
+                        trajectory_id,
+                        event_type=event.type,
+                        data=event.data,
+                        source=str(event.data.get("source") or "main"),
+                    )
                 if event.type == "message.delta":
                     text = event.data.get("text")
                     if isinstance(text, str):
@@ -496,10 +546,36 @@ class ChatService:
                     value = event.data.get("checkpoint_id")
                     if isinstance(value, str):
                         final_checkpoint_id = value
+                elif event.type == "run.interrupted":
+                    checkpoint = event.data.get("checkpoint_id")
+                    if not isinstance(checkpoint, str) or not checkpoint:
+                        checkpoint = await self._runtime.latest_checkpoint_id(turn.branch.thread_id)
+                    if not checkpoint:
+                        raise RuntimeError("HITL interrupt did not persist a checkpoint")
+                    await self._repository.update_branch_head(turn.branch.id, checkpoint)
+                    await self._repository.save_pending_approval(
+                        conversation_id=turn.conversation.id,
+                        branch_id=turn.branch.id,
+                        thread_id=turn.branch.thread_id,
+                        checkpoint_id=checkpoint,
+                        user_message_id=turn.user_message.id,
+                        model_name=turn.runtime.model_name,
+                        interrupt_data=event.data.get("interrupt") or {},
+                        partial_text="".join(assistant_text),
+                    )
+                    await self._trajectories.finish(
+                        trajectory_id, outcome="interrupted", result="Waiting for user approval"
+                    )
+                    yield event
+                    return
                 elif event.type == "run.cancelled":
+                    await self._trajectories.finish(trajectory_id, outcome="cancelled")
                     yield event
                     return
                 elif event.type == "run.error":
+                    await self._trajectories.finish(
+                        trajectory_id, outcome="failure", result=str(event.data.get("error") or event.data)
+                    )
                     yield event
                     return
                 yield event
@@ -527,6 +603,12 @@ class ChatService:
                 turn.branch.id,
                 final_checkpoint_id,
             )
+            await self._trajectories.finish(
+                trajectory_id,
+                outcome="success",
+                result=final_text[:100_000],
+                metadata={"checkpoint_id": final_checkpoint_id},
+            )
             yield ChatEvent(
                 type="message.completed",
                 conversation_id=turn.conversation.id,
@@ -537,6 +619,127 @@ class ChatService:
                     "checkpoint_id": final_checkpoint_id,
                 },
             )
+        except Exception as exc:
+            try:
+                await self._trajectories.finish(
+                    trajectory_id, outcome="failure", result=f"{type(exc).__name__}: {exc}"
+                )
+            except Exception:
+                pass
+            raise
+        finally:
+            await self._runs.unregister(turn.conversation.id, turn.run_id)
+
+    async def stream_resume(self, turn: PreparedResume) -> AsyncIterator[ChatEvent]:
+        assistant_text: list[str] = [turn.partial_text]
+        final_checkpoint_id: str | None = None
+        _task_id, trajectory_id = await self._trajectories.begin(
+            goal=f"Resume approved action for: {turn.user_message.content}",
+            thread_id=turn.branch.thread_id,
+            metadata={
+                "conversation_id": turn.conversation.id,
+                "branch_id": turn.branch.id,
+                "user_message_id": turn.user_message.id,
+                "model": turn.runtime.model_name,
+                "approval_resume": True,
+                "decisions": turn.decisions,
+            },
+        )
+        try:
+            async for event in self._runtime.stream_resume(
+                prepared=turn.runtime,
+                conversation=turn.conversation,
+                decisions=turn.decisions,
+                cancel_event=turn.cancel_event,
+            ):
+                event.run_id = turn.run_id
+                if event.type in {
+                    "run.started", "tool.call.delta", "tool.result", "agent.step",
+                    "run.finished", "run.interrupted", "run.cancelled", "run.error",
+                }:
+                    await self._trajectories.append(
+                        trajectory_id,
+                        event_type=event.type,
+                        data=event.data,
+                        source=str(event.data.get("source") or "main"),
+                    )
+                if event.type == "message.delta":
+                    text = event.data.get("text")
+                    if isinstance(text, str):
+                        assistant_text.append(text)
+                elif event.type == "run.finished":
+                    value = event.data.get("checkpoint_id")
+                    if isinstance(value, str):
+                        final_checkpoint_id = value
+                elif event.type == "run.interrupted":
+                    checkpoint = event.data.get("checkpoint_id")
+                    if not isinstance(checkpoint, str) or not checkpoint:
+                        checkpoint = await self._runtime.latest_checkpoint_id(turn.branch.thread_id)
+                    if not checkpoint:
+                        raise RuntimeError("HITL interrupt did not persist a checkpoint")
+                    await self._repository.update_branch_head(turn.branch.id, checkpoint)
+                    await self._repository.save_pending_approval(
+                        conversation_id=turn.conversation.id,
+                        branch_id=turn.branch.id,
+                        thread_id=turn.branch.thread_id,
+                        checkpoint_id=checkpoint,
+                        user_message_id=turn.user_message.id,
+                        model_name=turn.runtime.model_name,
+                        interrupt_data=event.data.get("interrupt") or {},
+                        partial_text="".join(assistant_text),
+                    )
+                    await self._trajectories.finish(
+                        trajectory_id, outcome="interrupted", result="Waiting for another user approval"
+                    )
+                    yield event
+                    return
+                elif event.type in {"run.cancelled", "run.error"}:
+                    await self._trajectories.finish(
+                        trajectory_id,
+                        outcome="cancelled" if event.type == "run.cancelled" else "failure",
+                        result=str(event.data.get("error") or event.data),
+                    )
+                    yield event
+                    return
+                yield event
+
+            if final_checkpoint_id is None:
+                final_checkpoint_id = await self._runtime.latest_checkpoint_id(turn.branch.thread_id)
+            final_text = "".join(assistant_text).strip()
+            assistant_message = await self._repository.add_message(
+                conversation_id=turn.conversation.id,
+                role=MessageRole.ASSISTANT,
+                content=final_text,
+                status=MessageStatus.COMPLETE,
+                parent_message_id=turn.user_message.id,
+                checkpoint_id=final_checkpoint_id,
+                metadata={"model": turn.runtime.model_name, "run_id": turn.run_id, "resumed": True},
+                branch_id=turn.branch.id,
+            )
+            await self._repository.update_branch_head(turn.branch.id, final_checkpoint_id)
+            await self._repository.clear_pending_approval(turn.conversation.id)
+            await self._trajectories.finish(
+                trajectory_id, outcome="success", result=final_text[:100_000],
+                metadata={"checkpoint_id": final_checkpoint_id, "approval_resume": True},
+            )
+            yield ChatEvent(
+                type="message.completed",
+                conversation_id=turn.conversation.id,
+                run_id=turn.run_id,
+                data={
+                    "message": assistant_message.model_dump(mode="json"),
+                    "branch_id": turn.branch.id,
+                    "checkpoint_id": final_checkpoint_id,
+                },
+            )
+        except Exception as exc:
+            try:
+                await self._trajectories.finish(
+                    trajectory_id, outcome="failure", result=f"{type(exc).__name__}: {exc}"
+                )
+            except Exception:
+                pass
+            raise
         finally:
             await self._runs.unregister(turn.conversation.id, turn.run_id)
 
@@ -546,6 +749,81 @@ class ChatService:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    async def _ensure_no_pending_approval(self, conversation_id: str) -> None:
+        pending = await self._repository.get_pending_approval(conversation_id)
+        if pending is not None:
+            raise InvalidMessageOperation(
+                "This conversation is waiting for approval of a sensitive action. "
+                "Approve or reject it before sending another message."
+            )
+
+    async def get_pending_approval(self, conversation_id: str) -> dict | None:
+        await self._require_conversation(conversation_id)
+        return await self._repository.get_pending_approval(conversation_id)
+
+    async def prepare_resume(
+        self,
+        conversation_id: str,
+        decisions: list[dict],
+    ) -> PreparedResume:
+        conversation = await self._require_conversation(conversation_id)
+        pending = await self._repository.get_pending_approval(conversation_id)
+        if pending is None:
+            raise InvalidMessageOperation("No sensitive action is waiting for approval")
+        branch = await self._repository.get_branch(str(pending["branch_id"]))
+        if branch is None:
+            raise InvalidMessageOperation("Approval branch no longer exists")
+        user_message = await self._require_user_message(
+            conversation_id, str(pending["user_message_id"])
+        )
+        interrupt = pending.get("interrupt_data") or {}
+        actions = interrupt.get("action_requests") or []
+        reviews = interrupt.get("review_configs") or []
+        expected = len(actions)
+        if expected and len(decisions) != expected:
+            raise InvalidMessageOperation(
+                f"Expected {expected} approval decision(s), received {len(decisions)}"
+            )
+        allowed_by_action = {
+            str(item.get("action_name")): set(item.get("allowed_decisions") or [])
+            for item in reviews
+            if isinstance(item, dict)
+        }
+        known_types = {"approve", "edit", "reject", "respond"}
+        for index, decision in enumerate(decisions):
+            decision_type = str(decision.get("type") or "")
+            if decision_type not in known_types:
+                raise InvalidMessageOperation(f"Invalid approval decision type: {decision_type}")
+            if index < len(actions) and isinstance(actions[index], dict):
+                action_name = str(actions[index].get("name") or "")
+                allowed = allowed_by_action.get(action_name)
+                if allowed and decision_type not in allowed:
+                    raise InvalidMessageOperation(
+                        f"Decision {decision_type!r} is not allowed for {action_name!r}"
+                    )
+            if decision_type == "edit" and not isinstance(decision.get("edited_action"), dict):
+                raise InvalidMessageOperation("edit decisions require edited_action")
+            if decision_type in {"reject", "respond"} and not str(decision.get("message") or "").strip():
+                raise InvalidMessageOperation(f"{decision_type} decisions require a message")
+        runtime = await self._runtime.prepare(
+            conversation=conversation,
+            thread_id=str(pending["thread_id"]),
+            model_name=str(pending["model_name"]),
+            base_checkpoint_id=str(pending["checkpoint_id"]),
+        )
+        run_id = uuid.uuid4().hex
+        cancel_event = await self._runs.register(conversation_id, run_id)
+        return PreparedResume(
+            run_id=run_id,
+            conversation=conversation,
+            branch=branch,
+            user_message=user_message,
+            runtime=runtime,
+            cancel_event=cancel_event,
+            decisions=decisions,
+            partial_text=str(pending.get("partial_text") or ""),
+        )
 
     async def _require_conversation(self, conversation_id: str) -> Conversation:
         result = await self._repository.get_conversation(conversation_id)
@@ -616,7 +894,11 @@ class ChatService:
         return "New conversation"
 
 
-def build_chat_service(settings: Settings, memory: MemoryProvider) -> ChatService:
+def build_chat_service(
+    settings: Settings,
+    memory: MemoryProvider,
+    personal_tools: PersonalToolProvider | None = None,
+) -> ChatService:
     if memory.sqlite is None:
         raise RuntimeError("MemoryProvider must be opened before ChatService")
 
@@ -635,8 +917,10 @@ def build_chat_service(settings: Settings, memory: MemoryProvider) -> ChatServic
         config=settings.chat.rag,
     )
     mcp = MCPToolProvider(settings)
-    runtime = DeepAgentRuntime(settings, memory, mcp, rag)
+    tools = personal_tools or PersonalToolProvider(settings, memory)
+    runtime = DeepAgentRuntime(settings, memory, mcp, rag, tools)
     runs = ChatRunRegistry()
+    trajectories = TrajectoryStore(memory.sqlite)
     return ChatService(
         settings,
         repository,
@@ -644,4 +928,5 @@ def build_chat_service(settings: Settings, memory: MemoryProvider) -> ChatServic
         rag,
         runtime,
         runs,
+        trajectories,
     )

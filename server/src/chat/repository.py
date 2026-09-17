@@ -353,6 +353,64 @@ class ChatRepository:
         )
 
     # ------------------------------------------------------------------
+    # Human approvals
+    # ------------------------------------------------------------------
+
+    async def save_pending_approval(
+        self,
+        *,
+        conversation_id: str,
+        branch_id: str,
+        thread_id: str,
+        checkpoint_id: str,
+        user_message_id: str,
+        model_name: str,
+        interrupt_data: dict[str, Any],
+        partial_text: str = "",
+    ) -> None:
+        approval_id = uuid.uuid4().hex
+        now = _now()
+        await self._db.execute(
+            """
+            INSERT INTO pending_approvals(
+                id, conversation_id, branch_id, thread_id, checkpoint_id,
+                user_message_id, model_name, interrupt_data, partial_text,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(conversation_id) DO UPDATE SET
+                branch_id = excluded.branch_id,
+                thread_id = excluded.thread_id,
+                checkpoint_id = excluded.checkpoint_id,
+                user_message_id = excluded.user_message_id,
+                model_name = excluded.model_name,
+                interrupt_data = excluded.interrupt_data,
+                partial_text = excluded.partial_text,
+                updated_at = excluded.updated_at
+            """,
+            (
+                approval_id, conversation_id, branch_id, thread_id, checkpoint_id,
+                user_message_id, model_name, _dump(interrupt_data), partial_text, now, now,
+            ),
+        )
+
+    async def get_pending_approval(self, conversation_id: str) -> dict[str, Any] | None:
+        row = await self._db.fetchone(
+            "SELECT * FROM pending_approvals WHERE conversation_id = ?",
+            (conversation_id,),
+        )
+        if row is None:
+            return None
+        value = dict(row)
+        value["interrupt_data"] = _load(value.get("interrupt_data"))
+        return value
+
+    async def clear_pending_approval(self, conversation_id: str) -> None:
+        await self._db.execute(
+            "DELETE FROM pending_approvals WHERE conversation_id = ?",
+            (conversation_id,),
+        )
+
+    # ------------------------------------------------------------------
     # Attachments
     # ------------------------------------------------------------------
 

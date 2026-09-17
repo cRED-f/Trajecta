@@ -1,8 +1,15 @@
-"""MCP tool adapter — adapts MCP tools to the agent's tool interface."""
+"""MCP tools returned by LangChain MCPAdapter are already BaseTool objects."""
+
+from __future__ import annotations
+
+from langchain_core.tools import BaseTool
 
 
 class MCPToolAdapter:
-    """Wraps MCP tools so they appear as standard agent tools."""
+    @staticmethod
+    def adapt(tool: BaseTool) -> BaseTool:
+        return tool
 
-    # TODO: convert MCP tool schemas to agent tool format, forward calls
-    pass
+    @staticmethod
+    def adapt_all(tools: list[BaseTool]) -> list[BaseTool]:
+        return list(tools)

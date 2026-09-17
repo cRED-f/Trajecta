@@ -7,8 +7,10 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
-from deepagents import FilesystemPermission, create_deep_agent
+from deepagents import create_deep_agent
+from langchain.agents.middleware import TodoListMiddleware
 from langchain_core.messages import AIMessageChunk, ToolMessage
+from langgraph.types import Command
 
 from server.src.chat.mcp import MCPToolProvider
 from server.src.chat.model import BifrostModelFactory
@@ -16,6 +18,7 @@ from server.src.chat.models import Attachment, ChatEvent, Conversation
 from server.src.chat.rag import AttachmentRAGIndex
 from server.src.config import Settings
 from server.src.memory.provider import MemoryProvider
+from server.src.tools.personal import PersonalToolProvider
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +34,11 @@ Behavior:
 - Answer simple requests directly; do not create unnecessary plans/subagents.
 - Never claim you inspected a file unless you actually used a file or retrieval tool.
 - Uploaded files are available under /uploads/ and are immutable.
+- User-approved host files live under /workspace/. Prefer Deep Agents built-in file tools there.
+- Use persistent memory for stable facts/preferences and session_search for past conversations.
+- Use schedule_create for future/recurring work instead of claiming you will remember manually.
+- Browser tools automate websites; computer tools (when enabled) control non-browser desktop apps.
+- Prefer sandbox execute for code/commands; host process tools are for approved long-running processes only.
 - For large indexed documents, use search_attachments to retrieve relevant passages
   before reading entire extracted files. Read the original file when visual/layout
   details matter, especially for images and PDFs.
@@ -86,11 +94,13 @@ class DeepAgentRuntime:
         memory: MemoryProvider,
         mcp: MCPToolProvider,
         rag: AttachmentRAGIndex,
+        personal_tools: PersonalToolProvider,
     ) -> None:
         self._settings = settings
         self._memory = memory
         self._mcp = mcp
         self._rag = rag
+        self._personal_tools = personal_tools
         self._models = BifrostModelFactory(settings)
 
     async def prepare(
@@ -106,9 +116,11 @@ class DeepAgentRuntime:
             model_name or conversation.model
         )
         model = self._models.create(chosen_model)
-        tools = await self._mcp.get_tools()
+        mcp_tools = await self._mcp.get_tools()
+        native_tools = self._personal_tools.get_tools()
+        tools = [*native_tools, *mcp_tools]
         if self._rag.enabled:
-            tools = [*tools, self._rag.as_tool(conversation_id=conversation.id)]
+            tools.append(self._rag.as_tool(conversation_id=conversation.id))
 
         config: dict[str, Any] = {
             "configurable": {"thread_id": thread_id}
@@ -136,25 +148,16 @@ class DeepAgentRuntime:
             model=model,
             tools=tools,
             system_prompt=SYSTEM_PROMPT,
-            permissions=[
-                FilesystemPermission(
-                    operations=["write"],
-                    paths=["/uploads/**"],
-                    mode="deny",
-                ),
-                FilesystemPermission(
-                    operations=["write"],
-                    paths=["/skills/**"],
-                    mode="deny",
-                ),
-            ],
+            middleware=[TodoListMiddleware()],
+            permissions=self._personal_tools.permissions(),
+            interrupt_on=self._personal_tools.interrupt_on(),
             **self._memory.agent_kwargs(),
         )
         return PreparedAgentRun(
             agent=agent,
             config=config,
             model_name=chosen_model,
-            mcp_tool_count=len(tools) - (1 if self._rag.enabled else 0),
+            mcp_tool_count=len(mcp_tools),
             thread_id=thread_id,
         )
 
@@ -167,9 +170,58 @@ class DeepAgentRuntime:
         attachments: list[Attachment],
         cancel_event: asyncio.Event,
     ) -> AsyncIterator[ChatEvent]:
-        run_id = uuid.uuid4().hex
         content = self._build_input(user_content, attachments)
+        async for event in self._stream_input(
+            prepared=prepared,
+            conversation=conversation,
+            agent_input={"messages": [{"role": "user", "content": content}]},
+            cancel_event=cancel_event,
+            resumed=False,
+        ):
+            yield event
 
+    async def stream_resume(
+        self,
+        *,
+        prepared: PreparedAgentRun,
+        conversation: Conversation,
+        decisions: list[dict[str, Any]],
+        cancel_event: asyncio.Event,
+    ) -> AsyncIterator[ChatEvent]:
+        """Resume a Deep Agents HITL interrupt using its persisted checkpoint."""
+        async for event in self._stream_input(
+            prepared=prepared,
+            conversation=conversation,
+            agent_input=Command(resume={"decisions": decisions}),
+            cancel_event=cancel_event,
+            resumed=True,
+        ):
+            yield event
+
+    @staticmethod
+    def _interrupt_value(raw: Any) -> dict[str, Any]:
+        items = raw if isinstance(raw, (list, tuple)) else [raw]
+        values: list[Any] = []
+        for item in items:
+            value = getattr(item, "value", item)
+            if isinstance(value, dict):
+                values.append(value)
+            else:
+                values.append({"value": str(value)})
+        if len(values) == 1 and isinstance(values[0], dict):
+            return values[0]
+        return {"interrupts": values}
+
+    async def _stream_input(
+        self,
+        *,
+        prepared: PreparedAgentRun,
+        conversation: Conversation,
+        agent_input: Any,
+        cancel_event: asyncio.Event,
+        resumed: bool,
+    ) -> AsyncIterator[ChatEvent]:
+        run_id = uuid.uuid4().hex
         yield ChatEvent(
             type="run.started",
             conversation_id=conversation.id,
@@ -178,12 +230,13 @@ class DeepAgentRuntime:
                 "model": prepared.model_name,
                 "mcp_tool_count": prepared.mcp_tool_count,
                 "base_checkpoint_id": prepared.config["configurable"].get("checkpoint_id"),
+                "resumed": resumed,
             },
         )
 
         try:
             stream = prepared.agent.astream(
-                {"messages": [{"role": "user", "content": content}]},
+                agent_input,
                 config=prepared.config,
                 stream_mode=["messages", "updates"],
                 subgraphs=True,
@@ -250,6 +303,18 @@ class DeepAgentRuntime:
                 elif event_type == "updates":
                     data = chunk.get("data")
                     if isinstance(data, dict):
+                        if "__interrupt__" in data:
+                            checkpoint_id = await self.latest_checkpoint_id(prepared.thread_id)
+                            yield ChatEvent(
+                                type="run.interrupted",
+                                conversation_id=conversation.id,
+                                run_id=run_id,
+                                data={
+                                    "checkpoint_id": checkpoint_id,
+                                    "interrupt": self._interrupt_value(data["__interrupt__"]),
+                                },
+                            )
+                            return
                         for node_name in data:
                             yield ChatEvent(
                                 type="agent.step",

@@ -1,8 +1,7 @@
-"""HTTP request tool."""
+"""Compatibility re-export for Trajecta's free network tool service."""
 
+from server.src.tools.personal.network import NetworkTools
 
-class HttpTool:
-    """Makes HTTP requests (GET/POST/etc.) with configurable restrictions."""
+HTTPTools = NetworkTools
 
-    # TODO: httpx-based requests, URL allowlist, timeout handling
-    pass
+__all__ = ["HTTPTools", "NetworkTools"]

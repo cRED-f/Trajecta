@@ -1,1 +1,5 @@
-"""Docker sandbox — isolated execution for sensitive tools."""
+"""Sandbox backends used by Trajecta."""
+
+from server.src.tools.sandbox.docker import DockerSandboxBackend
+
+__all__ = ["DockerSandboxBackend"]

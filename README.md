@@ -41,7 +41,7 @@ trajecta/
 │       ├── models/        # Pydantic schemas
 │       └── utils/         # Shared utilities
 ├── config/                # Environment and deployment configs
-├── docker/                # Dockerfiles and compose for sandboxing + observability
+├── infra-docker/          # Dockerfiles and compose for sandboxing + observability
 ├── evals/                 # Evaluation benchmarks, suites, results
 ├── scripts/               # Dev and utility scripts
 ├── docs/                  # Project documentation
@@ -65,4 +65,4 @@ trajecta/
 - [Observability](server/src/observability/REQUIREMENTS.md)
 - [Evaluation System](evals/REQUIREMENTS.md)
 - [Tool Runtime](server/src/tools/REQUIREMENTS.md)
-- [Docker & Sandboxing](docker/REQUIREMENTS.md)
+- [Docker & Sandboxing](infra-docker/REQUIREMENTS.md)

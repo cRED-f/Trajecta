@@ -37,23 +37,67 @@ class ChatConfig(BaseModel):
     rag: ChatRagConfig = ChatRagConfig()
 
 
+class WebToolsConfig(BaseModel):
+    enabled: bool = True
+    # Optional self-hosted SearXNG endpoint. When unset, `web_search` falls back
+    # to DuckDuckGo's public HTML endpoint (best-effort, no API key).
+    searxng_url: str | None = None
+    request_timeout_seconds: float = 20.0
+    max_response_bytes: int = 2_000_000
+    user_agent: str = "Trajecta/0.1 (+local-first personal agent)"
+
+
+class BrowserToolsConfig(BaseModel):
+    enabled: bool = True
+    headless: bool = False
+    browser: str = "chromium"
+    default_timeout_ms: int = 20_000
+    downloads_path: str = ".trajecta/downloads"
+
+
+class ComputerToolsConfig(BaseModel):
+    # Desktop control is intentionally opt-in because it can act outside the
+    # browser and outside Deep Agents' filesystem permission boundary.
+    enabled: bool = False
+    screenshot_path: str = ".trajecta/screenshots"
+
+
+class SchedulerToolsConfig(BaseModel):
+    enabled: bool = True
+    poll_seconds: float = 5.0
+
+
 class ToolsConfig(BaseModel):
     # FastMCP / LangChain MCPConfig shape.
-    #
-    # Example:
-    #
-    # mcp_servers:
-    #   langchain_docs:
-    #     url: "https://docs.langchain.com/mcp"
-    #
-    #   local_tool:
-    #     command: "python"
-    #     args: ["tools/my_server.py"]
-    mcp_servers: dict[str, dict[str, Any]] = Field(
-        default_factory=dict
-    )
-
+    mcp_servers: dict[str, dict[str, Any]] = Field(default_factory=dict)
     discovery_timeout_seconds: float = 15.0
+
+    # Host files explicitly exposed at /workspace/ through Deep Agents'
+    # FilesystemBackend. `virtual_mode=True` prevents path escape.
+    workspace_root: str = "."
+
+    web: WebToolsConfig = WebToolsConfig()
+    browser: BrowserToolsConfig = BrowserToolsConfig()
+    computer: ComputerToolsConfig = ComputerToolsConfig()
+    scheduler: SchedulerToolsConfig = SchedulerToolsConfig()
+
+
+class SandboxConfig(BaseModel):
+    enabled: bool = True
+    image: str = "trajecta-sandbox:latest"
+    timeout_seconds: int = 300
+    memory_limit: str = "512m"
+    cpu_limit: float = 1.0
+    network_enabled: bool = False
+    auto_remove: bool = True
+
+
+class GuardrailsConfig(BaseModel):
+    default_risk_level: str = "SENSITIVE"
+    rules_path: str = "config/guardrail-rules.yaml"
+    # Deep Agents HITL interrupts require a client resume flow. Keep this
+    # configurable so non-interactive/headless runs can still operate.
+    hitl_enabled: bool = True
 
 
 class VectorStoreConfig(BaseModel):
@@ -106,6 +150,8 @@ class Settings(BaseSettings):
 
     chat: ChatConfig = ChatConfig()
     tools: ToolsConfig = ToolsConfig()
+    sandbox: SandboxConfig = SandboxConfig()
+    guardrails: GuardrailsConfig = GuardrailsConfig()
 
     yaml_defaults_path: Path = Path("config/default.yaml")
     local_config_path: Path = Path(".trajecta/config.yaml")

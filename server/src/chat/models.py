@@ -141,6 +141,30 @@ class ModelCatalog(BaseModel):
     gateway_reachable: bool = False
 
 
+class ApprovalDecision(BaseModel):
+    type: str
+    message: str | None = None
+    edited_action: dict[str, Any] | None = None
+
+
+class ApprovalResumeRequest(BaseModel):
+    decisions: list[ApprovalDecision]
+
+
+class PendingApproval(BaseModel):
+    id: str
+    conversation_id: str
+    branch_id: str
+    thread_id: str
+    checkpoint_id: str
+    user_message_id: str
+    model_name: str
+    interrupt_data: dict[str, Any] = Field(default_factory=dict)
+    partial_text: str = ""
+    created_at: datetime
+    updated_at: datetime
+
+
 class CancelRunResponse(BaseModel):
     cancelled: bool
 

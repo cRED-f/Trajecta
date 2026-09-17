@@ -17,8 +17,11 @@ from fastapi.middleware.cors import (
 from server.src.api.routes import all_routers
 from server.src.chat import build_chat_service
 from server.src.chat.models_catalog import ModelCatalogService
+from server.src.chat.models import ConversationCreate, SendMessageRequest
 from server.src.config import Settings
 from server.src.memory.provider import MemoryProvider, get_memory_provider
+from server.src.tools.personal import PersonalToolProvider
+from server.src.tools.personal.scheduler import SchedulerService
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -31,20 +34,57 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         memory = get_memory_provider(settings)
         await memory.open()
 
+        personal_tools = PersonalToolProvider(settings, memory)
         chat = build_chat_service(
             settings,
             memory,
+            personal_tools,
         )
+
+        async def run_scheduled_job(job: dict) -> str:
+            conversation_id = job.get("conversation_id")
+            if not conversation_id:
+                conversation = await chat.create_conversation(
+                    ConversationCreate(title=f"Scheduled: {job.get('name', 'Trajecta task')}")
+                )
+                conversation_id = conversation.id
+                await personal_tools.store.bind_schedule_conversation(str(job["id"]), conversation_id)
+            turn = await chat.prepare_message(
+                str(conversation_id),
+                SendMessageRequest(content=str(job["prompt"])),
+            )
+            final_text = ""
+            async for event in chat.stream_prepared(turn):
+                if event.type == "message.completed":
+                    message = event.data.get("message") or {}
+                    final_text = str(message.get("content") or "")
+                elif event.type == "run.error":
+                    final_text = f"ERROR: {event.data.get('error') or event.data.get('message') or event.data}"
+                elif event.type == "run.interrupted":
+                    final_text = "PAUSED: This scheduled task requires user approval before it can continue."
+            return final_text or "Scheduled run completed without a text response."
+
+        scheduler = SchedulerService(
+            personal_tools.store,
+            run_scheduled_job,
+            poll_seconds=settings.tools.scheduler.poll_seconds,
+        )
+        if settings.tools.scheduler.enabled:
+            scheduler.start()
 
         app.state.settings = settings
         app.state.memory_provider = memory
+        app.state.personal_tools = personal_tools
         app.state.chat_service = chat
+        app.state.scheduler = scheduler
         app.state.model_catalog = ModelCatalogService(settings)
 
         try:
             yield
 
         finally:
+            await scheduler.stop()
+            await personal_tools.close()
             await memory.close()
 
     app = FastAPI(title="Trajecta", version="0.1.0", lifespan=lifespan)

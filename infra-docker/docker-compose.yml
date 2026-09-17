@@ -3,13 +3,13 @@
 # `langgraph` — Deep Agents memory server (episodic threads, /memories/, /skills/).
 # Served by `langgraph dev`; the Trajecta server queries it via langgraph-sdk.
 #
-# Usage:  docker compose -f docker/docker-compose.yml up langgraph
+# Usage:  docker compose -f infra-docker/docker-compose.yml up langgraph
 
 services:
   langgraph:
     build:
       context: ..
-      dockerfile: docker/langgraph/Dockerfile
+      dockerfile: infra-docker/langgraph/Dockerfile
     ports:
       - "2024:2024"
     volumes:

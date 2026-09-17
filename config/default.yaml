@@ -59,13 +59,16 @@ skills:
 guardrails:
   default_risk_level: "SENSITIVE"
   rules_path: "config/guardrail-rules.yaml"
+  hitl_enabled: true
 
 sandbox:
   enabled: true
   image: "trajecta-sandbox:latest"
   timeout_seconds: 300
   memory_limit: "512m"
-  cpu_limit: "1.0"
+  cpu_limit: 1.0
+  network_enabled: false
+  auto_remove: true
 
 chat:
   uploads_path: ".trajecta/uploads"
@@ -82,6 +85,27 @@ chat:
     max_tool_chars: 24000
 
 tools:
+  workspace_root: "."
+  web:
+    enabled: true
+    # Recommended: run your own free SearXNG instance and set this URL.
+    searxng_url: null
+    request_timeout_seconds: 20
+    max_response_bytes: 2000000
+  browser:
+    enabled: true
+    headless: false
+    browser: "chromium"
+    default_timeout_ms: 20000
+    downloads_path: ".trajecta/downloads"
+  computer:
+    # Full host desktop control is opt-in.
+    enabled: false
+    screenshot_path: ".trajecta/screenshots"
+  scheduler:
+    enabled: true
+    poll_seconds: 5
+
   mcp_servers: {}
 
   # Example:
