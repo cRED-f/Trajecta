@@ -8,6 +8,8 @@ build/
 *.egg-info/
 *.db
 *.sqlite*
+*.db-wal
+*.db-shm
 .mypy_cache/
 .ruff_cache/
 
