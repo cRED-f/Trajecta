@@ -1,8 +1,11 @@
 import {
   BookMarked,
+  Brain,
+  CalendarClock,
   ExternalLink,
   Search,
   Settings,
+  Sparkles,
   SquarePen,
   Trash2,
 } from "lucide-react";
@@ -22,6 +25,10 @@ import type {
   Conversation,
 } from "../types/chat";
 
+import type {
+  TopLevelPage,
+} from "../stores/chat-store";
+
 interface Props {
   conversations:
     | Conversation[]
@@ -31,11 +38,15 @@ interface Props {
     | string
     | null;
 
+  activePage: TopLevelPage | null;
+
   onNew(): void;
 
   onSelect(id: string): void;
 
   onDelete(id: string): void;
+
+  onNavigate(page: TopLevelPage): void;
 
   onOpenMemory(): void;
 
@@ -45,9 +56,11 @@ interface Props {
 export function Sidebar({
   conversations,
   activeId,
+  activePage,
   onNew,
   onSelect,
   onDelete,
+  onNavigate,
   onOpenMemory,
   onOpenSettings,
 }: Props) {
@@ -181,6 +194,39 @@ export function Sidebar({
 
       <footer className="sidebar-footer">
         <div className="hairline" />
+
+        <button
+          className={`sidebar-item sidebar-item--action ${
+            activePage === "memory" ? "sidebar-item--active" : ""
+          }`}
+          type="button"
+          onClick={() => onNavigate("memory")}
+        >
+          <Brain size={16} />
+          <span>Memory</span>
+        </button>
+
+        <button
+          className={`sidebar-item sidebar-item--action ${
+            activePage === "skills" ? "sidebar-item--active" : ""
+          }`}
+          type="button"
+          onClick={() => onNavigate("skills")}
+        >
+          <Sparkles size={16} />
+          <span>Skills</span>
+        </button>
+
+        <button
+          className={`sidebar-item sidebar-item--action ${
+            activePage === "scheduled-tasks" ? "sidebar-item--active" : ""
+          }`}
+          type="button"
+          onClick={() => onNavigate("scheduled-tasks")}
+        >
+          <CalendarClock size={16} />
+          <span>Scheduled Tasks</span>
+        </button>
 
         <button
           className="sidebar-item sidebar-item--action"

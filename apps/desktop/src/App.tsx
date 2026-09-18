@@ -22,6 +22,10 @@ import {
 } from "./components/ChatView";
 
 import {
+  TopLevelPages,
+} from "./components/TopLevelPages";
+
+import {
   SettingsModal,
 } from "./components/SettingsModal";
 
@@ -72,6 +76,18 @@ export default function App() {
     useChatStore(
       (state) =>
         state.setShowsSettings,
+    );
+
+  const page =
+    useChatStore(
+      (state) =>
+        state.page,
+    );
+
+  const setPage =
+    useChatStore(
+      (state) =>
+        state.setPage,
     );
 
   const setMemoryPanelOpen =
@@ -189,6 +205,7 @@ export default function App() {
           conversations.data
         }
         activeId={activeId}
+        activePage={page}
         onNew={
           actions.newChat
         }
@@ -198,6 +215,7 @@ export default function App() {
         onDelete={
           actions.deleteConversation
         }
+        onNavigate={setPage}
         onOpenMemory={() =>
           setMemoryPanelOpen(true)
         }
@@ -206,14 +224,26 @@ export default function App() {
         }
       />
 
-      <ChatView
-        sidebarOpen={
-          sidebarOpen
-        }
-        onToggleSidebar={
-          toggleSidebar
-        }
-      />
+      {page ? (
+        <TopLevelPages
+          page={page}
+          backendOnline={
+            health.isSuccess
+          }
+          onClose={() =>
+            setPage(null)
+          }
+        />
+      ) : (
+        <ChatView
+          sidebarOpen={
+            sidebarOpen
+          }
+          onToggleSidebar={
+            toggleSidebar
+          }
+        />
+      )}
 
       <SettingsModal
         open={showsSettings}

@@ -3,12 +3,9 @@ import { useEffect, useRef, useState } from "react";
 import {
   GeneralSettings,
   McpToolsSettings,
-  MemorySettings,
   PermissionsSettings,
-  ScheduledTasksSettings,
   SettingsHeader,
   SettingsShell,
-  SkillsSettings,
 } from "./settings";
 
 import { useMcpCatalog } from "../hooks/use-tools";
@@ -88,27 +85,6 @@ export function SettingsModal({
 
           {page === "permissions" && (
             <PermissionsSettings
-              enabled={open}
-              backendOnline={backendOnline}
-            />
-          )}
-
-          {page === "memory" && (
-            <MemorySettings
-              enabled={open}
-              backendOnline={backendOnline}
-            />
-          )}
-
-          {page === "skills" && (
-            <SkillsSettings
-              enabled={open}
-              backendOnline={backendOnline}
-            />
-          )}
-
-          {page === "scheduled-tasks" && (
-            <ScheduledTasksSettings
               enabled={open}
               backendOnline={backendOnline}
             />

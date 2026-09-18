@@ -19,8 +19,16 @@ type ComposeMode =
     }
   | EditState;
 
+export type TopLevelPage =
+  | "memory"
+  | "skills"
+  | "scheduled-tasks";
+
 interface ChatStore {
   activeConversationId: string | null;
+
+  /** Full-page (non-settings) destination opened from the main sidebar. */
+  page: TopLevelPage | null;
 
   draft: string;
   pendingFiles: File[];
@@ -40,6 +48,8 @@ interface ChatStore {
   streams: Record<string, StreamState>;
 
   setActiveConversation(id: string | null): void;
+
+  setPage(page: TopLevelPage | null): void;
 
   toggleSidebar(): void;
 
@@ -222,6 +232,8 @@ export const useChatStore = create<ChatStore>()(
     (set) => ({
       activeConversationId: null,
 
+      page: null,
+
       draft: "",
       pendingFiles: [],
 
@@ -244,12 +256,22 @@ export const useChatStore = create<ChatStore>()(
       setActiveConversation(id) {
         set({
           activeConversationId: id,
+          page: null,
           draft: "",
           pendingFiles: [],
           composeMode: {
             kind: "normal",
           },
         });
+      },
+
+      setPage(page) {
+        set((state) => ({
+          page,
+          // Opening a page hides the settings modal so the two top-level
+          // surfaces never stack.
+          showsSettings: page ? false : state.showsSettings,
+        }));
       },
 
       setDraft(value) {

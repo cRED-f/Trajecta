@@ -1,10 +1,7 @@
 import {
-  Brain,
-  CalendarClock,
   PlugZap,
   Settings,
   ShieldCheck,
-  Sparkles,
   X,
 } from "lucide-react";
 
@@ -86,30 +83,6 @@ export function SettingsShell({
           current={page}
           icon={<ShieldCheck size={16} />}
           label="Permissions"
-          onSelect={onPageChange}
-        />
-
-        <SettingsNavItem
-          page="memory"
-          current={page}
-          icon={<Brain size={16} />}
-          label="Memory"
-          onSelect={onPageChange}
-        />
-
-        <SettingsNavItem
-          page="skills"
-          current={page}
-          icon={<Sparkles size={16} />}
-          label="Skills"
-          onSelect={onPageChange}
-        />
-
-        <SettingsNavItem
-          page="scheduled-tasks"
-          current={page}
-          icon={<CalendarClock size={16} />}
-          label="Scheduled Tasks"
           onSelect={onPageChange}
         />
 
