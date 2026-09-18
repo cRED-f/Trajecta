@@ -1,0 +1,2 @@
+$ vite --host 127.0.0.1 --port 1420
+[ELIFECYCLE] Command failed with exit code -1.

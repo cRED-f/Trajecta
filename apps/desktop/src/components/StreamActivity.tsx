@@ -154,6 +154,17 @@ export function StreamActivity({ stream }: Props) {
           <div className="run-timeline__title">
             <Brain size={14} />
             Thinking
+
+            {thinking && (
+              <span
+                className="thinking-dots"
+                aria-hidden="true"
+              >
+                <span />
+                <span />
+                <span />
+              </span>
+            )}
           </div>
 
           {stream.steps.length > 0 && (

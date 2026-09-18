@@ -1,6 +1,6 @@
 import {
   AlertCircle,
-  Sparkles,
+  ArrowDown,
 } from "lucide-react";
 
 import {
@@ -9,10 +9,6 @@ import {
   useRef,
   useState,
 } from "react";
-
-import {
-  ArrowDown,
-} from "lucide-react";
 
 import {
   useBranches,
@@ -24,6 +20,10 @@ import {
 } from "../hooks/use-chat";
 
 import { useChatStore } from "../stores/chat-store";
+
+import {
+  ChatWelcome,
+} from "./ChatWelcome";
 
 import {
   Composer,
@@ -85,6 +85,12 @@ export function ChatView({
     useChatStore(
       (state) =>
         state.startEdit,
+    );
+
+  const setDraft =
+    useChatStore(
+      (state) =>
+        state.setDraft,
     );
 
   const newModel =
@@ -186,6 +192,12 @@ const approval =
     running,
     scrolledUp,
   ]);
+
+  // A switched conversation starts at the top, so drop the stale
+  // jump-to-latest affordance left over from the previous one.
+  useEffect(() => {
+    setScrolledUp(false);
+  }, [activeId]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -299,23 +311,10 @@ const approval =
       <div className="chat-scroll" ref={scrollRef}>
         <div className="conversation-column">
           {empty && (
-            <div className="welcome">
-              <Sparkles
-                size={18}
-              />
-
-              <h1>
-                How can I help?
-              </h1>
-
-              <p>
-                Ask Trajecta to
-                inspect files,
-                research, write,
-                debug, or use its
-                tools.
-              </p>
-            </div>
+            <ChatWelcome
+              disabled={running}
+              onSelect={setDraft}
+            />
           )}
 
           {messages.map(
@@ -355,6 +354,16 @@ const approval =
 
           {streamVisible && (
             <article className="message message--assistant message--streaming">
+              <div className="message__meta">
+                <span className="message__author">
+                  Trajecta
+                </span>
+
+                <span className="message__time">
+                  now
+                </span>
+              </div>
+
               {stream && (
                 <StreamActivity
                   stream={stream}
@@ -382,16 +391,6 @@ const approval =
                 </div>
               )}
 
-              {running &&
-                !assistantStream &&
-                !stream?.tools.length && (
-                  <div className="thinking">
-                    Working
-                    <span>.</span>
-                    <span>.</span>
-                    <span>.</span>
-                  </div>
-                )}
             </article>
           )}
 

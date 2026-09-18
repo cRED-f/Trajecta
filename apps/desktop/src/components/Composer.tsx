@@ -109,6 +109,22 @@ export function Composer({
     composeMode.kind,
   ]);
 
+  // The welcome cards, message edits, and resends fill the draft from
+  // outside the textarea, so pull focus back when that happens.
+  useEffect(() => {
+    const element =
+      textarea.current;
+
+    if (
+      element &&
+      draft.length > 0 &&
+      document.activeElement !==
+        element
+    ) {
+      element.focus();
+    }
+  }, [draft]);
+
   function acceptFiles(
     values: FileList | File[],
   ) {

@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 
 import {
+  type ReactNode,
   useMemo,
   useState,
 } from "react";
@@ -19,6 +20,10 @@ import {
 } from "./AttachmentChip";
 
 import { chatApi } from "../lib/api";
+
+import {
+  relativeTime,
+} from "../lib/format";
 
 import type {
   Attachment,
@@ -40,6 +45,123 @@ interface Props {
   onRegenerate(
     message: ChatMessage,
   ): void;
+}
+
+function nodeText(node: ReactNode): string {
+  if (
+    node === null ||
+    node === undefined ||
+    node === false ||
+    node === true
+  ) {
+    return "";
+  }
+
+  if (
+    typeof node === "string" ||
+    typeof node === "number"
+  ) {
+    return String(node);
+  }
+
+  if (Array.isArray(node)) {
+    return node
+      .map((child) => nodeText(child))
+      .join("");
+  }
+
+  const element = node as unknown as {
+    props?: {
+      children?: ReactNode;
+    };
+  };
+
+  return nodeText(element.props?.children);
+}
+
+// react-markdown renders fenced blocks as `pre` wrapping `code`, so the
+// language hint and the copy payload both live on the child.
+function codeLanguage(
+  children: ReactNode,
+): string | null {
+  const child = Array.isArray(children)
+    ? children[0]
+    : children;
+
+  if (
+    !child ||
+    typeof child !== "object"
+  ) {
+    return null;
+  }
+
+  const element = child as unknown as {
+    props?: {
+      className?: string;
+    };
+  };
+
+  const match =
+    element.props?.className?.match(
+      /language-([\w-]+)/,
+    );
+
+  return match?.[1] ?? null;
+}
+
+function CodeBlock({
+  children,
+}: {
+  children?: ReactNode;
+}) {
+  const [copied, setCopied] =
+    useState(false);
+
+  const language =
+    codeLanguage(children);
+
+  async function copyCode() {
+    await navigator.clipboard.writeText(
+      nodeText(children),
+    );
+
+    setCopied(true);
+
+    window.setTimeout(
+      () => setCopied(false),
+      1200,
+    );
+  }
+
+  return (
+    <div className="markdown-code">
+      <div className="markdown-code__bar">
+        <span className="markdown-code__label">
+          {language ?? "code"}
+        </span>
+
+        <button
+          className="icon-button icon-button--tiny"
+          type="button"
+          aria-label="Copy code"
+          title={
+            copied
+              ? "Copied"
+              : "Copy code"
+          }
+          onClick={copyCode}
+        >
+          {copied ? (
+            <Check size={14} />
+          ) : (
+            <Copy size={14} />
+          )}
+        </button>
+      </div>
+
+      <pre>{children}</pre>
+    </div>
+  );
 }
 
 export function MessageItem({
@@ -102,6 +224,18 @@ export function MessageItem({
           : ""
       }`}
     >
+      <div className="message__meta">
+        <span className="message__author">
+          {user ? "You" : "Trajecta"}
+        </span>
+
+        <span className="message__time">
+          {relativeTime(
+            message.created_at,
+          )}
+        </span>
+      </div>
+
       <div className="message__content">
         {attachmentUrls.length >
           0 && (
@@ -140,6 +274,13 @@ export function MessageItem({
               remarkPlugins={[
                 remarkGfm,
               ]}
+              components={{
+                pre: ({ children }) => (
+                  <CodeBlock>
+                    {children}
+                  </CodeBlock>
+                ),
+              }}
             >
               {message.content}
             </ReactMarkdown>
