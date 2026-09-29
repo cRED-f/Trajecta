@@ -19,6 +19,7 @@ import { useSkillActions, useSkillCatalog } from "../../hooks/use-settings";
 import {
   LearningStatus,
   RegressionBadge,
+  SkillAnalyticsPanel,
   VersionHistory,
   evaluationRegression,
 } from "../skills";
@@ -297,6 +298,14 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
 
               {historyFor && skills.some((s) => s.name === historyFor) && (
                 <div className="skill-history">
+                  <div className="settings-subsection__heading-row">
+                    <h5 className="settings-subsection__heading">
+                      Performance · {historyFor}
+                    </h5>
+                  </div>
+
+                  <SkillAnalyticsPanel skillName={historyFor} />
+
                   <div className="settings-subsection__heading-row">
                     <h5 className="settings-subsection__heading">
                       Version history · {historyFor}

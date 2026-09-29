@@ -23,6 +23,7 @@ import type {
   ScheduleCreateInput,
   ScheduledTask,
   ScheduleUpdateInput,
+  SkillAnalyticsSummary,
   SkillCatalog,
   SkillEvaluationReport,
   SkillLearningStatus,
@@ -616,6 +617,20 @@ export const settingsApi = {
 
   skillLearningStatus(): Promise<SkillLearningStatus> {
     return request("/skills/learning/status");
+  },
+
+  /** Execution metrics, regression history and experiments for one skill. */
+  skillAnalytics(
+    skillName: string,
+    version?: string,
+  ): Promise<SkillAnalyticsSummary> {
+    const query = version
+      ? `?version=${encodeURIComponent(version)}`
+      : "";
+
+    return request(
+      `/skills/${encodeURIComponent(skillName)}/analytics${query}`,
+    );
   },
 
   schedules(): Promise<ScheduleCatalog> {

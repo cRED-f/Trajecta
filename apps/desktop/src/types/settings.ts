@@ -162,6 +162,50 @@ export interface SkillLearningStatus {
   recent_runs: SkillLearningRun[];
 }
 
+export interface SkillAnalyticsVersion {
+  version: string;
+  executions: number;
+}
+
+/** One row of the automatic rollback log (``skill_regressions``). */
+export interface SkillRegressionEntry {
+  id: string;
+  bad_version: string;
+  stable_version: string;
+  reason: string;
+  severity: string;
+  rolled_back: boolean;
+  created_at: string;
+}
+
+/** One A/B version split (``skill_experiments``). */
+export interface SkillExperimentEntry {
+  id: string;
+  skill_name: string;
+  control_version: string;
+  experiment_version: string;
+  traffic_percent: number;
+  status: string;
+  created_at: string;
+}
+
+/**
+ * GET /skills/{name}/analytics — execution aggregates plus regression
+ * history and experiments. Metric fields are always numbers: the API
+ * normalizes SQLite's NULL averages to 0.
+ */
+export interface SkillAnalyticsSummary {
+  skill: string;
+  total: number;
+  success_rate: number;
+  latency: number;
+  tokens: number;
+  failures: number;
+  versions: SkillAnalyticsVersion[];
+  regressions: SkillRegressionEntry[];
+  experiments: SkillExperimentEntry[];
+}
+
 export type ScheduleType =
   | "once"
   | "interval"

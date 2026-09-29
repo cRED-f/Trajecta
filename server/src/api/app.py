@@ -77,6 +77,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             trajectories=skills.trajectories,
             replay_fixtures=skills.replay_fixtures,
             skill_learning=skills.learning,
+            skill_execution=skills.execution,
         )
 
         async def run_scheduled_job(job: dict) -> str:

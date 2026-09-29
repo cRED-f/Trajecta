@@ -4385,6 +4385,319 @@ select:disabled {
   color: #c4413b;
 }
 
+.skill-analytics {
+  display: flex;
+
+  flex-direction: column;
+
+  gap: 12px;
+}
+
+.skill-metrics {
+  display: grid;
+
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+
+  gap: 8px;
+}
+
+.skill-metric {
+  display: flex;
+  align-items: center;
+
+  gap: 10px;
+
+  padding: 8px 10px;
+
+  background: var(--surface-elevated-panel);
+
+  border: 1px solid var(--color-hairline);
+
+  border-radius: var(--radius-lg);
+}
+
+.skill-metric__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 28px;
+  height: 28px;
+
+  flex-shrink: 0;
+
+  color: var(--color-graphite-ink);
+
+  background: var(--color-hover-veil);
+
+  border-radius: 8px;
+}
+
+.skill-metric__body {
+  display: flex;
+
+  flex-direction: column;
+
+  gap: 1px;
+
+  min-width: 0;
+}
+
+.skill-metric__title {
+  font-size: 11px;
+
+  color: var(--color-mid-ash);
+}
+
+.skill-metric__value {
+  font-size: 16px;
+
+  font-variant-numeric: tabular-nums;
+
+  color: var(--color-graphite-ink);
+}
+
+.skill-metric__hint {
+  font-size: 11px;
+
+  color: var(--color-hollow);
+}
+
+.skill-metric-versions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+
+  gap: 6px;
+
+  font-size: 11px;
+}
+
+.skill-metric-versions__label {
+  color: var(--color-mid-ash);
+}
+
+.skill-metric-version {
+  display: inline-flex;
+  align-items: center;
+
+  gap: 5px;
+
+  padding: 2px 7px;
+
+  font-size: 11px;
+
+  font-variant-numeric: tabular-nums;
+
+  color: var(--color-graphite-ink);
+
+  background: var(--color-hover-veil);
+
+  border: 1px solid var(--color-hairline);
+
+  border-radius: 999px;
+}
+
+.skill-metric-version em {
+  font-style: normal;
+
+  color: var(--color-hollow);
+}
+
+.skill-analytics-section {
+  display: flex;
+
+  flex-direction: column;
+
+  gap: 8px;
+
+  padding-top: 12px;
+
+  border-top: 1px dashed var(--color-hairline);
+}
+
+.skill-analytics-section .settings-subsection__heading {
+  margin-bottom: 0;
+}
+
+.skill-analytics-note {
+  margin: 0;
+
+  font-size: 12px;
+
+  color: var(--color-mid-ash);
+}
+
+.skill-reg-log {
+  list-style: none;
+
+  margin: 0;
+  padding: 0;
+
+  display: flex;
+
+  flex-direction: column;
+
+  gap: 6px;
+}
+
+.skill-reg-log__item {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+
+  gap: 8px;
+
+  padding: 8px 10px;
+
+  background: var(--color-hover-veil);
+
+  border: 1px solid var(--color-hairline);
+
+  border-radius: var(--radius-lg);
+}
+
+.skill-reg-log__main {
+  display: flex;
+
+  flex-direction: column;
+
+  gap: 2px;
+
+  flex: 1;
+
+  min-width: 0;
+}
+
+.skill-reg-log__versions {
+  font-size: 12px;
+  font-weight: 600;
+
+  font-variant-numeric: tabular-nums;
+
+  color: var(--color-graphite-ink);
+}
+
+.skill-reg-log__versions em {
+  margin-left: 6px;
+
+  font-size: 11px;
+  font-weight: 400;
+  font-style: normal;
+
+  color: var(--color-mid-ash);
+}
+
+.skill-reg-log__reason {
+  font-size: 11px;
+
+  color: var(--color-mid-ash);
+}
+
+.skill-reg-log__time {
+  font-size: 11px;
+
+  color: var(--color-hollow);
+}
+
+.skill-reg-log__severity {
+  display: inline-flex;
+  align-items: center;
+
+  padding: 2px 7px;
+
+  font-size: 10px;
+  font-weight: 600;
+
+  text-transform: capitalize;
+
+  border-radius: 999px;
+}
+
+.skill-reg-log__severity--high {
+  color: #c4413b;
+
+  background: rgba(248, 95, 87, 0.14);
+}
+
+.skill-reg-log__severity--medium {
+  color: #b7791f;
+
+  background: rgba(234, 179, 8, 0.16);
+}
+
+.skill-experiment-list {
+  list-style: none;
+
+  margin: 0;
+  padding: 0;
+
+  display: flex;
+
+  flex-direction: column;
+
+  gap: 6px;
+}
+
+.skill-experiment {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+
+  gap: 8px;
+
+  padding: 8px 10px;
+
+  background: var(--color-hover-veil);
+
+  border: 1px solid var(--color-hairline);
+
+  border-radius: var(--radius-lg);
+}
+
+.skill-experiment__main {
+  display: flex;
+
+  flex-direction: column;
+
+  gap: 2px;
+
+  flex: 1;
+
+  min-width: 0;
+}
+
+.skill-experiment__split {
+  font-size: 12px;
+  font-weight: 600;
+
+  font-variant-numeric: tabular-nums;
+
+  color: var(--color-graphite-ink);
+}
+
+.skill-experiment__split em {
+  margin: 0 6px;
+
+  font-size: 11px;
+  font-weight: 400;
+  font-style: normal;
+
+  color: var(--color-mid-ash);
+}
+
+.skill-experiment__traffic {
+  font-size: 11px;
+
+  color: var(--color-mid-ash);
+}
+
+.skill-experiment__time {
+  font-size: 11px;
+
+  color: var(--color-hollow);
+}
+
 .skill-confirm-overlay {
   position: fixed;
   inset: 0;

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -40,7 +41,10 @@ from server.src.skills.trajectory_store import TrajectoryStore
 from server.src.tools.verification import ConnectorVerificationService
 
 if TYPE_CHECKING:
+    from server.src.skills.analytics import SkillExecutionAttributor
     from server.src.skills.learning import SkillLearningCoordinator
+
+logger = logging.getLogger(__name__)
 
 
 class ConversationNotFound(RuntimeError):
@@ -94,6 +98,7 @@ class ChatService:
         trajectories: TrajectoryStore,
         replay_fixtures: ReplayFixtureStore,
         skill_learning: "SkillLearningCoordinator | None" = None,
+        skill_execution: "SkillExecutionAttributor | None" = None,
     ) -> None:
         self._settings = settings
         self._models = BifrostModelFactory(settings)
@@ -105,6 +110,7 @@ class ChatService:
         self._trajectories = trajectories
         self._replay_fixtures = replay_fixtures
         self._skill_learning = skill_learning
+        self._skill_execution = skill_execution
 
     # ------------------------------------------------------------------
     # Conversations
@@ -500,6 +506,9 @@ class ChatService:
     async def stream_prepared(self, turn: PreparedTurn) -> AsyncIterator[ChatEvent]:
         assistant_text: list[str] = []
         final_checkpoint_id: str | None = None
+        # Declared before begin() so the finally below can never see an
+        # unbound name if the trajectory write itself fails.
+        trajectory_id: str | None = None
         _task_id, trajectory_id = await self._trajectories.begin(
             goal=turn.user_message.content or "[attachment-only task]",
             thread_id=turn.branch.thread_id,
@@ -661,6 +670,7 @@ class ChatService:
                 pass
             raise
         finally:
+            await self._attribute_skill_execution(trajectory_id)
             await self._runs.unregister(turn.conversation.id, turn.run_id)
 
     async def _capture_replay_fixture(
@@ -743,9 +753,29 @@ class ChatService:
                 source="trajecta",
             )
 
+    async def _attribute_skill_execution(self, trajectory_id: str | None) -> None:
+        """Turn the finished trajectory into skill execution metrics.
+
+        Runs in the finally block, after ``finish()`` has already persisted
+        the outcome, so the attributor only ever sees a scored run. Failure
+        to attribute must NEVER break the user's real task — the metrics
+        table is analytics, not the conversation.
+        """
+
+        if self._skill_execution is None or trajectory_id is None:
+            return
+
+        try:
+            await self._skill_execution.attribute(trajectory_id)
+        except Exception:
+            logger.warning("skill execution attribution failed", exc_info=True)
+
     async def stream_resume(self, turn: PreparedResume) -> AsyncIterator[ChatEvent]:
         assistant_text: list[str] = [turn.partial_text]
         final_checkpoint_id: str | None = None
+        # Declared before begin() so the finally below can never see an
+        # unbound name if the trajectory write itself fails.
+        trajectory_id: str | None = None
         _task_id, trajectory_id = await self._trajectories.begin(
             goal=f"Resume approved action for: {turn.user_message.content}",
             thread_id=turn.branch.thread_id,
@@ -858,6 +888,7 @@ class ChatService:
                 pass
             raise
         finally:
+            await self._attribute_skill_execution(trajectory_id)
             await self._runs.unregister(turn.conversation.id, turn.run_id)
 
     async def cancel(self, conversation_id: str) -> bool:
@@ -1021,6 +1052,7 @@ def build_chat_service(
     trajectories: TrajectoryStore | None = None,
     replay_fixtures: ReplayFixtureStore | None = None,
     skill_learning: "SkillLearningCoordinator | None" = None,
+    skill_execution: "SkillExecutionAttributor | None" = None,
 ) -> ChatService:
     if memory.sqlite is None:
         raise RuntimeError("MemoryProvider must be opened before ChatService")
@@ -1066,4 +1098,5 @@ def build_chat_service(
         trajectories,
         replay_fixtures,
         skill_learning,
+        skill_execution,
     )

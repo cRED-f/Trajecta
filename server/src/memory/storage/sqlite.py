@@ -178,6 +178,15 @@ class SQLiteDatabase:
 
             version = 12
 
+        if version < 13:
+            await self._migrate_v13()
+
+            await self._conn.execute(
+                "INSERT INTO schema_version(version) VALUES (13)"
+            )
+
+            version = 13
+
         await self._conn.commit()
 
     async def _migrate_v1(self) -> None:
@@ -842,6 +851,69 @@ class SQLiteDatabase:
             CREATE INDEX IF NOT EXISTS
                 idx_skill_learning_runs_started
             ON skill_learning_runs(started_at DESC);
+            """
+        )
+
+    async def _migrate_v13(self) -> None:
+        """Schema v13: execution metrics, regression log and A/B experiments."""
+
+        assert self._conn is not None
+        await self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS skill_execution_metrics (
+                id TEXT PRIMARY KEY,
+
+                skill_name TEXT NOT NULL,
+                skill_version TEXT NOT NULL,
+
+                trajectory_id TEXT,
+
+                success INTEGER NOT NULL DEFAULT 0,
+                latency_ms REAL DEFAULT 0,
+                tokens_used INTEGER DEFAULT 0,
+                tool_failures INTEGER DEFAULT 0,
+
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS
+                idx_skill_metrics_lookup
+            ON skill_execution_metrics(
+                skill_name,
+                skill_version
+            );
+
+            CREATE TABLE IF NOT EXISTS skill_regressions (
+                id TEXT PRIMARY KEY,
+
+                skill_name TEXT NOT NULL,
+                bad_version TEXT NOT NULL,
+                stable_version TEXT NOT NULL,
+
+                reason TEXT NOT NULL,
+                severity TEXT NOT NULL,
+
+                rolled_back INTEGER DEFAULT 0,
+
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS skill_experiments (
+                id TEXT PRIMARY KEY,
+
+                skill_name TEXT NOT NULL,
+                control_version TEXT NOT NULL,
+                experiment_version TEXT NOT NULL,
+
+                traffic_percent INTEGER NOT NULL,
+                status TEXT NOT NULL,
+
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS
+                idx_skill_experiments_lookup
+            ON skill_experiments(skill_name, status);
             """
         )
 

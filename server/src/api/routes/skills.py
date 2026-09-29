@@ -7,6 +7,9 @@
 - GET  /api/v1/skills/{name}/versions/{v}     A specific version
 - POST /api/v1/skills/{name}/rollback         Restore a previous version
 - POST /api/v1/skills/upgrade                 Evaluate + promote a candidate
+- POST /api/v1/skills/experiments             Open an A/B version split
+- GET  /api/v1/skills/{name}/analytics        Metrics, regressions, experiments
+- POST /api/v1/skills/{name}/regressions/check  Run the rollback policy
 - GET  /api/v1/skills/candidates/{id}         Candidate detail + linked evaluation
 - POST /api/v1/skills/candidates/{id}/reject  Manually reject a candidate
 - GET  /api/v1/skills/evaluations             Evaluation history
@@ -24,6 +27,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from server.src.api.schemas.skills import (
+    SkillExperimentCreate,
+    SkillRegressionCheck,
     SkillRollbackRequest,
     SkillUpgradeRequest,
     SkillVersionCompareRequest,
@@ -116,6 +121,24 @@ async def upgrade_skill(
         return await _service(request).upgrade_skill(
             candidate_id=body.candidate_id,
             reason=body.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/experiments", status_code=201)
+async def create_skill_experiment(
+    body: SkillExperimentCreate,
+    request: Request,
+) -> dict[str, Any]:
+    """Open an A/B split between two versions of a skill."""
+
+    try:
+        return await _service(request).create_experiment(
+            skill_name=body.skill_name,
+            control_version=body.control_version,
+            experiment_version=body.experiment_version,
+            traffic_percent=body.traffic_percent,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -285,6 +308,35 @@ async def compare_skill_versions(
             skill_name,
             body.from_version,
             body.to_version,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/{skill_name}/analytics")
+async def skill_analytics(
+    skill_name: str,
+    request: Request,
+    version: str | None = None,
+) -> dict[str, Any]:
+    """Aggregate execution metrics, regression history and experiments."""
+
+    return await _service(request).skill_analytics(skill_name, version=version)
+
+
+@router.post("/{skill_name}/regressions/check")
+async def check_skill_regression(
+    skill_name: str,
+    body: SkillRegressionCheck,
+    request: Request,
+) -> dict[str, Any]:
+    """Run the automatic rollback policy for one stable/current pair."""
+
+    try:
+        return await _service(request).enforce_rollback(
+            skill_name,
+            stable_version=body.stable_version,
+            current_version=body.current_version,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

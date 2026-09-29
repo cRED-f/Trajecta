@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -266,6 +266,13 @@ class DeepAgentRuntime:
             },
         )
 
+        # Usage arrives on AIMessageChunk.usage_metadata (same shape the
+        # replay evaluator already reads). Summed per chunk, mirroring
+        # skills/evaluation/replay.py, so live metrics stay comparable to
+        # the evaluator's token counts.
+        input_tokens = 0
+        output_tokens = 0
+
         try:
             stream = prepared.agent.astream(
                 agent_input,
@@ -292,6 +299,12 @@ class DeepAgentRuntime:
                 if event_type == "messages":
                     token, _metadata = chunk["data"]
                     if isinstance(token, AIMessageChunk):
+                        usage = getattr(token, "usage_metadata", None)
+
+                        if isinstance(usage, Mapping):
+                            input_tokens += int(usage.get("input_tokens") or 0)
+                            output_tokens += int(usage.get("output_tokens") or 0)
+
                         if token.tool_call_chunks:
                             for tool_call in token.tool_call_chunks:
                                 yield ChatEvent(
@@ -364,7 +377,14 @@ class DeepAgentRuntime:
                 type="run.finished",
                 conversation_id=conversation.id,
                 run_id=run_id,
-                data={"checkpoint_id": checkpoint_id},
+                data={
+                    "checkpoint_id": checkpoint_id,
+                    "tokens": {
+                        "input": input_tokens,
+                        "output": output_tokens,
+                        "total": input_tokens + output_tokens,
+                    },
+                },
             )
 
         except asyncio.CancelledError:

@@ -11,12 +11,19 @@ from typing import TYPE_CHECKING, Any
 
 from server.src.config import Settings
 from server.src.memory.procedural.store import ProceduralMemory
+from server.src.skills.analytics import (
+    SkillAnalytics,
+    SkillExecutionAttributor,
+    SkillMetricsCollector,
+)
 from server.src.skills.evaluation.evaluator import SkillEvaluator
 from server.src.skills.evaluation.fixtures import ReplayFixtureStore
 from server.src.skills.evaluation.replay import DeepAgentReplayExecutor, SkillReplay
 from server.src.skills.evaluation.regression import SkillRegressionDetector
+from server.src.skills.experiments import SkillExperimentRouter
 from server.src.skills.learning import SkillLearningCoordinator
 from server.src.skills.promotion.promoter import SkillPromoter
+from server.src.skills.regression import AutomaticRollback, VersionRegressionDetector
 from server.src.skills.repository import SkillRepository
 from server.src.skills.skill_miner.miner import SkillMiner
 from server.src.skills.trajectory_store import TrajectoryStore
@@ -85,6 +92,26 @@ class SkillsService:
 
         self.regression = SkillRegressionDetector()
 
+        # -- Analytics / regression policy / A/B experiments -----------
+        self.metrics = SkillMetricsCollector(memory.sqlite)
+        self.analytics = SkillAnalytics(memory.sqlite)
+        self.experiments = SkillExperimentRouter(memory.sqlite)
+        self.version_regression = VersionRegressionDetector(
+            analytics=self.analytics,
+        )
+        self.rollback_policy = AutomaticRollback(
+            detector=self.version_regression,
+            promoter=self.promoter,
+            db=memory.sqlite,
+        )
+        # Reads the same trajectory store chat writes to, so live runs
+        # become metrics rows without another copy of the data.
+        self.execution = SkillExecutionAttributor(
+            trajectories=trajectories,
+            repository=repository,
+            metrics=self.metrics,
+        )
+
     async def reject_candidate(
         self,
         candidate_id: str,
@@ -126,6 +153,92 @@ class SkillsService:
             "version": promoted.version,
             "reason": reason,
         }
+
+    # ------------------------------------------------------------------
+    # Analytics / regression policy / experiments
+    # ------------------------------------------------------------------
+
+    async def record_execution(
+        self,
+        *,
+        skill_name: str,
+        skill_version: str,
+        trajectory_id: str | None = None,
+        success: bool,
+        latency_ms: float,
+        tokens: int,
+        tool_failures: int,
+    ) -> str:
+        """Store one execution sample for later analytics and A/B reads."""
+
+        return await self.metrics.record(
+            skill_name=skill_name,
+            skill_version=skill_version,
+            trajectory_id=trajectory_id,
+            success=success,
+            latency_ms=latency_ms,
+            tokens=tokens,
+            tool_failures=tool_failures,
+        )
+
+    async def skill_analytics(
+        self,
+        skill_name: str,
+        *,
+        version: str | None = None,
+    ) -> dict[str, Any]:
+        """Aggregate metrics plus regression history and experiments."""
+
+        summary = await self.analytics.summary(skill_name, version)
+        summary["regressions"] = await self.rollback_policy.history(skill_name)
+        summary["experiments"] = await self.experiments.list(skill_name)
+
+        return summary
+
+    async def create_experiment(
+        self,
+        *,
+        skill_name: str,
+        control_version: str,
+        experiment_version: str,
+        traffic_percent: int,
+    ) -> dict[str, Any]:
+        """Open an A/B split, refusing unknown versions."""
+
+        for version in (control_version, experiment_version):
+            record = await self.repository.get_version(skill_name, version)
+
+            if record is None:
+                raise ValueError(
+                    f"skill version {skill_name}@{version} not found"
+                )
+
+        return await self.experiments.create(
+            skill_name=skill_name,
+            control_version=control_version,
+            experiment_version=experiment_version,
+            traffic_percent=traffic_percent,
+        )
+
+    async def choose_skill_version(self, skill_name: str) -> str | None:
+        """Version to serve for this execution, or None without an experiment."""
+
+        return await self.experiments.choose_version(skill_name)
+
+    async def enforce_rollback(
+        self,
+        skill_name: str,
+        *,
+        stable_version: str,
+        current_version: str,
+    ) -> dict[str, Any]:
+        """Run the automatic rollback policy for one version pair."""
+
+        return await self.rollback_policy.evaluate(
+            skill_name,
+            stable_version,
+            current_version,
+        )
 
 
 def build_skills_service(

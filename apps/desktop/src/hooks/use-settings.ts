@@ -17,6 +17,8 @@ export const settingsQueryKeys = {
   skillVersions: (skillName: string) =>
     ["settings", "skills", "versions", skillName] as const,
   skillLearning: ["settings", "skills", "learning"] as const,
+  skillAnalytics: (skillName: string) =>
+    ["settings", "skills", "analytics", skillName] as const,
   schedules: ["settings", "schedules"] as const,
 };
 
@@ -126,6 +128,19 @@ export function useSkillVersions(skillName: string | null, enabled = true) {
     queryFn: () => settingsApi.skillVersions(skillName ?? ""),
     enabled: Boolean(skillName) && enabled,
     staleTime: 5_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/** Analytics for one skill. Nested under `skills` so a catalog
+ * invalidation (promotion, rollback) refreshes it too. */
+export function useSkillAnalytics(skillName: string | null, enabled = true) {
+  return useQuery({
+    queryKey: settingsQueryKeys.skillAnalytics(skillName ?? ""),
+    queryFn: () => settingsApi.skillAnalytics(skillName ?? ""),
+    enabled: Boolean(skillName) && enabled,
+    staleTime: 5_000,
+    refetchInterval: 30_000,
     refetchOnWindowFocus: false,
   });
 }
