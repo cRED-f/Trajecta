@@ -14,6 +14,9 @@ export const settingsQueryKeys = {
   memory: (query: string) => ["settings", "memory", query] as const,
   memoryAll: ["settings", "memory"] as const,
   skills: ["settings", "skills"] as const,
+  skillVersions: (skillName: string) =>
+    ["settings", "skills", "versions", skillName] as const,
+  skillLearning: ["settings", "skills", "learning"] as const,
   schedules: ["settings", "schedules"] as const,
 };
 
@@ -115,6 +118,29 @@ export function useSkillCatalog(enabled = true) {
   });
 }
 
+/** Version history for one skill. Keyed under `skills` so a catalog
+ * invalidation (promotion, rollback) refreshes it too. */
+export function useSkillVersions(skillName: string | null, enabled = true) {
+  return useQuery({
+    queryKey: settingsQueryKeys.skillVersions(skillName ?? ""),
+    queryFn: () => settingsApi.skillVersions(skillName ?? ""),
+    enabled: Boolean(skillName) && enabled,
+    staleTime: 5_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useSkillLearningStatus(enabled = true) {
+  return useQuery({
+    queryKey: settingsQueryKeys.skillLearning,
+    queryFn: settingsApi.skillLearningStatus,
+    enabled,
+    staleTime: 5_000,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
 export function useSkillActions() {
   const queryClient = useQueryClient();
 
@@ -158,6 +184,30 @@ export function useSkillActions() {
     onSuccess: invalidate,
   });
 
+  const upgrade = useMutation({
+    mutationFn: ({
+      candidateId,
+      reason,
+    }: {
+      candidateId: string;
+      reason?: string;
+    }) => settingsApi.upgradeSkill(candidateId, reason),
+    onSuccess: invalidate,
+  });
+
+  const rollback = useMutation({
+    mutationFn: ({
+      skillName,
+      version,
+      reason,
+    }: {
+      skillName: string;
+      version: string;
+      reason?: string;
+    }) => settingsApi.rollbackSkill(skillName, version, reason),
+    onSuccess: invalidate,
+  });
+
   return {
     setEnabled: setEnabled.mutateAsync,
     togglingEnabled: setEnabled.isPending,
@@ -167,6 +217,10 @@ export function useSkillActions() {
     promoting: promote.isPending,
     reject: reject.mutateAsync,
     rejecting: reject.isPending,
+    upgrade: upgrade.mutateAsync,
+    upgrading: upgrade.isPending,
+    rollback: rollback.mutateAsync,
+    rollingBack: rollback.isPending,
   };
 }
 

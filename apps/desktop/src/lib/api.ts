@@ -24,7 +24,13 @@ import type {
   ScheduledTask,
   ScheduleUpdateInput,
   SkillCatalog,
+  SkillEvaluationReport,
+  SkillLearningStatus,
   SkillPromotionResult,
+  SkillRollbackResult,
+  SkillUpgradeResult,
+  SkillVersion,
+  SkillVersionCompareResult,
 } from "../types/settings";
 
 const API_ROOT =
@@ -513,7 +519,7 @@ export const settingsApi = {
 
   evaluateSkill(
     candidateId: string,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<SkillEvaluationReport> {
     return request(
       `/skills/candidates/${encodeURIComponent(candidateId)}/evaluate`,
       { method: "POST" },
@@ -553,6 +559,63 @@ export const settingsApi = {
         body: JSON.stringify({ enabled }),
       },
     );
+  },
+
+  skillVersions(
+    skillName: string,
+  ): Promise<SkillVersion[]> {
+    return request(
+      `/skills/${encodeURIComponent(skillName)}/versions`,
+    );
+  },
+
+  compareSkillVersions(
+    skillName: string,
+    fromVersion: string,
+    toVersion: string,
+  ): Promise<SkillVersionCompareResult> {
+    return request(
+      `/skills/${encodeURIComponent(skillName)}/versions/compare`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          from_version: fromVersion,
+          to_version: toVersion,
+        }),
+      },
+    );
+  },
+
+  rollbackSkill(
+    skillName: string,
+    version: string,
+    reason?: string,
+  ): Promise<SkillRollbackResult> {
+    return request(
+      `/skills/${encodeURIComponent(skillName)}/rollback`,
+      {
+        method: "POST",
+        body: JSON.stringify({ version, reason }),
+      },
+    );
+  },
+
+  /** Evaluate a candidate and promote it only when the evaluation passes. */
+  upgradeSkill(
+    candidateId: string,
+    reason?: string,
+  ): Promise<SkillUpgradeResult> {
+    return request("/skills/upgrade", {
+      method: "POST",
+      body: JSON.stringify({
+        candidate_id: candidateId,
+        reason,
+      }),
+    });
+  },
+
+  skillLearningStatus(): Promise<SkillLearningStatus> {
+    return request("/skills/learning/status");
   },
 
   schedules(): Promise<ScheduleCatalog> {

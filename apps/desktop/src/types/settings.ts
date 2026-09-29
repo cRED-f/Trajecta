@@ -84,6 +84,84 @@ export interface SkillPromotionResult {
   previous_version: string | null;
 }
 
+export interface SkillVersion {
+  version: string;
+  status: string;
+  created_at: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface SkillVersionCompareResult {
+  skill: string;
+  from: { version: string; metadata: Record<string, unknown> };
+  to: { version: string; metadata: Record<string, unknown> };
+  changed: boolean;
+}
+
+export interface SkillRollbackResult {
+  skill: string;
+  rolled_back_from: string | null;
+  rolled_back_to: string;
+  reason: string | null;
+}
+
+/** POST /skills/upgrade — rejected upgrades carry no skill/version. */
+export interface SkillUpgradeResult {
+  status: "promoted" | "rejected";
+  skill?: string;
+  version?: string;
+  reason?: string | null;
+  evaluation?: string;
+}
+
+export interface SkillAggregateMetrics {
+  total_cases: number;
+  total_runs: number;
+  successes: number;
+  success_rate: number;
+  average_score: number;
+  tool_errors: number;
+}
+
+export interface SkillEvaluationReport {
+  id: string;
+  candidate_id: string;
+  skill_name: string;
+  verdict: string;
+  baseline: SkillAggregateMetrics;
+  candidate: SkillAggregateMetrics;
+  comparison: Record<string, unknown>;
+}
+
+export interface SkillLearningRun {
+  id: string;
+  started_at: string;
+  completed_at: string | null;
+  status: string;
+  checkpoint_before: number;
+  observed_success_count: number;
+  created_count: number;
+  evaluated_count: number;
+  verified_count: number;
+  promoted_count: number;
+  error: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface SkillLearningStatus {
+  enabled: boolean;
+  worker_running: boolean;
+  learning_run_active: boolean;
+  total_successful_trajectories: number;
+  success_count_checkpoint: number;
+  pending_successes: number;
+  trigger_every_successes: number;
+  minimum_occurrences: number;
+  auto_evaluate: boolean;
+  auto_promote: boolean;
+  recent_runs: SkillLearningRun[];
+}
+
 export type ScheduleType =
   | "once"
   | "interval"
