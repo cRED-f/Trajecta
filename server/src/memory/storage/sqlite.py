@@ -169,6 +169,15 @@ class SQLiteDatabase:
 
             version = 11
 
+        if version < 12:
+            await self._migrate_v12()
+
+            await self._conn.execute(
+                "INSERT INTO schema_version(version) VALUES (12)"
+            )
+
+            version = 12
+
         await self._conn.commit()
 
     async def _migrate_v1(self) -> None:
@@ -767,6 +776,72 @@ class SQLiteDatabase:
                 value_json TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            """
+        )
+
+    async def _migrate_v12(self) -> None:
+        """Schema v12: persisted verified-skill learning coordinator state."""
+
+        assert self._conn is not None
+        await self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS skill_learning_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+
+                success_count_checkpoint INTEGER NOT NULL DEFAULT 0,
+
+                last_run_id TEXT,
+
+                last_started_at TEXT,
+                last_completed_at TEXT,
+
+                last_status TEXT NOT NULL DEFAULT 'never',
+                last_error TEXT,
+
+                last_created_count INTEGER NOT NULL DEFAULT 0,
+                last_evaluated_count INTEGER NOT NULL DEFAULT 0,
+                last_verified_count INTEGER NOT NULL DEFAULT 0,
+                last_promoted_count INTEGER NOT NULL DEFAULT 0,
+
+                updated_at TEXT NOT NULL
+            );
+
+            INSERT OR IGNORE INTO skill_learning_state(
+                id,
+                success_count_checkpoint,
+                last_status,
+                updated_at
+            )
+            VALUES (
+                1,
+                0,
+                'never',
+                CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS skill_learning_runs (
+                id TEXT PRIMARY KEY,
+
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+
+                status TEXT NOT NULL,
+
+                checkpoint_before INTEGER NOT NULL,
+                observed_success_count INTEGER NOT NULL,
+
+                created_count INTEGER NOT NULL DEFAULT 0,
+                evaluated_count INTEGER NOT NULL DEFAULT 0,
+                verified_count INTEGER NOT NULL DEFAULT 0,
+                promoted_count INTEGER NOT NULL DEFAULT 0,
+
+                error TEXT,
+                metadata TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS
+                idx_skill_learning_runs_started
+            ON skill_learning_runs(started_at DESC);
             """
         )
 

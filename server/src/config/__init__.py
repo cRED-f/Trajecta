@@ -181,9 +181,39 @@ class SkillFixtureConfig(BaseModel):
     )
 
 
+class SkillLearningConfig(BaseModel):
+    """Automatic verified-skill learning from successful trajectories."""
+
+    enabled: bool = True
+
+    # Run the miner after N new successful trajectories.
+    trigger_every_successes: int = Field(default=4, ge=1, le=1000)
+
+    # Miner configuration.
+    scan_limit: int = Field(default=200, ge=4, le=500)
+    minimum_occurrences: int = Field(default=4, ge=3, le=100)
+
+    sequence_similarity: float = Field(default=0.72, ge=0.0, le=1.0)
+    goal_similarity: float = Field(default=0.18, ge=0.0, le=1.0)
+
+    # Prevent one mining pass from producing too many skills.
+    max_candidates_per_run: int = Field(default=3, ge=1, le=20)
+
+    # Optional dedicated model for mining/evaluation.
+    # None = use normal Bifrost/default resolution.
+    model_name: str | None = None
+
+    # Candidate evaluation can be disabled independently.
+    auto_evaluate: bool = True
+
+    # Promotion still requires evaluator verdict == "pass".
+    auto_promote: bool = True
+
+
 class SkillsConfig(BaseModel):
     storage_path: str = ".trajecta/skills"
     fixtures: SkillFixtureConfig = SkillFixtureConfig()
+    learning: SkillLearningConfig = SkillLearningConfig()
 
 
 class SandboxConfig(BaseModel):

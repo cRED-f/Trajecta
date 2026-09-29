@@ -128,6 +128,23 @@ class TrajectoryStore:
         value["metadata"] = _loads(value.get("metadata"), {})
         return value
 
+    async def count(self, *, outcome: str | None = None) -> int:
+        if outcome is None:
+            row = await self._db.fetchone("SELECT COUNT(*) AS count FROM trajectories")
+        else:
+            row = await self._db.fetchone(
+                """
+                SELECT COUNT(*) AS count
+                FROM trajectories
+                WHERE outcome = ?
+                """,
+                (outcome,),
+            )
+        return int((row or {}).get("count") or 0)
+
+    async def count_successful(self) -> int:
+        return await self.count(outcome="success")
+
     async def list(
         self,
         *,

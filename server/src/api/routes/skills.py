@@ -9,6 +9,8 @@
 - GET  /api/v1/skills/evaluations             Evaluation history
 - GET  /api/v1/skills/evaluations/{id}        A specific evaluation
 - GET  /api/v1/skills/fixtures/{id}           A replay fixture manifest
+- GET  /api/v1/skills/learning/status         Automatic learning loop status
+- POST /api/v1/skills/learning/run            Manually queue a learning pass
 """
 
 from __future__ import annotations
@@ -33,6 +35,10 @@ class RejectSkillRequest(BaseModel):
 
 class SkillEnabledUpdate(BaseModel):
     enabled: bool
+
+
+class SkillLearningRunRequest(BaseModel):
+    force: bool = True
 
 
 @router.get("")
@@ -89,6 +95,26 @@ async def promote_candidate(
         }
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/learning/status")
+async def skill_learning_status(request: Request) -> dict[str, Any]:
+    return await _service(request).learning.status()
+
+
+@router.post("/learning/run", status_code=202)
+async def queue_skill_learning_run(
+    request: Request,
+    body: SkillLearningRunRequest,
+) -> dict[str, Any]:
+    service = _service(request)
+    queued = service.learning.request_run(force=body.force)
+
+    return {
+        "queued": queued,
+        "force": body.force,
+        "status": await service.learning.status(),
+    }
 
 
 @router.patch("/{skill_name}/enabled")

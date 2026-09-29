@@ -5,6 +5,7 @@ import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastapi import UploadFile
 
@@ -37,6 +38,9 @@ from server.src.tools.personal import PersonalToolProvider
 from server.src.skills.evaluation.fixtures import ReplayFixtureStore
 from server.src.skills.trajectory_store import TrajectoryStore
 from server.src.tools.verification import ConnectorVerificationService
+
+if TYPE_CHECKING:
+    from server.src.skills.learning import SkillLearningCoordinator
 
 
 class ConversationNotFound(RuntimeError):
@@ -89,6 +93,7 @@ class ChatService:
         runs: ChatRunRegistry,
         trajectories: TrajectoryStore,
         replay_fixtures: ReplayFixtureStore,
+        skill_learning: "SkillLearningCoordinator | None" = None,
     ) -> None:
         self._settings = settings
         self._models = BifrostModelFactory(settings)
@@ -99,6 +104,7 @@ class ChatService:
         self._runs = runs
         self._trajectories = trajectories
         self._replay_fixtures = replay_fixtures
+        self._skill_learning = skill_learning
 
     # ------------------------------------------------------------------
     # Conversations
@@ -632,6 +638,10 @@ class ChatService:
                 result=final_text[:100_000],
                 metadata={"checkpoint_id": final_checkpoint_id},
             )
+            # Do NOT await mining here. Chat completion only wakes the
+            # background worker.
+            if self._skill_learning is not None:
+                self._skill_learning.notify_success(trajectory_id)
             yield ChatEvent(
                 type="message.completed",
                 conversation_id=turn.conversation.id,
@@ -745,6 +755,9 @@ class ChatService:
                 "user_message_id": turn.user_message.id,
                 "model": turn.runtime.model_name,
                 "approval_resume": True,
+                # A resume is only part of the original task; never learn it
+                # as a standalone procedure.
+                "exclude_from_skill_mining": True,
                 "decisions": turn.decisions,
             },
         )
@@ -1005,6 +1018,9 @@ def build_chat_service(
     connector_verification: ConnectorVerificationService | None = None,
     mcp_tools: MCPToolProvider | None = None,
     permission_policy: PermissionPolicyStore | None = None,
+    trajectories: TrajectoryStore | None = None,
+    replay_fixtures: ReplayFixtureStore | None = None,
+    skill_learning: "SkillLearningCoordinator | None" = None,
 ) -> ChatService:
     if memory.sqlite is None:
         raise RuntimeError("MemoryProvider must be opened before ChatService")
@@ -1038,8 +1054,8 @@ def build_chat_service(
     tools = personal_tools or PersonalToolProvider(settings, memory)
     runtime = DeepAgentRuntime(settings, memory, mcp, rag, tools, verification=verification, permission_policy=permission_policy)
     runs = ChatRunRegistry()
-    trajectories = TrajectoryStore(memory.sqlite)
-    replay_fixtures = ReplayFixtureStore(settings, memory.sqlite)
+    trajectories = trajectories or TrajectoryStore(memory.sqlite)
+    replay_fixtures = replay_fixtures or ReplayFixtureStore(settings, memory.sqlite)
     return ChatService(
         settings,
         repository,
@@ -1049,4 +1065,5 @@ def build_chat_service(
         runs,
         trajectories,
         replay_fixtures,
+        skill_learning,
     )

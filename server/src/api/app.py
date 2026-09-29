@@ -59,6 +59,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         permission_policy = PermissionPolicyStore(memory.sqlite)
 
+        # Skills must be built before ChatService: chat and learning use the
+        # same trajectory store and replay-fixture store.
+        skills = build_skills_service(
+            settings,
+            memory,
+            personal_tools,
+        )
+
         chat = build_chat_service(
             settings,
             memory,
@@ -66,6 +74,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             connector_verification,
             mcp_tools,
             permission_policy,
+            trajectories=skills.trajectories,
+            replay_fixtures=skills.replay_fixtures,
+            skill_learning=skills.learning,
         )
 
         async def run_scheduled_job(job: dict) -> str:
@@ -106,15 +117,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.connector_verification = connector_verification
         app.state.mcp_tools = mcp_tools
         app.state.chat_service = chat
-        app.state.skills_service = build_skills_service(settings, memory, personal_tools)
+        app.state.skills_service = skills
         app.state.scheduler = scheduler
         app.state.model_catalog = ModelCatalogService(settings)
+
+        # Starts a lightweight worker. No mining happens unless the success
+        # threshold is reached.
+        skills.learning.start()
 
         try:
             yield
 
         finally:
+            # Stop producers before SQLite/tools disappear.
             await scheduler.stop()
+            await skills.learning.stop()
             await personal_tools.close()
             await memory.close()
 

@@ -188,6 +188,7 @@ class SkillMiner:
         sequence_similarity: float = 0.72,
         goal_similarity: float = 0.18,
         model_name: str | None = None,
+        max_candidates: int | None = None,
     ) -> list[dict[str, Any]]:
         """Mine candidate skills.
 
@@ -200,7 +201,11 @@ class SkillMiner:
         )
 
         trajectories = [self._to_mined(item) for item in successful]
-        trajectories = [item for item in trajectories if item.goal.strip()]
+        trajectories = [
+            item
+            for item in trajectories
+            if item.goal.strip() and self._eligible_for_mining(item)
+        ]
 
         clusters = self._cluster(
             trajectories,
@@ -211,6 +216,9 @@ class SkillMiner:
         created: list[dict[str, Any]] = []
 
         for cluster in clusters:
+            if max_candidates is not None and len(created) >= max_candidates:
+                break
+
             if len(cluster.items) < minimum_occurrences:
                 continue
 
@@ -283,6 +291,20 @@ class SkillMiner:
             steps=steps,
             metadata=metadata,
         )
+
+    @staticmethod
+    def _eligible_for_mining(item: MinedTrajectory) -> bool:
+        """Exclude trajectories that are not standalone learning examples.
+
+        A HITL continuation such as "Resume approved action for: delete old
+        files" is only part of the original task and must not become a
+        standalone learned skill.
+        """
+        if item.metadata.get("exclude_from_skill_mining") is True:
+            return False
+        if item.metadata.get("approval_resume") is True:
+            return False
+        return True
 
     # ------------------------------------------------------------------
     # Clustering
