@@ -118,10 +118,72 @@ class SkillVersioner:
             previous_version=previous_version,
         )
 
+    async def list_versions(self, skill_name: str) -> list[dict]:
+        """Return the full historical version list for a skill, newest first."""
+
+        versions = await self._repository.list_versions(skill_name)
+
+        return [
+            {
+                "version": item["version"],
+                "status": item["status"],
+                "created_at": item["created_at"],
+                "metadata": item["metadata"],
+            }
+            for item in versions
+        ]
+
+    async def get_active_version(self, skill_name: str) -> dict | None:
+        """Return the currently active version of a skill, if any."""
+
+        version = await self._repository.get_active(skill_name)
+
+        if version is None:
+            return None
+
+        return {
+            "version": version["version"],
+            "status": version["status"],
+            "metadata": version["metadata"],
+        }
+
+    async def compare_versions(
+        self,
+        skill_name: str,
+        old_version: str,
+        new_version: str,
+    ) -> dict:
+        """Diff two stored versions of the same skill."""
+
+        old = await self._repository.get_version(skill_name, old_version)
+        new = await self._repository.get_version(skill_name, new_version)
+
+        if old is None:
+            raise ValueError(f"Unknown version {old_version}")
+        if new is None:
+            raise ValueError(f"Unknown version {new_version}")
+
+        return {
+            "skill": skill_name,
+            "from": {
+                "version": old["version"],
+                "metadata": old["metadata"],
+            },
+            "to": {
+                "version": new["version"],
+                "metadata": new["metadata"],
+            },
+            # content_hash covers the whole bundle, so it is the cheap and
+            # authoritative "did anything actually change" signal.
+            "changed": old["content_hash"] != new["content_hash"],
+        }
+
     async def rollback(
         self,
         skill_name: str,
         version: str,
+        *,
+        reason: str | None = None,
     ) -> PromotionResult:
         target_record = await self._repository.get_version(skill_name, version)
         target_skill = await self._repository.get_version_skill(skill_name, version)
@@ -175,6 +237,7 @@ class SkillVersioner:
             metadata={
                 "rollback": True,
                 "rolled_back_from": current_version,
+                "rollback_reason": reason,
             },
         )
 

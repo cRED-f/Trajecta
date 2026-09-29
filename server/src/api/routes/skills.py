@@ -3,7 +3,10 @@
 - GET  /api/v1/skills                          List registered skills
 - GET  /api/v1/skills/{name}                  Active skill + versions + full bundle
 - GET  /api/v1/skills/{name}/versions         Version history
+- POST /api/v1/skills/{name}/versions/compare Diff two versions
 - GET  /api/v1/skills/{name}/versions/{v}     A specific version
+- POST /api/v1/skills/{name}/rollback         Restore a previous version
+- POST /api/v1/skills/upgrade                 Evaluate + promote a candidate
 - GET  /api/v1/skills/candidates/{id}         Candidate detail + linked evaluation
 - POST /api/v1/skills/candidates/{id}/reject  Manually reject a candidate
 - GET  /api/v1/skills/evaluations             Evaluation history
@@ -20,6 +23,11 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from server.src.api.schemas.skills import (
+    SkillRollbackRequest,
+    SkillUpgradeRequest,
+    SkillVersionCompareRequest,
+)
 from server.src.skills.service import SkillsService
 
 router = APIRouter(prefix="/skills", tags=["skills"])
@@ -93,6 +101,22 @@ async def promote_candidate(
             "version_id": result.version_id,
             "previous_version": result.previous_version,
         }
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/upgrade")
+async def upgrade_skill(
+    body: SkillUpgradeRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Evaluate a candidate and promote it only when the evaluation passes."""
+
+    try:
+        return await _service(request).upgrade_skill(
+            candidate_id=body.candidate_id,
+            reason=body.reason,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -240,7 +264,7 @@ async def list_skill_versions(
 ) -> list[dict[str, Any]]:
     service = _service(request)
 
-    versions = await service.repository.list_versions(skill_name)
+    versions = await service.versioner.list_versions(skill_name)
 
     if not versions:
         active = await service.repository.get_active(skill_name)
@@ -248,6 +272,41 @@ async def list_skill_versions(
             raise HTTPException(status_code=404, detail="Skill not found")
 
     return versions
+
+
+@router.post("/{skill_name}/versions/compare")
+async def compare_skill_versions(
+    skill_name: str,
+    body: SkillVersionCompareRequest,
+    request: Request,
+) -> dict[str, Any]:
+    try:
+        return await _service(request).versioner.compare_versions(
+            skill_name,
+            body.from_version,
+            body.to_version,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/{skill_name}/rollback")
+async def rollback_skill(
+    skill_name: str,
+    body: SkillRollbackRequest,
+    request: Request,
+) -> dict[str, Any]:
+    if body.version is None:
+        raise HTTPException(status_code=400, detail="version is required")
+
+    try:
+        return await _service(request).promoter.rollback_to_version(
+            skill_name=skill_name,
+            version=body.version,
+            reason=body.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/{skill_name}/versions/{version}")

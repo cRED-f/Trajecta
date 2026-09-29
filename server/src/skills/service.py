@@ -14,6 +14,7 @@ from server.src.memory.procedural.store import ProceduralMemory
 from server.src.skills.evaluation.evaluator import SkillEvaluator
 from server.src.skills.evaluation.fixtures import ReplayFixtureStore
 from server.src.skills.evaluation.replay import DeepAgentReplayExecutor, SkillReplay
+from server.src.skills.evaluation.regression import SkillRegressionDetector
 from server.src.skills.learning import SkillLearningCoordinator
 from server.src.skills.promotion.promoter import SkillPromoter
 from server.src.skills.repository import SkillRepository
@@ -82,6 +83,8 @@ class SkillsService:
             promoter=self.promoter,
         )
 
+        self.regression = SkillRegressionDetector()
+
     async def reject_candidate(
         self,
         candidate_id: str,
@@ -89,6 +92,40 @@ class SkillsService:
         reason: str,
     ) -> dict[str, Any]:
         return await self.promoter.reject(candidate_id, reason=reason)
+
+    async def upgrade_skill(
+        self,
+        *,
+        candidate_id: str,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Evaluate a candidate and promote it only if it passes.
+
+        An upgrade never swaps the active version directly: it runs the normal
+        evaluate -> promote path, which creates the next version and
+        activates it. A failing evaluation leaves the current version alone.
+        """
+
+        evaluation = await self.evaluator.evaluate(candidate_id)
+
+        if evaluation.verdict != "pass":
+            return {
+                "status": "rejected",
+                "reason": "evaluation_failed",
+                "evaluation": evaluation.id,
+            }
+
+        promoted = await self.promoter.promote(
+            candidate_id=candidate_id,
+            evaluation_id=evaluation.id,
+        )
+
+        return {
+            "status": "promoted",
+            "skill": promoted.skill_name,
+            "version": promoted.version,
+            "reason": reason,
+        }
 
 
 def build_skills_service(

@@ -113,3 +113,43 @@ class SkillPromoter:
         version: str,
     ) -> PromotionResult:
         return await self._versioner.rollback(skill_name, version)
+
+    async def rollback_to_version(
+        self,
+        *,
+        skill_name: str,
+        version: str,
+        reason: str | None = None,
+    ) -> dict:
+        """Restore a previous version and report what moved where.
+
+        Delegates to SkillVersioner.rollback so the restored bundle is
+        re-materialized into /skills/<name>/ — flipping the DB status alone
+        would leave the running agent on the new version.
+        """
+
+        current = await self._repository.get_active(skill_name)
+
+        if current is None:
+            raise ValueError("Skill has no active version")
+
+        target = await self._repository.get_version(skill_name, version)
+
+        if target is None:
+            raise ValueError(f"Version {version} not found")
+
+        if str(current["version"]) == version:
+            raise ValueError(f"Version {version} is already active")
+
+        result = await self._versioner.rollback(
+            skill_name,
+            version,
+            reason=reason,
+        )
+
+        return {
+            "skill": skill_name,
+            "rolled_back_from": result.previous_version,
+            "rolled_back_to": result.version,
+            "reason": reason,
+        }
