@@ -8,8 +8,18 @@
 - POST /api/v1/skills/{name}/rollback         Restore a previous version
 - POST /api/v1/skills/upgrade                 Evaluate + promote a candidate
 - POST /api/v1/skills/experiments             Open an A/B version split
+- POST /api/v1/skills/candidates/{id}/experiment  Start a live experiment
+- GET  /api/v1/skills/experiments             Live experiments
+- GET  /api/v1/skills/experiments/{id}        One experiment
+- GET  /api/v1/skills/experiments/{id}/analysis  Evidence + verdict
+- POST /api/v1/skills/experiments/{id}/arms   Add a treatment arm
+- POST /api/v1/skills/experiments/{id}/stop   Stop and release the arms
+- GET  /api/v1/skills/graph                   The dependency graph
 - GET  /api/v1/skills/{name}/analytics        Metrics, regressions, experiments
-- POST /api/v1/skills/{name}/regressions/check  Run the rollback policy
+- POST /api/v1/skills/{name}/regression/check Run the regression monitor
+- GET  /api/v1/skills/{name}/dependencies     Declared dependencies
+- POST /api/v1/skills/{name}/dependencies     Declare a dependency
+- DEL  /api/v1/skills/{name}/dependencies/{d} Remove a dependency
 - GET  /api/v1/skills/candidates/{id}         Candidate detail + linked evaluation
 - POST /api/v1/skills/candidates/{id}/reject  Manually reject a candidate
 - GET  /api/v1/skills/evaluations             Evaluation history
@@ -27,6 +37,10 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from server.src.api.schemas.skills import (
+    DependencyRequest,
+    ExperimentArmRequest,
+    ExperimentStartRequest,
+    ExperimentStopRequest,
     SkillExperimentCreate,
     SkillRegressionCheck,
     SkillRollbackRequest,
@@ -60,10 +74,13 @@ async def list_skills(request: Request) -> dict[str, Any]:
 
     registered = await service.repository.list_registered()
     candidates = await service.repository.list_candidates(limit=200)
+    experiments = await service.experiments.list()
 
     return {
         "skills": registered,
         "candidates": candidates,
+        "experiments": experiments,
+        "learning": await service.learning.status(),
         "summary": {
             "active": sum(
                 1 for item in registered if item.get("status") == "active"
@@ -76,6 +93,12 @@ async def list_skills(request: Request) -> dict[str, Any]:
             ),
             "evaluating": sum(
                 1 for item in candidates if item.get("status") == "evaluating"
+            ),
+            "experimenting": sum(
+                1 for item in candidates if item.get("status") == "experimenting"
+            ),
+            "running_experiments": sum(
+                1 for item in experiments if item.get("status") == "running"
             ),
         },
     }
@@ -106,6 +129,26 @@ async def promote_candidate(
             "version_id": result.version_id,
             "previous_version": result.previous_version,
         }
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/candidates/{candidate_id}/experiment")
+async def experiment_candidate(
+    candidate_id: str,
+    body: ExperimentStartRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Stage a verified candidate as the treatment arm of a live experiment."""
+
+    try:
+        return await _service(request).experiments.start_candidate(
+            candidate_id,
+            strategy=body.strategy,
+            traffic_percent=body.traffic_percent,
+            auto_stop=body.auto_stop,
+            auto_promote=body.auto_promote,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -142,6 +185,73 @@ async def create_skill_experiment(
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/experiments")
+async def list_skill_experiments(
+    request: Request,
+    skill_name: str | None = None,
+) -> list[dict[str, Any]]:
+    return await _service(request).experiments.list(skill_name=skill_name)
+
+
+@router.get("/experiments/{experiment_id}")
+async def get_skill_experiment(
+    experiment_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    experiment = await _service(request).experiments.get(experiment_id)
+
+    if experiment is None:
+        raise HTTPException(status_code=404, detail="Experiment not found")
+
+    return experiment
+
+
+@router.get("/experiments/{experiment_id}/analysis")
+async def analyze_skill_experiment(
+    experiment_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    try:
+        return await _service(request).experiments.analysis(experiment_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/experiments/{experiment_id}/arms")
+async def add_experiment_arm(
+    experiment_id: str,
+    body: ExperimentArmRequest,
+    request: Request,
+) -> dict[str, Any]:
+    try:
+        return await _service(request).experiments.add_candidate_arm(
+            experiment_id,
+            body.candidate_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/experiments/{experiment_id}/stop")
+async def stop_skill_experiment(
+    experiment_id: str,
+    body: ExperimentStopRequest,
+    request: Request,
+) -> dict[str, Any]:
+    try:
+        return await _service(request).experiments.stop(
+            experiment_id,
+            reason=body.reason or "manual stop",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/graph")
+async def skill_dependency_graph(request: Request) -> dict[str, Any]:
+    return await _service(request).dependencies.graph()
 
 
 @router.get("/learning/status")
@@ -322,6 +432,56 @@ async def skill_analytics(
     """Aggregate execution metrics, regression history and experiments."""
 
     return await _service(request).skill_analytics(skill_name, version=version)
+
+
+@router.get("/{skill_name}/dependencies")
+async def list_skill_dependencies(
+    skill_name: str,
+    request: Request,
+) -> list[dict[str, Any]]:
+    return await _service(request).dependencies.list_for(skill_name)
+
+
+@router.post("/{skill_name}/dependencies")
+async def add_skill_dependency(
+    skill_name: str,
+    body: DependencyRequest,
+    request: Request,
+) -> dict[str, Any]:
+    try:
+        return await _service(request).dependencies.add(
+            skill_name=skill_name,
+            depends_on_skill=body.depends_on_skill,
+            version_constraint=body.version_constraint,
+            required=body.required,
+            metadata=body.metadata,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.delete("/{skill_name}/dependencies/{dependency}")
+async def delete_skill_dependency(
+    skill_name: str,
+    dependency: str,
+    request: Request,
+) -> dict[str, Any]:
+    removed = await _service(request).dependencies.remove(skill_name, dependency)
+
+    if not removed:
+        raise HTTPException(status_code=404, detail="Dependency not found")
+
+    return {"deleted": True}
+
+
+@router.post("/{skill_name}/regression/check")
+async def check_skill_regression_monitor(
+    skill_name: str,
+    request: Request,
+) -> dict[str, Any]:
+    """Compare the live version against the last stable one and roll back."""
+
+    return await _service(request).regression.check(skill_name)
 
 
 @router.post("/{skill_name}/regressions/check")

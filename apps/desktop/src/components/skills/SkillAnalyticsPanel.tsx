@@ -1,19 +1,27 @@
 import {
   Activity,
-  AlertTriangle,
   AlertCircle,
-  FlaskConical,
   Hash,
   RefreshCw,
   ShieldCheck,
+  Stethoscope,
   Timer,
 } from "lucide-react";
 
-import { relativeTime } from "../../lib/format";
+import { useEffect, useState } from "react";
 
-import { useSkillAnalytics } from "../../hooks/use-settings";
+import { useQueryClient } from "@tanstack/react-query";
 
-import type { ReactNode } from "react";
+import { settingsApi } from "../../lib/api";
+
+import { percent, relativeTime } from "../../lib/format";
+
+import {
+  settingsQueryKeys,
+  useSkillAnalytics,
+} from "../../hooks/use-settings";
+
+import { ExperimentList } from "./ExperimentList";
 
 interface Props {
   skillName: string;
@@ -25,35 +33,50 @@ function messageOf(error: unknown): string {
     : "Something went wrong. Please try again.";
 }
 
-function Metric({
-  icon,
-  title,
-  value,
-  hint,
-}: {
-  icon: ReactNode;
-  title: string;
-  value: string;
-  hint?: string;
-}) {
-  return (
-    <div className="skill-metric">
-      <div className="skill-metric__icon">{icon}</div>
-
-      <div className="skill-metric__body">
-        <span className="skill-metric__title">{title}</span>
-
-        <strong className="skill-metric__value">{value}</strong>
-
-        {hint && <span className="skill-metric__hint">{hint}</span>}
-      </div>
-    </div>
-  );
+function stringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
-/** Performance metrics, regression history and A/B experiments. */
+/** Per-version metrics, regression history and version experiments. */
 export function SkillAnalyticsPanel({ skillName }: Props) {
+  const queryClient = useQueryClient();
   const query = useSkillAnalytics(skillName);
+
+  const [checking, setChecking] = useState(false);
+  const [checkResult, setCheckResult] = useState<
+    Record<string, unknown> | null
+  >(null);
+  const [checkError, setCheckError] = useState<string | null>(null);
+
+  // A different skill means a different regression history.
+  useEffect(() => {
+    setCheckResult(null);
+    setCheckError(null);
+    setChecking(false);
+  }, [skillName]);
+
+  async function checkRegression() {
+    setChecking(true);
+    setCheckError(null);
+
+    try {
+      setCheckResult(await settingsApi.checkSkillRegression(skillName));
+
+      await queryClient.invalidateQueries({
+        queryKey: settingsQueryKeys.skillAnalytics(skillName),
+      });
+      await queryClient.invalidateQueries({
+        queryKey: settingsQueryKeys.skills,
+      });
+    } catch (error) {
+      setCheckResult(null);
+      setCheckError(messageOf(error));
+    } finally {
+      setChecking(false);
+    }
+  }
 
   if (query.isLoading) {
     return (
@@ -80,12 +103,26 @@ export function SkillAnalyticsPanel({ skillName }: Props) {
     return null;
   }
 
+  const versions = data.versions ?? [];
   const regressions = data.regressions ?? [];
   const experiments = data.experiments ?? [];
 
+  // Metrics of the version that is serving traffic, else the newest one.
+  const current =
+    versions.find((item) => item.status === "active") ?? versions[0];
+  const metrics = current?.metrics;
+
+  const checked = checkResult?.checked === true;
+  const regressed = checkResult?.regression === true;
+  const reasons = stringList(checkResult?.reasons);
+  const rollbackError =
+    typeof checkResult?.rollback_error === "string"
+      ? checkResult.rollback_error
+      : null;
+
   return (
     <div className="skill-analytics">
-      {data.total === 0 ? (
+      {!metrics ? (
         <div className="settings-empty-state settings-empty-state--small">
           <Activity size={18} />
 
@@ -98,54 +135,126 @@ export function SkillAnalyticsPanel({ skillName }: Props) {
         </div>
       ) : (
         <>
-          <div className="skill-metrics">
-            <Metric
-              icon={<Activity size={15} />}
-              title="Executions"
-              value={String(data.total)}
-            />
+          <div className="skill-summary-grid">
+            <div className="skill-summary">
+              <div className="skill-summary__icon">
+                <ShieldCheck size={16} />
+              </div>
 
-            <Metric
-              icon={<ShieldCheck size={15} />}
-              title="Success rate"
-              value={`${(data.success_rate * 100).toFixed(1)}%`}
-            />
+              <strong>{percent(metrics.success_rate)}</strong>
 
-            <Metric
-              icon={<Timer size={15} />}
-              title="Avg latency"
-              value={`${Math.round(data.latency)}ms`}
-            />
+              <span>Success</span>
+            </div>
 
-            <Metric
-              icon={<Hash size={15} />}
-              title="Avg tokens"
-              value={String(Math.round(data.tokens))}
-            />
+            <div className="skill-summary">
+              <div className="skill-summary__icon">
+                <Activity size={16} />
+              </div>
 
-            <Metric
-              icon={<AlertTriangle size={15} />}
-              title="Avg tool failures"
-              value={String(Math.round(data.failures * 10) / 10)}
-            />
+              <strong>{metrics.total}</strong>
+
+              <span>Observed runs</span>
+            </div>
+
+            <div className="skill-summary">
+              <div className="skill-summary__icon">
+                <Timer size={16} />
+              </div>
+
+              <strong>
+                {metrics.average_duration_seconds.toFixed(2)}s
+              </strong>
+
+              <span>Avg latency</span>
+            </div>
+
+            <div className="skill-summary">
+              <div className="skill-summary__icon">
+                <Hash size={16} />
+              </div>
+
+              <strong>{Math.round(metrics.average_total_tokens)}</strong>
+
+              <span>Avg tokens</span>
+            </div>
           </div>
 
-          {data.versions.length > 0 && (
+          {versions.length > 0 && (
             <div className="skill-metric-versions">
-              <span className="skill-metric-versions__label">
-                Coverage
-              </span>
+              <span className="skill-metric-versions__label">Coverage</span>
 
-              {data.versions.map((item) => (
+              {versions.map((item) => (
                 <span className="skill-metric-version" key={item.version}>
                   v{item.version}
-                  <em>{item.executions}</em>
+                  <em>{item.metrics?.total ?? 0}</em>
                 </span>
               ))}
             </div>
           )}
         </>
       )}
+
+      <div className="skill-analytics-section">
+        <div className="settings-subsection__heading-row">
+          <h6 className="settings-subsection__heading">Check regression</h6>
+
+          <button
+            type="button"
+            className="settings-text-button"
+            disabled={checking}
+            onClick={() => void checkRegression()}
+          >
+            {checking ? (
+              <RefreshCw className="settings-spin" size={13} />
+            ) : (
+              <Stethoscope size={13} />
+            )}
+            Run check
+          </button>
+        </div>
+
+        {checkError && (
+          <div className="settings-error-card">
+            <AlertCircle size={16} />
+
+            <span>{checkError}</span>
+          </div>
+        )}
+
+        {checkResult && (
+          <div className="skill-compare-result">
+            <strong>
+              <span
+                className={`skill-status skill-status--${
+                  !checked
+                    ? "disabled"
+                    : regressed
+                      ? "rejected"
+                      : "verified"
+                }`}
+              >
+                {!checked
+                  ? "skipped"
+                  : regressed
+                    ? "regression"
+                    : "healthy"}
+              </span>
+            </strong>
+
+            <span>
+              {reasons.length > 0
+                ? reasons.join(" · ")
+                : typeof checkResult.reason === "string"
+                  ? checkResult.reason
+                  : regressed
+                    ? "The current version regressed against the stable one."
+                    : "No regression detected against the stable version."}
+            </span>
+
+            {rollbackError && <span>{rollbackError}</span>}
+          </div>
+        )}
+      </div>
 
       <div className="skill-analytics-section">
         <div className="settings-subsection__heading-row">
@@ -178,7 +287,9 @@ export function SkillAnalyticsPanel({ skillName }: Props) {
                   </span>
 
                   <span className="skill-reg-log__reason">
-                    {entry.reason}
+                    {entry.reasons?.length
+                      ? entry.reasons.join(" · ")
+                      : "regression detected"}
                   </span>
 
                   <span className="skill-reg-log__time">
@@ -207,9 +318,7 @@ export function SkillAnalyticsPanel({ skillName }: Props) {
 
       <div className="skill-analytics-section">
         <div className="settings-subsection__heading-row">
-          <h6 className="settings-subsection__heading">
-            A/B experiments
-          </h6>
+          <h6 className="settings-subsection__heading">Version experiments</h6>
 
           {experiments.length > 0 && (
             <span className="settings-subsection__count">
@@ -218,40 +327,10 @@ export function SkillAnalyticsPanel({ skillName }: Props) {
           )}
         </div>
 
-        {experiments.length === 0 ? (
-          <p className="skill-analytics-note">
-            No version experiments opened for this skill.
-          </p>
-        ) : (
-          <ul className="skill-experiment-list">
-            {experiments.map((entry) => (
-              <li className="skill-experiment" key={entry.id}>
-                <div className="skill-experiment__main">
-                  <span className="skill-experiment__split">
-                    v{entry.control_version}
-                    <em>vs</em>v{entry.experiment_version}
-                  </span>
-
-                  <span className="skill-experiment__traffic">
-                    {entry.traffic_percent}% to the experiment arm
-                  </span>
-
-                  <span className="skill-experiment__time">
-                    {relativeTime(entry.created_at)}
-                  </span>
-                </div>
-
-                <span
-                  className={`skill-status skill-status--${
-                    entry.status === "running" ? "active" : "disabled"
-                  }`}
-                >
-                  {entry.status}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+        <ExperimentList
+          experiments={experiments}
+          emptyNote="No version experiments opened for this skill."
+        />
       </div>
     </div>
   );

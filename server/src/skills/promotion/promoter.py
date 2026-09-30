@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from server.src.skills.repository import SkillRepository
-from server.src.skills.representation.skill import SkillStatus
+from server.src.skills.representation.skill import Skill, SkillStatus
 from server.src.skills.versioning.versioner import PromotionResult, SkillVersioner
 
 
@@ -28,6 +28,58 @@ class SkillPromoter:
         candidate_id: str,
         evaluation_id: str | None = None,
     ) -> PromotionResult:
+        skill, evaluation_id = await self._require_verified(candidate_id, evaluation_id)
+
+        result = await self._versioner.promote_new_version(
+            skill,
+            candidate_id=candidate_id,
+            evaluation_id=evaluation_id,
+        )
+
+        await self._repository.update_candidate(
+            candidate_id,
+            status="promoted",
+            extra_metadata={
+                "promoted_version": result.version,
+                "promoted_version_id": result.version_id,
+                "previous_version": result.previous_version,
+            },
+        )
+
+        return result
+
+    async def stage(
+        self,
+        *,
+        candidate_id: str,
+        evaluation_id: str | None = None,
+    ) -> PromotionResult:
+        """Mint the next version row for a verified candidate, without activating it.
+
+        The version exists so an experiment can arm against it, but
+        nothing is written to /skills/ — the active version keeps serving
+        until a winner is picked.
+        """
+
+        skill, evaluation_id = await self._require_verified(candidate_id, evaluation_id)
+
+        return await self._versioner.stage_new_version(
+            skill,
+            candidate_id=candidate_id,
+            evaluation_id=evaluation_id,
+        )
+
+    async def _require_verified(
+        self,
+        candidate_id: str,
+        evaluation_id: str | None = None,
+    ) -> tuple[Skill, str]:
+        """Resolve a candidate to (skill, evaluation_id) or explain why it cannot go.
+
+        Promotion and staging share this gate: neither may mint a version
+        from a candidate the evaluator has not passed.
+        """
+
         candidate = await self._repository.get_candidate(candidate_id)
         skill = await self._repository.get_candidate_skill(candidate_id)
 
@@ -64,23 +116,7 @@ class SkillPromoter:
                 f"candidate status is {candidate.get('status')!r}; expected 'verified'"
             )
 
-        result = await self._versioner.promote_new_version(
-            skill,
-            candidate_id=candidate_id,
-            evaluation_id=str(evaluation_id),
-        )
-
-        await self._repository.update_candidate(
-            candidate_id,
-            status="promoted",
-            extra_metadata={
-                "promoted_version": result.version,
-                "promoted_version_id": result.version_id,
-                "previous_version": result.previous_version,
-            },
-        )
-
-        return result
+        return skill, str(evaluation_id)
 
     async def reject(
         self,

@@ -64,3 +64,14 @@ export function basenameModel(
     pieces.length - 1
   ] || model;
 }
+
+/** A 0..1 rate as a whole percentage: `0.872` → `"87%"`. */
+export function percent(
+  rate: number,
+): string {
+  if (!Number.isFinite(rate)) {
+    return "0%";
+  }
+
+  return `${Math.round(rate * 100)}%`;
+}

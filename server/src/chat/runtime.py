@@ -4,8 +4,8 @@ import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 from deepagents import create_deep_agent
 from langchain.agents.middleware import TodoListMiddleware
@@ -21,6 +21,12 @@ from server.src.guardrails.policy import PermissionPolicyStore
 from server.src.memory.provider import MemoryProvider
 from server.src.tools.personal import PersonalToolProvider
 from server.src.tools.verification import ConnectorVerificationService
+
+if TYPE_CHECKING:
+    from server.src.skills.experiments.service import (
+        ExperimentAssignment,
+        SkillExperimentService,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +89,9 @@ class PreparedAgentRun:
     model_name: str
     mcp_tool_count: int
     thread_id: str
+    # Which experiment arms this run was assigned to, so chat can attach
+    # them to the trajectory before the first metrics row is written.
+    skill_assignments: list[ExperimentAssignment] = field(default_factory=list)
 
 
 class InvalidCheckpoint(RuntimeError):
@@ -99,6 +108,7 @@ class DeepAgentRuntime:
         personal_tools: PersonalToolProvider,
         verification: ConnectorVerificationService | None = None,
         permission_policy: PermissionPolicyStore | None = None,
+        skill_experiments: "SkillExperimentService | None" = None,
     ) -> None:
         self._settings = settings
         self._memory = memory
@@ -107,6 +117,7 @@ class DeepAgentRuntime:
         self._personal_tools = personal_tools
         self._verification = verification
         self._permission_policy = permission_policy
+        self._skill_experiments = skill_experiments
         self._models = BifrostModelFactory(settings)
 
     async def prepare(
@@ -116,6 +127,7 @@ class DeepAgentRuntime:
         thread_id: str,
         model_name: str | None,
         base_checkpoint_id: str | None,
+        task_text: str = "",
     ) -> PreparedAgentRun:
         """Do all validation that can fail before SSE headers are returned."""
         chosen_model = await self._models.resolve_or_default(
@@ -174,10 +186,23 @@ class DeepAgentRuntime:
             interrupt_policy = interrupt_policy or {}
             interrupt_policy.update(self._verification.interrupt_policy())
 
+        skill_assignments: list[ExperimentAssignment] = []
+
+        if self._skill_experiments is not None:
+            skill_assignments = await self._skill_experiments.prepare_task(
+                task_text=task_text,
+                # Conversation / branch thread gives sticky assignment.
+                unit_id=thread_id,
+            )
+
+        experiment_prompt = "".join(
+            assignment.prompt_override or "" for assignment in skill_assignments
+        )
+
         agent = create_deep_agent(
             model=model,
             tools=tools,
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=SYSTEM_PROMPT + experiment_prompt,
             middleware=[TodoListMiddleware()],
             permissions=self._personal_tools.permissions(policy),
             interrupt_on=interrupt_policy or None,
@@ -191,6 +216,7 @@ class DeepAgentRuntime:
             model_name=chosen_model,
             mcp_tool_count=len(mcp_tools),
             thread_id=thread_id,
+            skill_assignments=skill_assignments,
         )
 
     async def stream_prepared(
@@ -272,6 +298,12 @@ class DeepAgentRuntime:
         # the evaluator's token counts.
         input_tokens = 0
         output_tokens = 0
+        # Runtime statistics reported on run.finished, for experiment arms
+        # and the regression monitor.
+        loop = asyncio.get_running_loop()
+        started_at = loop.time()
+        tool_calls = 0
+        tool_errors = 0
 
         try:
             stream = prepared.agent.astream(
@@ -307,6 +339,10 @@ class DeepAgentRuntime:
 
                         if token.tool_call_chunks:
                             for tool_call in token.tool_call_chunks:
+                                # Only the first chunk carrying the name is
+                                # a new call; later fragments are continuations.
+                                if tool_call.get("name"):
+                                    tool_calls += 1
                                 yield ChatEvent(
                                     type="tool.call.delta",
                                     conversation_id=conversation.id,
@@ -332,6 +368,8 @@ class DeepAgentRuntime:
                                     data={"source": source, "text": text},
                                 )
                     elif isinstance(token, ToolMessage):
+                        if getattr(token, "status", None) == "error":
+                            tool_errors += 1
                         yield ChatEvent(
                             type="tool.result",
                             conversation_id=conversation.id,
@@ -384,6 +422,14 @@ class DeepAgentRuntime:
                         "output": output_tokens,
                         "total": input_tokens + output_tokens,
                     },
+                    # Flat keys for experiment arms and the regression
+                    # monitor; `tokens` above stays for the dashboard.
+                    "duration_seconds": loop.time() - started_at,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "total_tokens": input_tokens + output_tokens,
+                    "tool_calls": tool_calls,
+                    "tool_errors": tool_errors,
                 },
             )
 

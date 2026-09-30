@@ -35,6 +35,8 @@ class SkillStatus(StrEnum):
     CANDIDATE = "candidate"
     EVALUATING = "evaluating"
     VERIFIED = "verified"
+    EXPERIMENTING = "experimenting"
+    PROMOTED = "promoted"
     ACTIVE = "active"
     REJECTED = "rejected"
     ARCHIVED = "archived"

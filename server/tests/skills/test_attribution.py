@@ -439,6 +439,7 @@ class SkillRunRuntime:
         thread_id: str,
         model_name: str | None,
         base_checkpoint_id: str | None,
+        task_text: str = "",
     ) -> PreparedAgentRun:
         return PreparedAgentRun(
             agent=None,

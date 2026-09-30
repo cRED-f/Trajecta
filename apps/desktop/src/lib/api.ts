@@ -23,12 +23,13 @@ import type {
   ScheduleCreateInput,
   ScheduledTask,
   ScheduleUpdateInput,
-  SkillAnalyticsSummary,
+  SkillAnalytics,
   SkillCatalog,
+  SkillDependency,
   SkillEvaluationReport,
+  SkillExperiment,
   SkillLearningStatus,
   SkillPromotionResult,
-  SkillRollbackResult,
   SkillUpgradeResult,
   SkillVersion,
   SkillVersionCompareResult,
@@ -591,7 +592,7 @@ export const settingsApi = {
     skillName: string,
     version: string,
     reason?: string,
-  ): Promise<SkillRollbackResult> {
+  ): Promise<SkillPromotionResult> {
     return request(
       `/skills/${encodeURIComponent(skillName)}/rollback`,
       {
@@ -615,21 +616,126 @@ export const settingsApi = {
     });
   },
 
-  skillLearningStatus(): Promise<SkillLearningStatus> {
+  learningStatus(): Promise<SkillLearningStatus> {
     return request("/skills/learning/status");
   },
 
-  /** Execution metrics, regression history and experiments for one skill. */
-  skillAnalytics(
+  runSkillLearning(
+    force = true,
+  ): Promise<{ queued: boolean; status: SkillLearningStatus }> {
+    return request("/skills/learning/run", {
+      method: "POST",
+      body: JSON.stringify({ force }),
+    });
+  },
+
+  /** Per-version metrics, experiments and regressions for one skill. */
+  skillAnalytics(skillName: string): Promise<SkillAnalytics> {
+    return request(
+      `/skills/${encodeURIComponent(skillName)}/analytics`,
+    );
+  },
+
+  /** Run the automatic rollback policy for one skill. */
+  checkSkillRegression(
     skillName: string,
-    version?: string,
-  ): Promise<SkillAnalyticsSummary> {
-    const query = version
-      ? `?version=${encodeURIComponent(version)}`
+  ): Promise<Record<string, unknown>> {
+    return request(
+      `/skills/${encodeURIComponent(skillName)}/regression/check`,
+      { method: "POST" },
+    );
+  },
+
+  experiments(skillName?: string): Promise<SkillExperiment[]> {
+    const qs = skillName
+      ? `?skill_name=${encodeURIComponent(skillName)}`
       : "";
 
+    return request(`/skills/experiments${qs}`);
+  },
+
+  startSkillExperiment(
+    candidateId: string,
+    body: {
+      strategy?: "ab" | "thompson";
+      traffic_percent?: number;
+      auto_stop?: boolean;
+      auto_promote?: boolean;
+    } = {},
+  ): Promise<SkillExperiment> {
     return request(
-      `/skills/${encodeURIComponent(skillName)}/analytics${query}`,
+      `/skills/candidates/${encodeURIComponent(candidateId)}/experiment`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    );
+  },
+
+  addExperimentArm(
+    experimentId: string,
+    candidateId: string,
+  ): Promise<SkillExperiment> {
+    return request(
+      `/skills/experiments/${encodeURIComponent(experimentId)}/arms`,
+      {
+        method: "POST",
+        body: JSON.stringify({ candidate_id: candidateId }),
+      },
+    );
+  },
+
+  analyzeExperiment(
+    experimentId: string,
+  ): Promise<Record<string, unknown>> {
+    return request(
+      `/skills/experiments/${encodeURIComponent(experimentId)}/analysis`,
+    );
+  },
+
+  stopExperiment(
+    experimentId: string,
+    reason: string,
+  ): Promise<SkillExperiment> {
+    return request(
+      `/skills/experiments/${encodeURIComponent(experimentId)}/stop`,
+      {
+        method: "POST",
+        body: JSON.stringify({ reason }),
+      },
+    );
+  },
+
+  skillDependencies(skillName: string): Promise<SkillDependency[]> {
+    return request(
+      `/skills/${encodeURIComponent(skillName)}/dependencies`,
+    );
+  },
+
+  addSkillDependency(
+    skillName: string,
+    body: {
+      depends_on_skill: string;
+      version_constraint?: string;
+      required?: boolean;
+    },
+  ): Promise<SkillDependency> {
+    return request(
+      `/skills/${encodeURIComponent(skillName)}/dependencies`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    );
+  },
+
+  deleteSkillDependency(
+    skillName: string,
+    dependsOnSkill: string,
+  ): Promise<{ deleted: boolean }> {
+    return request(
+      `/skills/${encodeURIComponent(skillName)}/dependencies/${encodeURIComponent(dependsOnSkill)}`,
+      { method: "DELETE" },
     );
   },
 

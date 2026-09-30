@@ -187,6 +187,15 @@ class SQLiteDatabase:
 
             version = 13
 
+        if version < 14:
+            await self._migrate_v14()
+
+            await self._conn.execute(
+                "INSERT INTO schema_version(version) VALUES (14)"
+            )
+
+            version = 14
+
         await self._conn.commit()
 
     async def _migrate_v1(self) -> None:
@@ -914,6 +923,182 @@ class SQLiteDatabase:
             CREATE INDEX IF NOT EXISTS
                 idx_skill_experiments_lookup
             ON skill_experiments(skill_name, status);
+            """
+        )
+
+    async def _migrate_v14(self) -> None:
+        """Schema v14: experiment arms/assignments, runtime detail, dependencies.
+
+        v12 and v13 already created ``skill_experiments`` and
+        ``skill_regressions`` with a narrower shape, so those tables are
+        widened with ``ALTER TABLE`` instead of being dropped and rebuilt.
+        Every step is guarded, making a re-run after a partial failure a
+        no-op rather than an error.
+        """
+
+        assert self._conn is not None
+
+        async def add_columns(table: str, columns: dict[str, str]) -> None:
+            existing = {
+                row[1]
+                for row in await (
+                    await self._conn.execute(f"PRAGMA table_info({table})")  # noqa: S608
+                ).fetchall()
+            }
+
+            for name, declaration in columns.items():
+                if name not in existing:
+                    await self._conn.execute(
+                        f"ALTER TABLE {table} "  # noqa: S608
+                        f"ADD COLUMN {name} {declaration}"
+                    )
+
+        await add_columns(
+            "skill_learning_runs",
+            {"experiment_count": "INTEGER NOT NULL DEFAULT 0"},
+        )
+
+        await add_columns(
+            "skill_experiments",
+            {
+                "strategy": "TEXT NOT NULL DEFAULT 'ab'",
+                "min_samples_per_arm": "INTEGER NOT NULL DEFAULT 20",
+                "max_samples_total": "INTEGER NOT NULL DEFAULT 200",
+                "alpha": "REAL NOT NULL DEFAULT 0.05",
+                "bayesian_threshold": "REAL NOT NULL DEFAULT 0.95",
+                "minimum_effect": "REAL NOT NULL DEFAULT 0.03",
+                "harm_effect": "REAL NOT NULL DEFAULT 0.05",
+                "bayesian_draws": "INTEGER NOT NULL DEFAULT 5000",
+                "auto_stop": "INTEGER NOT NULL DEFAULT 1",
+                "auto_promote": "INTEGER NOT NULL DEFAULT 1",
+                "winner_version": "TEXT",
+                "reason": "TEXT",
+                "completed_at": "TEXT",
+                "metadata": "TEXT",
+            },
+        )
+
+        await add_columns(
+            "skill_execution_metrics",
+            {
+                "experiment_id": "TEXT",
+                "arm_kind": "TEXT NOT NULL DEFAULT 'active'",
+                "unit_id": "TEXT",
+                "duration_seconds": "REAL",
+                "input_tokens": "INTEGER NOT NULL DEFAULT 0",
+                "output_tokens": "INTEGER NOT NULL DEFAULT 0",
+                "tool_calls": "INTEGER NOT NULL DEFAULT 0",
+                "tool_errors": "INTEGER NOT NULL DEFAULT 0",
+                "completed_at": "TEXT",
+                "metadata": "TEXT",
+            },
+        )
+
+        await add_columns(
+            "skill_regressions",
+            {
+                "reasons": "TEXT NOT NULL DEFAULT ''",
+                "evidence": "TEXT NOT NULL DEFAULT ''",
+                "rollback_error": "TEXT",
+            },
+        )
+
+        # Samples recorded before v14 are complete by definition — they were
+        # written after the run ended — so backfill the completion timestamp
+        # rather than letting them fall out of "completed" queries.
+        await self._conn.execute(
+            """
+            UPDATE skill_execution_metrics
+            SET completed_at = created_at
+            WHERE completed_at IS NULL
+            """
+        )
+
+        await self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS skill_experiment_arms (
+                experiment_id TEXT NOT NULL
+                    REFERENCES skill_experiments(id)
+                    ON DELETE CASCADE,
+
+                version TEXT NOT NULL,
+
+                candidate_id TEXT,
+
+                is_control INTEGER NOT NULL DEFAULT 0,
+
+                created_at TEXT NOT NULL,
+
+                metadata TEXT,
+
+                PRIMARY KEY(experiment_id, version)
+            );
+
+            CREATE TABLE IF NOT EXISTS skill_experiment_assignments (
+                experiment_id TEXT NOT NULL
+                    REFERENCES skill_experiments(id)
+                    ON DELETE CASCADE,
+
+                unit_id TEXT NOT NULL,
+
+                version TEXT NOT NULL,
+
+                assigned_at TEXT NOT NULL,
+
+                PRIMARY KEY(experiment_id, unit_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS skill_dependencies (
+                skill_name TEXT NOT NULL,
+
+                depends_on_skill TEXT NOT NULL,
+
+                version_constraint TEXT NOT NULL DEFAULT '*',
+
+                required INTEGER NOT NULL DEFAULT 1,
+
+                created_at TEXT NOT NULL,
+
+                metadata TEXT,
+
+                PRIMARY KEY(skill_name, depends_on_skill),
+
+                CHECK(skill_name <> depends_on_skill)
+            );
+
+            CREATE INDEX IF NOT EXISTS
+                idx_skill_dependencies_target
+            ON skill_dependencies(depends_on_skill);
+
+            CREATE INDEX IF NOT EXISTS
+                idx_skill_experiments_one_running
+            ON skill_experiments(skill_name)
+            WHERE status = 'running';
+
+            CREATE INDEX IF NOT EXISTS
+                idx_skill_regressions_name
+            ON skill_regressions(skill_name, created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS
+                idx_skill_metrics_runtime
+            ON skill_execution_metrics(
+                skill_name,
+                skill_version,
+                completed_at
+            );
+
+            CREATE INDEX IF NOT EXISTS
+                idx_skill_metrics_experiment
+            ON skill_execution_metrics(
+                experiment_id,
+                skill_version,
+                completed_at
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS
+                idx_skill_metrics_one_per_trajectory
+            ON skill_execution_metrics(trajectory_id, skill_name)
+            WHERE trajectory_id IS NOT NULL;
             """
         )
 

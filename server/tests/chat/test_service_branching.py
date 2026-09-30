@@ -35,7 +35,7 @@ class FakeRuntime:
         self.counter = 0
 
     async def prepare(
-        self, *, conversation, thread_id, model_name, base_checkpoint_id
+        self, *, conversation, thread_id, model_name, base_checkpoint_id, task_text=""
     ):  # noqa: ANN001
         return PreparedAgentRun(
             agent=None,

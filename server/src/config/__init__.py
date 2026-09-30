@@ -207,13 +207,71 @@ class SkillLearningConfig(BaseModel):
     auto_evaluate: bool = True
 
     # Promotion still requires evaluator verdict == "pass".
-    auto_promote: bool = True
+    auto_promote_initial: bool = True
+
+    # Later versions of an already-live skill are staged into an experiment
+    # instead of being swapped in directly.
+    auto_experiment_upgrades: bool = True
+
+
+class SkillExperimentConfig(BaseModel):
+    """Live A/B and Thompson-sampling comparisons between skill versions."""
+
+    enabled: bool = True
+
+    # Classic A/B or adaptive multi-arm Thompson sampling.
+    default_strategy: Literal["ab", "thompson"] = "ab"
+
+    # For A/B this is the total treatment allocation.
+    treatment_traffic_percent: int = Field(default=25, ge=1, le=99)
+
+    # Only experiment with a skill when the task overlaps its trigger /
+    # description enough to plausibly need it.
+    relevance_threshold: float = Field(default=0.12, ge=0.0, le=1.0)
+
+    min_samples_per_arm: int = Field(default=20, ge=2, le=10_000)
+    max_samples_total: int = Field(default=200, ge=4, le=100_000)
+
+    # Frequentist threshold.
+    alpha: float = Field(default=0.05, gt=0.0, lt=1.0)
+
+    # Bayesian posterior threshold.
+    bayesian_threshold: float = Field(default=0.95, gt=0.5, lt=1.0)
+
+    minimum_success_effect: float = Field(default=0.03, ge=0.0, le=1.0)
+    harm_effect: float = Field(default=0.05, ge=0.0, le=1.0)
+
+    bayesian_draws: int = Field(default=5000, ge=1000, le=100_000)
+
+    auto_stop: bool = True
+    auto_promote_winner: bool = True
+
+
+class SkillRegressionConfig(BaseModel):
+    """Automatic rollback when a promoted version starts losing."""
+
+    enabled: bool = True
+
+    min_samples_per_version: int = Field(default=20, ge=2, le=10_000)
+    window_size: int = Field(default=100, ge=5, le=10_000)
+
+    success_drop: float = Field(default=0.08, ge=0.0, le=1.0)
+
+    alpha: float = Field(default=0.05, gt=0.0, lt=1.0)
+    bayesian_harm_threshold: float = Field(default=0.95, gt=0.5, lt=1.0)
+
+    maximum_latency_ratio: float = Field(default=1.50, ge=1.0)
+    maximum_tool_error_rate_increase: float = Field(default=0.10, ge=0.0, le=1.0)
+
+    auto_rollback: bool = True
 
 
 class SkillsConfig(BaseModel):
     storage_path: str = ".trajecta/skills"
     fixtures: SkillFixtureConfig = SkillFixtureConfig()
     learning: SkillLearningConfig = SkillLearningConfig()
+    experiments: SkillExperimentConfig = SkillExperimentConfig()
+    regression: SkillRegressionConfig = SkillRegressionConfig()
 
 
 class SandboxConfig(BaseModel):

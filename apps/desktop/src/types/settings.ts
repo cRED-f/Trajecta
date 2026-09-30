@@ -39,6 +39,8 @@ export type SkillStatus =
   | "active"
   | "disabled"
   | "verified"
+  | "experimenting"
+  | "promoted"
   | "candidate"
   | "evaluating"
   | "rejected"
@@ -69,11 +71,15 @@ export interface SkillCandidate {
 export interface SkillCatalog {
   skills: SkillRegistryItem[];
   candidates: SkillCandidate[];
+  experiments: SkillExperiment[];
+  learning: SkillLearningStatus;
   summary: {
     active: number;
     disabled: number;
     candidate: number;
     evaluating: number;
+    experimenting: number;
+    running_experiments: number;
   };
 }
 
@@ -85,9 +91,19 @@ export interface SkillPromotionResult {
 }
 
 export interface SkillVersion {
+  id: string;
+  skill_name: string;
+
   version: string;
   status: string;
+
+  content_hash: string;
+
+  source_candidate_id: string | null;
+  source_evaluation_id: string | null;
+
   created_at: string;
+
   metadata: Record<string, unknown>;
 }
 
@@ -96,13 +112,6 @@ export interface SkillVersionCompareResult {
   from: { version: string; metadata: Record<string, unknown> };
   to: { version: string; metadata: Record<string, unknown> };
   changed: boolean;
-}
-
-export interface SkillRollbackResult {
-  skill: string;
-  rolled_back_from: string | null;
-  rolled_back_to: string;
-  reason: string | null;
 }
 
 /** POST /skills/upgrade — rejected upgrades carry no skill/version. */
@@ -150,60 +159,169 @@ export interface SkillLearningRun {
 
 export interface SkillLearningStatus {
   enabled: boolean;
+
   worker_running: boolean;
-  learning_run_active: boolean;
+
+  /**
+   * True while a mining pass is in flight. The spec calls it `run_active`;
+   * backends still emitting the older `learning_run_active` are accepted.
+   */
+  run_active?: boolean;
+  learning_run_active?: boolean;
+
   total_successful_trajectories: number;
+
   success_count_checkpoint: number;
+
   pending_successes: number;
+
   trigger_every_successes: number;
-  minimum_occurrences: number;
-  auto_evaluate: boolean;
-  auto_promote: boolean;
+
+  state: Record<string, unknown>;
+
   recent_runs: SkillLearningRun[];
 }
 
-export interface SkillAnalyticsVersion {
+export interface SkillMetricSummary {
+  skill_name: string;
   version: string;
-  executions: number;
+
+  total: number;
+
+  successes: number;
+  failures: number;
+
+  success_rate: number;
+
+  average_duration_seconds: number;
+
+  average_input_tokens: number;
+  average_output_tokens: number;
+  average_total_tokens: number;
+
+  average_tool_calls: number;
+  average_tool_errors: number;
+
+  tool_error_rate: number;
+}
+
+/** One version of a running A/B / bandit split. */
+export interface SkillExperimentArm {
+  experiment_id: string;
+
+  version: string;
+
+  candidate_id: string | null;
+
+  is_control: number;
+
+  created_at: string;
+
+  metadata: Record<string, unknown>;
+
+  summary: SkillMetricSummary;
+}
+
+/** One row of ``skill_experiments`` with its arms and live metrics. */
+export interface SkillExperiment {
+  id: string;
+
+  skill_name: string;
+
+  control_version: string;
+
+  strategy: "ab" | "thompson";
+
+  status: string;
+
+  traffic_percent: number;
+
+  min_samples_per_arm: number;
+  max_samples_total: number;
+
+  alpha: number;
+
+  bayesian_threshold: number;
+
+  minimum_effect: number;
+  harm_effect: number;
+
+  auto_stop: boolean;
+  auto_promote: boolean;
+
+  winner_version: string | null;
+
+  reason: string | null;
+
+  created_at: string;
+  completed_at: string | null;
+
+  metadata: Record<string, unknown>;
+
+  arms: SkillExperimentArm[];
 }
 
 /** One row of the automatic rollback log (``skill_regressions``). */
-export interface SkillRegressionEntry {
+export interface SkillRegression {
   id: string;
+
+  skill_name: string;
+
   bad_version: string;
   stable_version: string;
-  reason: string;
+
   severity: string;
+
+  reasons: string[];
+
+  evidence: Record<string, unknown>;
+
   rolled_back: boolean;
+
+  rollback_error: string | null;
+
   created_at: string;
 }
 
-/** One A/B version split (``skill_experiments``). */
-export interface SkillExperimentEntry {
-  id: string;
+/** Declared edge of the skill dependency graph. */
+export interface SkillDependency {
   skill_name: string;
-  control_version: string;
-  experiment_version: string;
-  traffic_percent: number;
-  status: string;
+
+  depends_on_skill: string;
+
+  version_constraint: string;
+
+  required: boolean;
+
   created_at: string;
+
+  metadata: Record<string, unknown>;
 }
 
 /**
- * GET /skills/{name}/analytics — execution aggregates plus regression
- * history and experiments. Metric fields are always numbers: the API
- * normalizes SQLite's NULL averages to 0.
+ * GET /skills/{name}/analytics — per-version metric summaries, the
+ * experiments opened for this skill and its regression history.
+ * Metric fields are always numbers: the API normalizes SQLite's
+ * NULL averages to 0.
  */
-export interface SkillAnalyticsSummary {
-  skill: string;
-  total: number;
-  success_rate: number;
-  latency: number;
-  tokens: number;
-  failures: number;
-  versions: SkillAnalyticsVersion[];
-  regressions: SkillRegressionEntry[];
-  experiments: SkillExperimentEntry[];
+export interface SkillAnalytics {
+  skill_name: string;
+
+  versions: Array<{
+    version: string;
+
+    status: string;
+
+    created_at: string;
+
+    metadata: Record<string, unknown>;
+
+    metrics: SkillMetricSummary;
+  }>;
+
+  experiments: SkillExperiment[];
+
+  regressions: SkillRegression[];
 }
 
 export type ScheduleType =

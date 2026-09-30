@@ -6,7 +6,7 @@ import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import UploadFile
 
@@ -42,7 +42,9 @@ from server.src.tools.verification import ConnectorVerificationService
 
 if TYPE_CHECKING:
     from server.src.skills.analytics import SkillExecutionAttributor
+    from server.src.skills.experiments import SkillExperimentService
     from server.src.skills.learning import SkillLearningCoordinator
+    from server.src.skills.service import SkillsService
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +101,7 @@ class ChatService:
         replay_fixtures: ReplayFixtureStore,
         skill_learning: "SkillLearningCoordinator | None" = None,
         skill_execution: "SkillExecutionAttributor | None" = None,
+        skills: "SkillsService | None" = None,
     ) -> None:
         self._settings = settings
         self._models = BifrostModelFactory(settings)
@@ -109,6 +112,16 @@ class ChatService:
         self._runs = runs
         self._trajectories = trajectories
         self._replay_fixtures = replay_fixtures
+        self._skills = skills
+
+        # One service covers everything; the individual collaborators stay
+        # overridable so callers that only have an attributor still work.
+        if skills is not None:
+            if skill_learning is None:
+                skill_learning = skills.learning
+            if skill_execution is None:
+                skill_execution = skills.execution
+
         self._skill_learning = skill_learning
         self._skill_execution = skill_execution
 
@@ -277,6 +290,7 @@ class ChatService:
             thread_id=branch.thread_id,
             model_name=request.model,
             base_checkpoint_id=base_checkpoint_id,
+            task_text=request.content or "",
         )
         return await self._persist_prepared_turn(
             conversation=conversation,
@@ -396,6 +410,7 @@ class ChatService:
             thread_id=fork_thread_id,
             model_name=model_name,
             base_checkpoint_id=base_checkpoint_id,
+            task_text=content or "",
         )
         run_id = uuid.uuid4().hex
         cancel_event = await self._runs.register(conversation_id, run_id)
@@ -506,6 +521,7 @@ class ChatService:
     async def stream_prepared(self, turn: PreparedTurn) -> AsyncIterator[ChatEvent]:
         assistant_text: list[str] = []
         final_checkpoint_id: str | None = None
+        final_run_metrics: dict[str, Any] = {}
         # Declared before begin() so the finally below can never see an
         # unbound name if the trajectory write itself fails.
         trajectory_id: str | None = None
@@ -519,6 +535,9 @@ class ChatService:
                 "model": turn.runtime.model_name,
                 "attachments": [item.id for item in turn.attachments],
             },
+        )
+        await self._bind_skill_assignments(
+            trajectory_id, turn.runtime.skill_assignments
         )
         await self._trajectories.append(
             trajectory_id,
@@ -583,6 +602,7 @@ class ChatService:
                     value = event.data.get("checkpoint_id")
                     if isinstance(value, str):
                         final_checkpoint_id = value
+                    final_run_metrics = self._run_metrics(event.data)
                 elif event.type == "run.interrupted":
                     checkpoint = event.data.get("checkpoint_id")
                     if not isinstance(checkpoint, str) or not checkpoint:
@@ -612,6 +632,9 @@ class ChatService:
                 elif event.type == "run.error":
                     await self._trajectories.finish(
                         trajectory_id, outcome="failure", result=str(event.data.get("error") or event.data)
+                    )
+                    await self._complete_runtime_trajectory(
+                        trajectory_id, success=False, metrics=final_run_metrics
                     )
                     yield event
                     return
@@ -651,6 +674,9 @@ class ChatService:
             # background worker.
             if self._skill_learning is not None:
                 self._skill_learning.notify_success(trajectory_id)
+            await self._complete_runtime_trajectory(
+                trajectory_id, success=True, metrics=final_run_metrics
+            )
             yield ChatEvent(
                 type="message.completed",
                 conversation_id=turn.conversation.id,
@@ -665,6 +691,9 @@ class ChatService:
             try:
                 await self._trajectories.finish(
                     trajectory_id, outcome="failure", result=f"{type(exc).__name__}: {exc}"
+                )
+                await self._complete_runtime_trajectory(
+                    trajectory_id, success=False, metrics=final_run_metrics
                 )
             except Exception:
                 pass
@@ -770,9 +799,74 @@ class ChatService:
         except Exception:
             logger.warning("skill execution attribution failed", exc_info=True)
 
+    async def _bind_skill_assignments(
+        self, trajectory_id: str | None, assignments: list[Any]
+    ) -> None:
+        """Record which experiment arms this run was assigned to.
+
+        Done as soon as the trajectory exists so a metrics row written
+        later always has an experiment id to go with it.
+        """
+
+        if self._skills is None or trajectory_id is None or not assignments:
+            return
+
+        try:
+            await self._skills.experiments.bind_trajectory(
+                trajectory_id, assignments
+            )
+        except Exception:
+            logger.warning("skill assignment binding failed", exc_info=True)
+
+    async def _complete_runtime_trajectory(
+        self,
+        trajectory_id: str | None,
+        *,
+        success: bool,
+        metrics: dict[str, Any],
+    ) -> None:
+        """Close out live metrics for a finished run.
+
+        Analytics, experiment auto-stop and regression monitoring all hang
+        off this, and none of them may turn a finished user task into a
+        failed one — hence the catch and the event trail.
+        """
+
+        if self._skills is None or trajectory_id is None:
+            return
+
+        try:
+            await self._skills.complete_runtime_trajectory(
+                trajectory_id, success=success, metrics=metrics
+            )
+        except Exception as exc:
+            logger.warning("skill runtime completion failed", exc_info=True)
+            try:
+                await self._trajectories.append(
+                    trajectory_id,
+                    event_type="skill.runtime.error",
+                    data={"error": f"{type(exc).__name__}: {exc}"},
+                    source="main",
+                )
+            except Exception:
+                pass
+
+    @staticmethod
+    def _run_metrics(data: dict[str, Any]) -> dict[str, Any]:
+        """Pull the runtime numbers off a ``run.finished`` payload."""
+
+        return {
+            "duration_seconds": data.get("duration_seconds", 0.0),
+            "input_tokens": data.get("input_tokens", 0),
+            "output_tokens": data.get("output_tokens", 0),
+            "tool_calls": data.get("tool_calls", 0),
+            "tool_errors": data.get("tool_errors", 0),
+        }
+
     async def stream_resume(self, turn: PreparedResume) -> AsyncIterator[ChatEvent]:
         assistant_text: list[str] = [turn.partial_text]
         final_checkpoint_id: str | None = None
+        final_run_metrics: dict[str, Any] = {}
         # Declared before begin() so the finally below can never see an
         # unbound name if the trajectory write itself fails.
         trajectory_id: str | None = None
@@ -817,6 +911,7 @@ class ChatService:
                     value = event.data.get("checkpoint_id")
                     if isinstance(value, str):
                         final_checkpoint_id = value
+                    final_run_metrics = self._run_metrics(event.data)
                 elif event.type == "run.interrupted":
                     checkpoint = event.data.get("checkpoint_id")
                     if not isinstance(checkpoint, str) or not checkpoint:
@@ -845,6 +940,9 @@ class ChatService:
                         outcome="cancelled" if event.type == "run.cancelled" else "failure",
                         result=str(event.data.get("error") or event.data),
                     )
+                    await self._complete_runtime_trajectory(
+                        trajectory_id, success=False, metrics=final_run_metrics
+                    )
                     yield event
                     return
                 yield event
@@ -869,6 +967,9 @@ class ChatService:
                 trajectory_id, outcome="success", result=final_text[:100_000],
                 metadata={"checkpoint_id": final_checkpoint_id, "approval_resume": True},
             )
+            await self._complete_runtime_trajectory(
+                trajectory_id, success=True, metrics=final_run_metrics
+            )
             yield ChatEvent(
                 type="message.completed",
                 conversation_id=turn.conversation.id,
@@ -883,6 +984,9 @@ class ChatService:
             try:
                 await self._trajectories.finish(
                     trajectory_id, outcome="failure", result=f"{type(exc).__name__}: {exc}"
+                )
+                await self._complete_runtime_trajectory(
+                    trajectory_id, success=False, metrics=final_run_metrics
                 )
             except Exception:
                 pass
@@ -959,6 +1063,7 @@ class ChatService:
             thread_id=str(pending["thread_id"]),
             model_name=str(pending["model_name"]),
             base_checkpoint_id=str(pending["checkpoint_id"]),
+            task_text=str(user_message.content or ""),
         )
         run_id = uuid.uuid4().hex
         cancel_event = await self._runs.register(conversation_id, run_id)
@@ -1053,6 +1158,8 @@ def build_chat_service(
     replay_fixtures: ReplayFixtureStore | None = None,
     skill_learning: "SkillLearningCoordinator | None" = None,
     skill_execution: "SkillExecutionAttributor | None" = None,
+    skills: "SkillsService | None" = None,
+    skill_experiments: "SkillExperimentService | None" = None,
 ) -> ChatService:
     if memory.sqlite is None:
         raise RuntimeError("MemoryProvider must be opened before ChatService")
@@ -1084,7 +1191,19 @@ def build_chat_service(
         )
     mcp = mcp_tools
     tools = personal_tools or PersonalToolProvider(settings, memory)
-    runtime = DeepAgentRuntime(settings, memory, mcp, rag, tools, verification=verification, permission_policy=permission_policy)
+    skill_experiments = skill_experiments or (
+        skills.experiments if skills is not None else None
+    )
+    runtime = DeepAgentRuntime(
+        settings,
+        memory,
+        mcp,
+        rag,
+        tools,
+        verification=verification,
+        permission_policy=permission_policy,
+        skill_experiments=skill_experiments,
+    )
     runs = ChatRunRegistry()
     trajectories = trajectories or TrajectoryStore(memory.sqlite)
     replay_fixtures = replay_fixtures or ReplayFixtureStore(settings, memory.sqlite)
@@ -1099,4 +1218,5 @@ def build_chat_service(
         replay_fixtures,
         skill_learning,
         skill_execution,
+        skills,
     )

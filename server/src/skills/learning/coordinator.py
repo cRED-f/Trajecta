@@ -25,7 +25,9 @@ from server.src.skills.trajectory_store.store import TrajectoryStore
 
 if TYPE_CHECKING:
     from server.src.skills.evaluation.evaluator import SkillEvaluator
+    from server.src.skills.experiments import SkillExperimentService
     from server.src.skills.promotion.promoter import SkillPromoter
+    from server.src.skills.repository import SkillRepository
     from server.src.skills.skill_miner.miner import SkillMiner
 
 
@@ -60,6 +62,8 @@ class SkillLearningCoordinator:
         miner: SkillMiner,
         evaluator: SkillEvaluator,
         promoter: SkillPromoter,
+        repository: SkillRepository | None = None,
+        experiments: SkillExperimentService | None = None,
     ) -> None:
         self._settings = settings
         self._config = settings.skills.learning
@@ -70,6 +74,10 @@ class SkillLearningCoordinator:
         self._miner = miner
         self._evaluator = evaluator
         self._promoter = promoter
+        # Optional: with no repository the loop cannot tell a brand-new skill
+        # from an upgrade, so it falls back to promoting every pass.
+        self._repository = repository
+        self._experiments = experiments
 
         self._wake = asyncio.Event()
 
@@ -185,7 +193,8 @@ class SkillLearningCoordinator:
             "trigger_every_successes": self._config.trigger_every_successes,
             "minimum_occurrences": self._config.minimum_occurrences,
             "auto_evaluate": self._config.auto_evaluate,
-            "auto_promote": self._config.auto_promote,
+            "auto_promote_initial": self._config.auto_promote_initial,
+            "auto_experiment_upgrades": self._config.auto_experiment_upgrades,
             "last_notified_trajectory_id": self._last_notified_trajectory_id,
             "state": state,
             "recent_runs": recent_runs,
@@ -330,6 +339,7 @@ class SkillLearningCoordinator:
         evaluated_count = 0
         verified_count = 0
         promoted_count = 0
+        experiment_count = 0
         errors: list[dict[str, str]] = []
 
         try:
@@ -376,8 +386,51 @@ class SkillLearningCoordinator:
 
                 verified_count += 1
 
-                # Promotion
-                if not self._config.auto_promote:
+                # An upgrade must not silently override the user's own
+                # disable decision; hold the candidate instead.
+                skill_name = await self._candidate_skill_name(candidate_id)
+                active = (
+                    await self._repository.get_active(skill_name)
+                    if self._repository is not None and skill_name
+                    else None
+                )
+
+                if active is not None and active.get("status") == "disabled":
+                    errors.append(
+                        {
+                            "stage": "promote",
+                            "candidate_id": candidate_id,
+                            "error": "held_verified_user_disabled",
+                        }
+                    )
+                    continue
+
+                # Existing skill: stage the next version and let a live
+                # experiment decide, rather than swapping it in for everyone.
+                if (
+                    active is not None
+                    and self._experiments is not None
+                    and self._config.auto_experiment_upgrades
+                ):
+                    try:
+                        await self._experiments.start_candidate(
+                            candidate_id=candidate_id,
+                        )
+                        experiment_count += 1
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        errors.append(
+                            {
+                                "stage": "experiment",
+                                "candidate_id": candidate_id,
+                                "error": f"{type(exc).__name__}: {exc}",
+                            }
+                        )
+                    continue
+
+                # First version of a skill.
+                if not self._config.auto_promote_initial:
                     continue
 
                 try:
@@ -427,6 +480,7 @@ class SkillLearningCoordinator:
                 evaluated_count = ?,
                 verified_count = ?,
                 promoted_count = ?,
+                experiment_count = ?,
                 error = ?,
                 metadata = ?
             WHERE id = ?
@@ -438,6 +492,7 @@ class SkillLearningCoordinator:
                 evaluated_count,
                 verified_count,
                 promoted_count,
+                experiment_count,
                 error_text,
                 json.dumps(metadata, ensure_ascii=False),
                 run_id,
@@ -487,6 +542,7 @@ class SkillLearningCoordinator:
             "evaluated_count": evaluated_count,
             "verified_count": verified_count,
             "promoted_count": promoted_count,
+            "experiment_count": experiment_count,
             "candidate_ids": candidate_ids,
             "errors": errors,
         }
@@ -494,6 +550,16 @@ class SkillLearningCoordinator:
     # ------------------------------------------------------------------
     # Persistence helpers
     # ------------------------------------------------------------------
+
+    async def _candidate_skill_name(self, candidate_id: str) -> str | None:
+        """Skill a candidate would extend, or None when it is brand new."""
+
+        if self._repository is None:
+            return None
+
+        skill = await self._repository.get_candidate_skill(candidate_id)
+
+        return skill.name if skill is not None else None
 
     async def _get_state(self) -> dict[str, Any]:
         row = await self._db.fetchone(

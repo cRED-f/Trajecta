@@ -86,7 +86,7 @@ async def test_learning_runs_after_threshold(tmp_path) -> None:
                         "trigger_every_successes": 4,
                         "minimum_occurrences": 4,
                         "auto_evaluate": True,
-                        "auto_promote": True,
+                        "auto_promote_initial": True,
                     }
                 }
             }

@@ -71,7 +71,47 @@ skills:
     model_name: null
 
     auto_evaluate: true
-    auto_promote: true
+    auto_promote_initial: true
+    auto_experiment_upgrades: true
+
+  experiments:
+    enabled: true
+
+    default_strategy: "ab"
+
+    treatment_traffic_percent: 25
+
+    relevance_threshold: 0.12
+
+    min_samples_per_arm: 20
+    max_samples_total: 200
+
+    alpha: 0.05
+    bayesian_threshold: 0.95
+
+    minimum_success_effect: 0.03
+    harm_effect: 0.05
+
+    bayesian_draws: 5000
+
+    auto_stop: true
+    auto_promote_winner: true
+
+  regression:
+    enabled: true
+
+    min_samples_per_version: 20
+    window_size: 100
+
+    success_drop: 0.08
+
+    alpha: 0.05
+    bayesian_harm_threshold: 0.95
+
+    maximum_latency_ratio: 1.5
+    maximum_tool_error_rate_increase: 0.10
+
+    auto_rollback: true
 
   fixtures:
     enabled: true

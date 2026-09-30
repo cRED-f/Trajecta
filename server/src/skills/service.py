@@ -13,17 +13,23 @@ from server.src.config import Settings
 from server.src.memory.procedural.store import ProceduralMemory
 from server.src.skills.analytics import (
     SkillAnalytics,
+    SkillAnalyticsService,
     SkillExecutionAttributor,
     SkillMetricsCollector,
 )
+from server.src.skills.dependencies import SkillDependencyGraph
 from server.src.skills.evaluation.evaluator import SkillEvaluator
 from server.src.skills.evaluation.fixtures import ReplayFixtureStore
 from server.src.skills.evaluation.replay import DeepAgentReplayExecutor, SkillReplay
 from server.src.skills.evaluation.regression import SkillRegressionDetector
-from server.src.skills.experiments import SkillExperimentRouter
+from server.src.skills.experiments import SkillExperimentRouter, SkillExperimentService
 from server.src.skills.learning import SkillLearningCoordinator
 from server.src.skills.promotion.promoter import SkillPromoter
-from server.src.skills.regression import AutomaticRollback, VersionRegressionDetector
+from server.src.skills.regression import (
+    AutomaticRollback,
+    SkillRegressionMonitor,
+    VersionRegressionDetector,
+)
 from server.src.skills.repository import SkillRepository
 from server.src.skills.skill_miner.miner import SkillMiner
 from server.src.skills.trajectory_store import TrajectoryStore
@@ -64,13 +70,37 @@ class SkillsService:
         self.evaluator = SkillEvaluator(repository=repository, replay=replay)
 
         # -- Versioning / promotion -----------------------------------
+        # Built first: activation refuses to go live while a required
+        # dependency is missing, and the graph reads the same repository.
+        self.dependencies = SkillDependencyGraph(memory.sqlite, repository)
+
         self.versioner = SkillVersioner(
             repository=repository,
             procedural=ProceduralMemory(memory),
+            dependencies=self.dependencies,
         )
         self.promoter = SkillPromoter(
             repository=repository,
             versioner=self.versioner,
+        )
+
+        # -- Analytics / experiments -----------------------------------
+        # ``summary`` is the older aggregate over recorded samples; the
+        # read side over live execution rows is ``analytics``, and it is
+        # what experiments and the monitor both read. Built before the
+        # learning loop because the loop starts upgrades as experiments.
+        self.metrics = SkillMetricsCollector(memory.sqlite)
+        self.summary = SkillAnalytics(memory.sqlite)
+        self.analytics = SkillAnalyticsService(memory.sqlite)
+
+        self.experiments = SkillExperimentService(
+            settings=settings,
+            db=memory.sqlite,
+            repository=repository,
+            promoter=self.promoter,
+            versioner=self.versioner,
+            analytics=self.analytics,
+            trajectories=trajectories,
         )
 
         # -- Mining ----------------------------------------------------
@@ -88,16 +118,18 @@ class SkillsService:
             miner=self.miner,
             evaluator=self.evaluator,
             promoter=self.promoter,
+            repository=repository,
+            experiments=self.experiments,
         )
 
-        self.regression = SkillRegressionDetector()
+        # -- Regression policy ----------------------------------------
+        # Legacy single-pair A/B split, still behind POST /experiments.
+        # Newer multi-arm experiments go through ``experiments`` above.
+        self.router = SkillExperimentRouter(memory.sqlite)
 
-        # -- Analytics / regression policy / A/B experiments -----------
-        self.metrics = SkillMetricsCollector(memory.sqlite)
-        self.analytics = SkillAnalytics(memory.sqlite)
-        self.experiments = SkillExperimentRouter(memory.sqlite)
+        self.detector = SkillRegressionDetector()
         self.version_regression = VersionRegressionDetector(
-            analytics=self.analytics,
+            analytics=self.summary,
         )
         self.rollback_policy = AutomaticRollback(
             detector=self.version_regression,
@@ -110,6 +142,15 @@ class SkillsService:
             trajectories=trajectories,
             repository=repository,
             metrics=self.metrics,
+        )
+
+        self.regression = SkillRegressionMonitor(
+            settings=settings,
+            db=memory.sqlite,
+            repository=repository,
+            analytics=self.analytics,
+            promoter=self.promoter,
+            versioner=self.versioner,
         )
 
     async def reject_candidate(
@@ -187,13 +228,70 @@ class SkillsService:
         *,
         version: str | None = None,
     ) -> dict[str, Any]:
-        """Aggregate metrics plus regression history and experiments."""
+        """Versions, experiments and regressions for one skill, with metrics.
 
-        summary = await self.analytics.summary(skill_name, version)
-        summary["regressions"] = await self.rollback_policy.history(skill_name)
-        summary["experiments"] = await self.experiments.list(skill_name)
+        The dashboard is the primary shape; the older one-version aggregate
+        is folded in alongside it so callers that only want a success rate
+        still get one without a second round trip.
+        """
 
-        return summary
+        dashboard = await self.analytics.skill_dashboard(skill_name)
+
+        for key, value in (await self.summary.summary(skill_name, version)).items():
+            if key != "versions":
+                dashboard[key] = value
+
+        dashboard["rollback_history"] = await self.rollback_policy.history(
+            skill_name
+        )
+
+        return dashboard
+
+    async def complete_runtime_trajectory(
+        self,
+        trajectory_id: str,
+        *,
+        success: bool,
+        metrics: dict[str, Any] | None = None,
+    ) -> None:
+        """Close out live metrics, then let experiments and monitoring react.
+
+        Order matters: a run that has just finished may be the sample that
+        tips an experiment or exposes a regression, so both are checked here
+        rather than on the next dashboard visit.
+        """
+
+        metrics = metrics or {}
+
+        completed = await self.analytics.complete_trajectory(
+            trajectory_id,
+            success=success,
+            duration_seconds=float(metrics.get("duration_seconds") or 0.0),
+            input_tokens=int(metrics.get("input_tokens") or 0),
+            output_tokens=int(metrics.get("output_tokens") or 0),
+            tool_calls=int(metrics.get("tool_calls") or 0),
+            tool_errors=int(metrics.get("tool_errors") or 0),
+        )
+
+        experiment_ids = {
+            str(row["experiment_id"])
+            for row in completed
+            if row.get("experiment_id")
+        }
+
+        for experiment_id in experiment_ids:
+            await self.experiments.maybe_auto_stop(experiment_id)
+
+        # Experiment observations are handled above. Only normal active-skill
+        # exposures feed post-promotion regression monitoring.
+        skill_names = {
+            str(row["skill_name"])
+            for row in completed
+            if not row.get("experiment_id") and row.get("arm_kind") == "active"
+        }
+
+        for skill_name in skill_names:
+            await self.regression.check(skill_name)
 
     async def create_experiment(
         self,
@@ -213,7 +311,7 @@ class SkillsService:
                     f"skill version {skill_name}@{version} not found"
                 )
 
-        return await self.experiments.create(
+        return await self.router.create(
             skill_name=skill_name,
             control_version=control_version,
             experiment_version=experiment_version,
@@ -223,7 +321,7 @@ class SkillsService:
     async def choose_skill_version(self, skill_name: str) -> str | None:
         """Version to serve for this execution, or None without an experiment."""
 
-        return await self.experiments.choose_version(skill_name)
+        return await self.router.choose_version(skill_name)
 
     async def enforce_rollback(
         self,

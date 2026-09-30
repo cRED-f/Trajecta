@@ -1,7 +1,9 @@
 import {
+  Activity,
   AlertCircle,
   CheckCircle2,
   FlaskConical,
+  GitBranch,
   History,
   Play,
   RefreshCw,
@@ -14,12 +16,18 @@ import {
 
 import { useState } from "react";
 
-import { useSkillActions, useSkillCatalog } from "../../hooks/use-settings";
+import {
+  useSkillActions,
+  useSkillCatalog,
+  useSkillExperiments,
+} from "../../hooks/use-settings";
 
 import {
+  ExperimentList,
   LearningStatus,
   RegressionBadge,
   SkillAnalyticsPanel,
+  SkillDependencies,
   VersionHistory,
   evaluationRegression,
 } from "../skills";
@@ -51,11 +59,17 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
   const [actionError, setActionError] = useState<string | null>(null);
 
   const query = useSkillCatalog(enabled && backendOnline);
+  const experimentsQuery = useSkillExperiments(
+    undefined,
+    enabled && backendOnline,
+  );
   const actions = useSkillActions();
 
   const summary = query.data?.summary;
   const skills = query.data?.skills ?? [];
   const candidates = query.data?.candidates ?? [];
+  const experiments =
+    experimentsQuery.data ?? query.data?.experiments ?? [];
 
   const normalizedSearch = search.trim().toLowerCase();
   const filteredSkills = normalizedSearch
@@ -74,11 +88,31 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
       )
     : candidates;
 
+  const filteredExperiments = normalizedSearch
+    ? experiments.filter((experiment) =>
+        experiment.skill_name.toLowerCase().includes(normalizedSearch),
+      )
+    : experiments;
+
   const busy =
     actions.evaluating ||
     actions.promoting ||
     actions.upgrading ||
-    actions.rejecting;
+    actions.rejecting ||
+    actions.startingExperiment;
+
+  async function startCandidateExperiment(
+    candidateId: string,
+    strategy: "ab" | "thompson",
+  ) {
+    setActionError(null);
+
+    try {
+      await actions.startExperiment({ candidateId, strategy });
+    } catch (error) {
+      setActionError(messageOf(error));
+    }
+  }
 
   async function evaluateCandidate(candidateId: string) {
     setActionError(null);
@@ -178,6 +212,14 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
 
               <div className="skill-summary">
                 <div className="skill-summary__icon">
+                  <GitBranch size={16} />
+                </div>
+                <strong>{summary.experimenting ?? 0}</strong>
+                <span>Experimenting</span>
+              </div>
+
+              <div className="skill-summary">
+                <div className="skill-summary__icon">
                   <Star size={16} />
                 </div>
                 <strong>{summary.disabled}</strong>
@@ -219,7 +261,7 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
             <div className="settings-subsection">
               <div className="settings-subsection__heading-row">
                 <h4 className="settings-subsection__heading">
-                  Active skills
+                  Registered skills
                 </h4>
 
                 {skills.length > 0 && (
@@ -276,7 +318,7 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
                           }
                         >
                           <History size={13} />
-                          {historyFor === skill.name ? "Hide" : "History"}
+                          {historyFor === skill.name ? "Hide" : "Details"}
                         </button>
 
                         <SettingsToggle
@@ -313,6 +355,11 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
                   </div>
 
                   <VersionHistory skillName={historyFor} />
+
+                  <SkillDependencies
+                    skillName={historyFor}
+                    skillNames={skills.map((item) => item.name)}
+                  />
                 </div>
               )}
             </div>
@@ -452,21 +499,56 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
                         )}
 
                         {candidate.status === "verified" && (
-                          <button
-                            type="button"
-                            className="settings-primary-button"
-                            disabled={busy}
-                            onClick={() =>
-                              void actions.promote(candidate.id)
-                            }
-                          >
-                            {actions.promoting ? (
-                              <RefreshCw className="settings-spin" size={13} />
-                            ) : (
-                              <Star size={13} />
-                            )}
-                            Promote
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              className="settings-text-button"
+                              disabled={busy}
+                              onClick={() =>
+                                void startCandidateExperiment(
+                                  candidate.id,
+                                  "ab",
+                                )
+                              }
+                            >
+                              <GitBranch size={13} />
+                              A/B
+                            </button>
+
+                            <button
+                              type="button"
+                              className="settings-text-button"
+                              disabled={busy}
+                              onClick={() =>
+                                void startCandidateExperiment(
+                                  candidate.id,
+                                  "thompson",
+                                )
+                              }
+                            >
+                              <Activity size={13} />
+                              Bandit
+                            </button>
+
+                            <button
+                              type="button"
+                              className="settings-primary-button"
+                              disabled={actions.promoting}
+                              onClick={() =>
+                                void actions.promote(candidate.id)
+                              }
+                            >
+                              {actions.promoting ? (
+                                <RefreshCw
+                                  className="settings-spin"
+                                  size={13}
+                                />
+                              ) : (
+                                <Star size={13} />
+                              )}
+                              Promote now
+                            </button>
+                          </>
                         )}
 
                         <button
@@ -488,6 +570,41 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
                     );
                   })}
                 </div>
+              )}
+            </div>
+          )}
+
+          {!query.isLoading && !query.isError && (
+            <div className="settings-subsection">
+              <div className="settings-subsection__heading-row">
+                <h4 className="settings-subsection__heading">Experiments</h4>
+
+                {experiments.length > 0 && (
+                  <span className="settings-subsection__count">
+                    {experiments.length}
+                  </span>
+                )}
+              </div>
+
+              {experimentsQuery.isLoading && experiments.length === 0 ? (
+                <div className="settings-loading">
+                  <RefreshCw className="settings-spin" size={17} />
+                  Loading experiments…
+                </div>
+              ) : filteredExperiments.length === 0 ? (
+                <div className="settings-empty-state settings-empty-state--small">
+                  <GitBranch size={20} />
+
+                  <strong>No experiments</strong>
+
+                  <span>
+                    {search
+                      ? "Nothing matches your search."
+                      : "Open an A/B or bandit split from a verified candidate above."}
+                  </span>
+                </div>
+              ) : (
+                <ExperimentList experiments={filteredExperiments} />
               )}
             </div>
           )}

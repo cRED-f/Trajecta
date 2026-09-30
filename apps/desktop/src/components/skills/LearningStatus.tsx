@@ -2,10 +2,16 @@ import {
   Activity,
   AlertCircle,
   Clock,
+  Play,
   RefreshCw,
 } from "lucide-react";
 
-import { useSkillLearningStatus } from "../../hooks/use-settings";
+import { useState } from "react";
+
+import {
+  useSkillLearningActions,
+  useSkillLearningStatus,
+} from "../../hooks/use-settings";
 
 import { relativeTime } from "../../lib/format";
 
@@ -20,7 +26,20 @@ function messageOf(error: unknown): string {
 }
 
 export function LearningStatus({ enabled }: Props) {
+  const [runError, setRunError] = useState<string | null>(null);
+
   const query = useSkillLearningStatus(enabled);
+  const actions = useSkillLearningActions();
+
+  async function runLearning() {
+    setRunError(null);
+
+    try {
+      await actions.run(true);
+    } catch (error) {
+      setRunError(messageOf(error));
+    }
+  }
 
   if (!enabled) {
     return null;
@@ -50,20 +69,47 @@ export function LearningStatus({ enabled }: Props) {
   const inCycle =
     threshold > 0 ? status.success_count_checkpoint % threshold : 0;
   const recent = status.recent_runs.slice(0, 5);
+  const runActive =
+    (status.run_active ?? status.learning_run_active) === true ||
+    actions.running;
 
   return (
     <section className="skill-learning">
       <div className="skill-learning__heading">
-        <h4 className="settings-subsection__heading">Skill learning</h4>
+        <h4 className="settings-subsection__heading">Automatic learning</h4>
 
-        <span
-          className={`skill-status skill-status--${
-            status.worker_running ? "active" : "disabled"
-          }`}
-        >
-          {status.worker_running ? "worker running" : "worker stopped"}
-        </span>
+        <div className="skill-learning__controls">
+          <span
+            className={`skill-status skill-status--${
+              status.worker_running ? "active" : "disabled"
+            }`}
+          >
+            {status.worker_running ? "worker running" : "worker stopped"}
+          </span>
+
+          <button
+            type="button"
+            className="settings-primary-button"
+            disabled={!status.enabled || runActive}
+            onClick={() => void runLearning()}
+          >
+            {actions.running ? (
+              <RefreshCw className="settings-spin" size={13} />
+            ) : (
+              <Play size={13} />
+            )}
+            Run learning
+          </button>
+        </div>
       </div>
+
+      {runError && (
+        <div className="settings-error-card">
+          <AlertCircle size={16} />
+
+          <span>{runError}</span>
+        </div>
+      )}
 
       <div className="skill-learning__grid">
         <div className="skill-learning__stat">

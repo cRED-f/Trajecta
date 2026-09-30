@@ -129,6 +129,7 @@ class SkillExecutionAttributor:
         latency_ms = self._latency_ms(trajectory, steps)
         tokens = self._total_tokens(steps)
         failures = self._tool_failures(steps)
+        experiments = self._experiment_context(steps)
 
         recorded: list[str] = []
 
@@ -137,6 +138,7 @@ class SkillExecutionAttributor:
             failures_after_load = sum(
                 1 for index in failures if index > view_index
             )
+            arm = experiments.get(skill_name) or {}
 
             await self._metrics.record(
                 skill_name=skill_name,
@@ -146,11 +148,58 @@ class SkillExecutionAttributor:
                 latency_ms=latency_ms,
                 tokens=tokens,
                 tool_failures=failures_after_load,
+                experiment_id=arm.get("experiment_id"),
+                arm_kind=str(arm.get("arm_kind") or "active"),
+                unit_id=arm.get("unit_id"),
             )
 
             recorded.append(skill_name)
 
         return recorded
+
+    @staticmethod
+    def _experiment_context(steps: list[Any]) -> dict[str, dict[str, Any]]:
+        """Which experiment arms applied to this run, written at prepare().
+
+        Without this an arm's samples land in the untagged bucket and the
+        experiment never accumulates enough evidence to decide anything.
+        """
+
+        context: dict[str, dict[str, Any]] = {}
+
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+
+            if step.get("type") != "skill.assignments":
+                continue
+
+            data = step.get("data")
+
+            if not isinstance(data, dict):
+                continue
+
+            assignments = data.get("assignments")
+
+            if not isinstance(assignments, list):
+                continue
+
+            for item in assignments:
+                if not isinstance(item, dict):
+                    continue
+
+                skill_name = item.get("skill_name")
+
+                if not isinstance(skill_name, str) or not skill_name:
+                    continue
+
+                context[skill_name] = {
+                    "experiment_id": item.get("experiment_id"),
+                    "arm_kind": item.get("arm_kind"),
+                    "unit_id": item.get("unit_id"),
+                }
+
+        return context
 
     # ------------------------------------------------------------------
     # trajectory inspection

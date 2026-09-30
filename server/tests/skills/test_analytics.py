@@ -539,7 +539,7 @@ async def test_create_experiment_rejects_unknown_versions() -> None:
     experiments = RecordingExperiments()
     host = SimpleNamespace(
         repository=FakeVersionRepository({"1.0.0"}),
-        experiments=experiments,
+        router=experiments,
     )
 
     with pytest.raises(ValueError, match="not found"):
@@ -558,7 +558,7 @@ async def test_create_experiment_delegates_when_both_versions_exist() -> None:
     experiments = RecordingExperiments()
     host = SimpleNamespace(
         repository=FakeVersionRepository({"1.0.0", "2.0.0"}),
-        experiments=experiments,
+        router=experiments,
     )
 
     result = await SkillsService.create_experiment(
@@ -581,29 +581,38 @@ async def test_create_experiment_delegates_when_both_versions_exist() -> None:
 
 
 async def test_skill_analytics_enriches_the_summary() -> None:
-    class FakeAnalytics:
+    class FakeDashboard:
+        async def skill_dashboard(self, skill_name: str) -> Any:
+            return {
+                "skill_name": skill_name,
+                "versions": [{"version": "1.0.0"}],
+                "experiments": [{"status": "running"}],
+                "regressions": [{"bad_version": "2.0.0"}],
+            }
+
+    class FakeSummary:
         async def summary(self, skill_name: str, version: str | None = None) -> Any:
-            return {"skill": skill_name, "total": 3}
+            return {"skill": skill_name, "total": 3, "versions": []}
 
     class FakePolicy:
         async def history(self, skill_name: str, limit: int = 50) -> Any:
             return [{"bad_version": "2.0.0"}]
 
-    class FakeList:
-        async def list(self, skill_name: str) -> Any:
-            return [{"status": "running"}]
-
     host = SimpleNamespace(
-        analytics=FakeAnalytics(),
+        analytics=FakeDashboard(),
+        summary=FakeSummary(),
         rollback_policy=FakePolicy(),
-        experiments=FakeList(),
     )
 
     summary = await SkillsService.skill_analytics(host, "demo", version="1.0.0")
 
     assert summary["skill"] == "demo"
+    assert summary["total"] == 3
+    # The dashboard's richer per-version rows win over the legacy counts.
+    assert summary["versions"] == [{"version": "1.0.0"}]
     assert summary["regressions"] == [{"bad_version": "2.0.0"}]
     assert summary["experiments"] == [{"status": "running"}]
+    assert summary["rollback_history"] == [{"bad_version": "2.0.0"}]
 
 
 # --------------------------------------------------------------------------

@@ -4011,10 +4011,14 @@ select:disabled {
 .skill-row__actions {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
 
   gap: 6px;
 
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .skill-status {
@@ -4057,6 +4061,26 @@ select:disabled {
   color: #c4413b;
 
   background: rgba(248, 95, 87, 0.14);
+}
+
+.skill-status--experimenting,
+.skill-status--running {
+  color: #b7791f;
+
+  background: rgba(245, 158, 11, 0.14);
+}
+
+.skill-status--promoted {
+  color: #15845f;
+
+  background: rgba(34, 197, 142, 0.12);
+}
+
+.skill-status--completed,
+.skill-status--archived {
+  color: var(--color-mid-ash);
+
+  background: var(--color-hover-veil);
 }
 
 /* -------------------------------- */
@@ -4308,6 +4332,13 @@ select:disabled {
   margin-bottom: 0;
 }
 
+.skill-learning__controls {
+  display: flex;
+  align-items: center;
+
+  gap: 8px;
+}
+
 .skill-learning__grid {
   display: grid;
 
@@ -4391,76 +4422,6 @@ select:disabled {
   flex-direction: column;
 
   gap: 12px;
-}
-
-.skill-metrics {
-  display: grid;
-
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-
-  gap: 8px;
-}
-
-.skill-metric {
-  display: flex;
-  align-items: center;
-
-  gap: 10px;
-
-  padding: 8px 10px;
-
-  background: var(--surface-elevated-panel);
-
-  border: 1px solid var(--color-hairline);
-
-  border-radius: var(--radius-lg);
-}
-
-.skill-metric__icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  width: 28px;
-  height: 28px;
-
-  flex-shrink: 0;
-
-  color: var(--color-graphite-ink);
-
-  background: var(--color-hover-veil);
-
-  border-radius: 8px;
-}
-
-.skill-metric__body {
-  display: flex;
-
-  flex-direction: column;
-
-  gap: 1px;
-
-  min-width: 0;
-}
-
-.skill-metric__title {
-  font-size: 11px;
-
-  color: var(--color-mid-ash);
-}
-
-.skill-metric__value {
-  font-size: 16px;
-
-  font-variant-numeric: tabular-nums;
-
-  color: var(--color-graphite-ink);
-}
-
-.skill-metric__hint {
-  font-size: 11px;
-
-  color: var(--color-hollow);
 }
 
 .skill-metric-versions {
@@ -4626,7 +4587,30 @@ select:disabled {
   background: rgba(234, 179, 8, 0.16);
 }
 
-.skill-experiment-list {
+
+/* -------------------------------- */
+/* Skill dependency graph edges     */
+/* -------------------------------- */
+
+.skill-dependencies {
+  display: flex;
+
+  flex-direction: column;
+
+  gap: 8px;
+
+  margin-top: 14px;
+
+  padding-top: 14px;
+
+  border-top: 1px dashed var(--color-hairline);
+}
+
+.skill-dependencies .settings-subsection__heading {
+  margin-bottom: 0;
+}
+
+.skill-dependency-list {
   list-style: none;
 
   margin: 0;
@@ -4639,7 +4623,7 @@ select:disabled {
   gap: 6px;
 }
 
-.skill-experiment {
+.skill-dependency {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -4655,7 +4639,7 @@ select:disabled {
   border-radius: var(--radius-lg);
 }
 
-.skill-experiment__main {
+.skill-dependency__main {
   display: flex;
 
   flex-direction: column;
@@ -4667,35 +4651,60 @@ select:disabled {
   min-width: 0;
 }
 
-.skill-experiment__split {
+.skill-dependency__name {
+  display: inline-flex;
+  align-items: center;
+
+  gap: 6px;
+
   font-size: 12px;
   font-weight: 600;
-
-  font-variant-numeric: tabular-nums;
 
   color: var(--color-graphite-ink);
 }
 
-.skill-experiment__split em {
-  margin: 0 6px;
-
-  font-size: 11px;
-  font-weight: 400;
-  font-style: normal;
-
-  color: var(--color-mid-ash);
-}
-
-.skill-experiment__traffic {
+.skill-dependency__meta {
   font-size: 11px;
 
   color: var(--color-mid-ash);
 }
 
-.skill-experiment__time {
-  font-size: 11px;
+.skill-dependency-form {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
 
-  color: var(--color-hollow);
+  gap: 8px;
+
+  font-size: 12px;
+
+  color: var(--color-mid-ash);
+}
+
+.skill-dependency-form select,
+.skill-dependency-form input[type="text"] {
+  height: 30px;
+
+  padding: 0 8px;
+
+  color: var(--color-graphite-ink);
+
+  background: var(--surface-elevated-panel);
+
+  border: 1px solid var(--color-hairline);
+
+  border-radius: 8px;
+
+  font-size: 12px;
+}
+
+.skill-dependency-form__check {
+  display: inline-flex;
+  align-items: center;
+
+  gap: 5px;
+
+  font-size: 11px;
 }
 
 .skill-confirm-overlay {

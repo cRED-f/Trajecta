@@ -19,6 +19,9 @@ export const settingsQueryKeys = {
   skillLearning: ["settings", "skills", "learning"] as const,
   skillAnalytics: (skillName: string) =>
     ["settings", "skills", "analytics", skillName] as const,
+  skillDependencies: (skillName: string) =>
+    ["settings", "skills", "dependencies", skillName] as const,
+  experiments: ["settings", "skills", "experiments"] as const,
   schedules: ["settings", "schedules"] as const,
 };
 
@@ -148,7 +151,33 @@ export function useSkillAnalytics(skillName: string | null, enabled = true) {
 export function useSkillLearningStatus(enabled = true) {
   return useQuery({
     queryKey: settingsQueryKeys.skillLearning,
-    queryFn: settingsApi.skillLearningStatus,
+    queryFn: settingsApi.learningStatus,
+    enabled,
+    staleTime: 5_000,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/** Declared dependencies of one skill. */
+export function useSkillDependencies(skillName: string | null, enabled = true) {
+  return useQuery({
+    queryKey: settingsQueryKeys.skillDependencies(skillName ?? ""),
+    queryFn: () => settingsApi.skillDependencies(skillName ?? ""),
+    enabled: Boolean(skillName) && enabled,
+    staleTime: 5_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/** Experiments across every skill (optionally narrowed to one). */
+export function useSkillExperiments(
+  skillName?: string,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: [...settingsQueryKeys.experiments, skillName ?? ""] as const,
+    queryFn: () => settingsApi.experiments(skillName),
     enabled,
     staleTime: 5_000,
     refetchInterval: 15_000,
@@ -223,6 +252,48 @@ export function useSkillActions() {
     onSuccess: invalidate,
   });
 
+  const startExperiment = useMutation({
+    mutationFn: ({
+      candidateId,
+      strategy,
+    }: {
+      candidateId: string;
+      strategy?: "ab" | "thompson";
+    }) =>
+      settingsApi.startSkillExperiment(
+        candidateId,
+        strategy ? { strategy } : {},
+      ),
+    onSuccess: invalidate,
+  });
+
+  const addDependency = useMutation({
+    mutationFn: ({
+      skillName,
+      body,
+    }: {
+      skillName: string;
+      body: {
+        depends_on_skill: string;
+        version_constraint?: string;
+        required?: boolean;
+      };
+    }) => settingsApi.addSkillDependency(skillName, body),
+    onSuccess: invalidate,
+  });
+
+  const removeDependency = useMutation({
+    mutationFn: ({
+      skillName,
+      dependsOnSkill,
+    }: {
+      skillName: string;
+      dependsOnSkill: string;
+    }) =>
+      settingsApi.deleteSkillDependency(skillName, dependsOnSkill),
+    onSuccess: invalidate,
+  });
+
   return {
     setEnabled: setEnabled.mutateAsync,
     togglingEnabled: setEnabled.isPending,
@@ -236,6 +307,34 @@ export function useSkillActions() {
     upgrading: upgrade.isPending,
     rollback: rollback.mutateAsync,
     rollingBack: rollback.isPending,
+    startExperiment: startExperiment.mutateAsync,
+    startingExperiment: startExperiment.isPending,
+    addDependency: addDependency.mutateAsync,
+    addingDependency: addDependency.isPending,
+    removeDependency: removeDependency.mutateAsync,
+    removingDependency: removeDependency.isPending,
+  };
+}
+
+/** Queueing a manual mining pass for the automatic learning loop. */
+export function useSkillLearningActions() {
+  const queryClient = useQueryClient();
+
+  const run = useMutation({
+    mutationFn: (force: boolean) => settingsApi.runSkillLearning(force),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: settingsQueryKeys.skillLearning,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: settingsQueryKeys.skills,
+      });
+    },
+  });
+
+  return {
+    run: run.mutateAsync,
+    running: run.isPending,
   };
 }
 
