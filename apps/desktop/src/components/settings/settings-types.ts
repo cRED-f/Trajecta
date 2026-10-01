@@ -1,5 +1,6 @@
 export type SettingsPage =
   | "general"
+  | "memory"
   | "permissions"
   | "mcp-tools";
 

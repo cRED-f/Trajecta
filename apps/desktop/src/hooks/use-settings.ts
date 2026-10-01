@@ -13,6 +13,7 @@ export const settingsQueryKeys = {
   permissions: ["settings", "permissions"] as const,
   memory: (query: string) => ["settings", "memory", query] as const,
   memoryAll: ["settings", "memory"] as const,
+  embedding: ["settings", "embedding"] as const,
   skills: ["settings", "skills"] as const,
   skillVersions: (skillName: string) =>
     ["settings", "skills", "versions", skillName] as const,
@@ -109,6 +110,41 @@ export function useMemoryActions() {
     savingMemory: addMemory.isPending,
     deleteMemory: deleteMemory.mutateAsync,
     deletingMemory: deleteMemory.isPending,
+  };
+}
+
+/** Installed Ollama embedding models + the currently active one. */
+export function useEmbeddingCatalog(enabled = true) {
+  return useQuery({
+    queryKey: settingsQueryKeys.embedding,
+    queryFn: settingsApi.embedding,
+    enabled,
+    staleTime: 10_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/** Switching embedding model rebuilds Qdrant, so it can take a while. */
+export function useEmbeddingActions() {
+  const queryClient = useQueryClient();
+
+  const selectModel = useMutation({
+    mutationFn: (model: string) => settingsApi.setEmbeddingModel(model),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: settingsQueryKeys.embedding,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: settingsQueryKeys.memoryAll,
+      });
+    },
+  });
+
+  return {
+    selectModel: selectModel.mutateAsync,
+    selectingModel: selectModel.isPending,
+    pendingModel: selectModel.variables ?? null,
+    error: selectModel.error,
   };
 }
 

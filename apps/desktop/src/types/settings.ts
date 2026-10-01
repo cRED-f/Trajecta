@@ -35,6 +35,41 @@ export interface MemoryCatalog {
   items: MemoryItem[];
 }
 
+export interface OllamaEmbeddingModel {
+  name: string;
+  size: number;
+  modified_at: string | null;
+  parameter_size: string | null;
+  quantization_level: string | null;
+  family: string | null;
+  capabilities: string[];
+}
+
+/** GET /memory/embedding — active embedder plus installed Ollama models. */
+export interface EmbeddingCatalog {
+  vector_store_enabled: boolean;
+  provider: "placeholder" | "ollama" | string;
+  selected_model: string | null;
+  dimensions: number;
+  ollama: {
+    base_url: string;
+    reachable: boolean;
+    error: string | null;
+  };
+  models: OllamaEmbeddingModel[];
+}
+
+/** PATCH /memory/embedding — switched model and what had to be re-indexed. */
+export interface EmbeddingSelectionResult {
+  provider: "ollama";
+  selected_model: string;
+  dimensions: number;
+  reindexed: {
+    memories: number;
+    attachment_chunks: number;
+  };
+}
+
 export type SkillStatus =
   | "active"
   | "disabled"

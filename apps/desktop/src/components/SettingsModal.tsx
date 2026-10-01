@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   GeneralSettings,
   McpToolsSettings,
+  MemorySettings,
   PermissionsSettings,
   SettingsHeader,
   SettingsShell,
@@ -81,6 +82,10 @@ export function SettingsModal({
               backendOnline={backendOnline}
               onSetTheme={onSetTheme}
             />
+          )}
+
+          {page === "memory" && (
+            <MemorySettings enabled={open} backendOnline={backendOnline} />
           )}
 
           {page === "permissions" && (

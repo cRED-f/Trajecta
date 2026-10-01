@@ -9,6 +9,7 @@ Trajecta additionally mirrors them into:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from typing import TYPE_CHECKING
 
@@ -108,7 +109,8 @@ class SemanticMemory:
                     content,
                 )
 
-        self._provider.vector.upsert(
+        await asyncio.to_thread(
+            self._provider.vector.upsert,
             "memories",
             memory_id,
             content,
@@ -150,7 +152,8 @@ class SemanticMemory:
         if self._provider.fts is not None:
             await self._provider.fts.remove(memory_id)
 
-        self._provider.vector.delete(
+        await asyncio.to_thread(
+            self._provider.vector.delete,
             "memories",
             memory_id,
         )
@@ -223,10 +226,11 @@ class SemanticMemory:
         remaining = limit - len(results)
 
         if remaining > 0:
-            vector_hits = self._provider.vector.search(
+            vector_hits = await asyncio.to_thread(
+                self._provider.vector.search,
                 "memories",
                 query,
-                limit=remaining,
+                remaining,
             )
 
             for hit in vector_hits:

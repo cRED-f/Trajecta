@@ -19,6 +19,8 @@ import re
 from collections import Counter
 from typing import Any, Callable
 
+from server.src.memory.embeddings import OllamaEmbedder
+
 
 logger = logging.getLogger(__name__)
 
@@ -106,8 +108,82 @@ class VectorStore:
         self._prefix = collection_prefix
         self._embedder = embedder or default_embedder
         self._vector_size = vector_size
+        self._embedding_provider = "placeholder"
+        self._embedding_model: str | None = None
 
         self._client: Any | None = None
+
+    # ------------------------------------------------------------------
+    # Embedding configuration
+    # ------------------------------------------------------------------
+
+    @property
+    def vector_size(self) -> int:
+        return self._vector_size
+
+    @property
+    def embedding_provider(self) -> str:
+        return self._embedding_provider
+
+    @property
+    def embedding_model(self) -> str | None:
+        return self._embedding_model
+
+    def configure_ollama(
+        self,
+        *,
+        base_url: str,
+        model: str,
+        vector_size: int,
+    ) -> None:
+        """Switch to a local Ollama embedding model (call before open())."""
+
+        if vector_size <= 0:
+            raise ValueError("vector_size must be positive")
+
+        self._close_embedder()
+
+        self._embedder = OllamaEmbedder(
+            base_url=base_url,
+            model=model,
+        )
+        self._vector_size = int(vector_size)
+        self._embedding_provider = "ollama"
+        self._embedding_model = model
+
+    def configure_placeholder(self) -> None:
+        """Fall back to the offline development placeholder embedder."""
+
+        self._close_embedder()
+
+        self._embedder = default_embedder
+        self._vector_size = EMBED_DIM
+        self._embedding_provider = "placeholder"
+        self._embedding_model = None
+
+    def _close_embedder(self) -> None:
+        close = getattr(self._embedder, "close", None)
+        if not callable(close):
+            return
+
+        try:
+            close()
+        except Exception:
+            logger.exception("Failed to close embedding client")
+
+    def reset_collections(self, namespaces: list[str]) -> None:
+        """Drop and recreate collections (used when vector dimensions change)."""
+
+        if self._client is None:
+            raise RuntimeError("Qdrant vector store is not open")
+
+        for namespace in namespaces:
+            name = self._collection_for(namespace)
+
+            if self._client.collection_exists(name):
+                self._client.delete_collection(collection_name=name)
+
+            self._ensure_collection(namespace)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -143,19 +219,19 @@ class VectorStore:
             self._client = None
 
     def close(self) -> None:
-        if self._client is None:
-            return
+        if self._client is not None:
+            try:
+                self._client.close()
 
-        try:
-            self._client.close()
+            except Exception:
+                logger.exception(
+                    "Failed to close embedded Qdrant"
+                )
 
-        except Exception:
-            logger.exception(
-                "Failed to close embedded Qdrant"
-            )
+            finally:
+                self._client = None
 
-        finally:
-            self._client = None
+        self._close_embedder()
 
     def _ensure_collection(
         self,
@@ -228,6 +304,67 @@ class VectorStore:
                 namespace,
                 doc_id,
             )
+
+    def upsert_many(
+        self,
+        namespace: str,
+        items: list[dict[str, Any]],
+    ) -> int:
+        """Embed and upsert a batch of documents with a single embed call."""
+
+        if self._client is None or not items:
+            return 0
+
+        try:
+            self._ensure_collection(namespace)
+
+            texts = [str(item.get("text") or "") for item in items]
+
+            embed_many = getattr(self._embedder, "embed_many", None)
+            if callable(embed_many):
+                vectors = embed_many(texts)
+            else:
+                vectors = [self._embedder(text) for text in texts]
+
+            if len(vectors) != len(items):
+                raise RuntimeError("embedding batch size mismatch")
+
+            points = []
+            for item, vector in zip(items, vectors, strict=True):
+                doc_id = str(item["doc_id"])
+
+                final_payload = {
+                    "namespace": namespace,
+                    "doc_id": doc_id,
+                    "text": str(item.get("text") or ""),
+                }
+
+                payload = item.get("payload")
+                if isinstance(payload, dict):
+                    final_payload.update(payload)
+
+                points.append(
+                    qm.PointStruct(
+                        id=_hash_id(namespace, doc_id),
+                        vector=vector,
+                        payload=final_payload,
+                    )
+                )
+
+            self._client.upsert(
+                collection_name=self._collection_for(namespace),
+                points=points,
+            )
+
+            return len(points)
+
+        except Exception:
+            logger.exception(
+                "Qdrant batch upsert failed: namespace=%s count=%s",
+                namespace,
+                len(items),
+            )
+            return 0
 
     def delete(
         self,

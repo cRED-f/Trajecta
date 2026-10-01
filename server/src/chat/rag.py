@@ -11,6 +11,7 @@ retrieved on demand instead of being stuffed into every model context.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -116,6 +117,8 @@ class AttachmentRAGIndex:
             overlap=self._config.chunk_overlap_chars,
         )
 
+        vector_items: list[dict[str, Any]] = []
+
         for index, (start, end, content) in enumerate(chunks):
             chunk_id = hashlib.sha256(
                 f"attachment:{attachment.id}:{index}:{content}".encode()
@@ -154,18 +157,28 @@ class AttachmentRAGIndex:
                     content,
                 ),
             )
-            self._vector.upsert(
+            # Embedding happens after the loop so Ollama gets one batched
+            # request per 32 chunks instead of one request per chunk.
+            vector_items.append(
+                {
+                    "doc_id": chunk_id,
+                    "text": content,
+                    "payload": {
+                        "attachment_id": attachment.id,
+                        "conversation_id": attachment.conversation_id,
+                        "chunk_index": index,
+                        "filename": attachment.filename,
+                        "start_char": start,
+                        "end_char": end,
+                    },
+                }
+            )
+
+        for start_index in range(0, len(vector_items), 32):
+            await asyncio.to_thread(
+                self._vector.upsert_many,
                 "attachment_chunks",
-                chunk_id,
-                content,
-                payload={
-                    "attachment_id": attachment.id,
-                    "conversation_id": attachment.conversation_id,
-                    "chunk_index": index,
-                    "filename": attachment.filename,
-                    "start_char": start,
-                    "end_char": end,
-                },
+                vector_items[start_index : start_index + 32],
             )
 
         metadata = dict(attachment.metadata)
@@ -192,7 +205,11 @@ class AttachmentRAGIndex:
                 "DELETE FROM attachment_chunks_fts WHERE rowid = ?",
                 (_rowid(chunk_id),),
             )
-            self._vector.delete("attachment_chunks", chunk_id)
+            await asyncio.to_thread(
+                self._vector.delete,
+                "attachment_chunks",
+                chunk_id,
+            )
         await self._db.execute(
             "DELETE FROM attachment_chunks WHERE attachment_id = ?",
             (attachment_id,),
@@ -248,10 +265,11 @@ class AttachmentRAGIndex:
                 )
 
         # Pull extra vector candidates because filtering is application-scoped.
-        vector_hits = self._vector.search(
+        vector_hits = await asyncio.to_thread(
+            self._vector.search,
             "attachment_chunks",
             query,
-            limit=max(limit * 5, 25),
+            max(limit * 5, 25),
         )
         for hit in vector_hits:
             payload = hit.get("payload") or {}

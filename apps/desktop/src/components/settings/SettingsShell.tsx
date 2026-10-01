@@ -1,4 +1,5 @@
 import {
+  Brain,
   PlugZap,
   Settings,
   ShieldCheck,
@@ -77,6 +78,14 @@ export function SettingsShell({
         <div className="settings-sidebar__group-label">
           Agent
         </div>
+
+        <SettingsNavItem
+          page="memory"
+          current={page}
+          icon={<Brain size={16} />}
+          label="Memory"
+          onSelect={onPageChange}
+        />
 
         <SettingsNavItem
           page="permissions"

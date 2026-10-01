@@ -3,6 +3,8 @@
 - GET   /api/v1/memory                  Settings/listing catalog (settings, counts, items)
 - GET   /api/v1/memory/semantic/{key}   Fetch one semantic memory by key
 - PATCH /api/v1/memory/settings         Toggle automatic memory
+- GET   /api/v1/memory/embedding        Ollama embedding catalog + active model
+- PATCH /api/v1/memory/embedding        Switch embedding model and re-index
 - GET   /api/v1/memory/{type}           List memory entries by type (semantic/episodic/procedural)
 - POST  /api/v1/memory/{type}           Upsert a semantic memory entry (key + content)
 - DELETE /api/v1/memory/{type}/{key}    Delete a semantic memory entry
@@ -14,6 +16,8 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
+
+from server.src.memory.embeddings import OllamaEmbeddingCatalogService
 
 router = APIRouter(prefix="/memory", tags=["memory"])
 
@@ -27,6 +31,10 @@ class MemoryWrite(BaseModel):
 
 class MemorySettingsUpdate(BaseModel):
     automatic_memory: bool
+
+
+class EmbeddingSettingsUpdate(BaseModel):
+    model: str = Field(..., min_length=1, max_length=250)
 
 
 def _provider(request: Request):
@@ -72,6 +80,88 @@ async def update_memory_settings(
     await _policy(request).set_setting("automatic_memory", body.automatic_memory)
 
     return {"automatic_memory": body.automatic_memory}
+
+
+# ---------------------------------------------------------------------------
+# Embedding model configuration
+# ---------------------------------------------------------------------------
+
+
+@router.get("/embedding")
+async def embedding_settings(request: Request) -> dict[str, Any]:
+    """Active embedding model plus the embedding-capable Ollama models installed."""
+
+    memory = _provider(request)
+
+    if memory is None:
+        raise HTTPException(status_code=503, detail="Memory store is not ready")
+
+    catalog = OllamaEmbeddingCatalogService(memory.ollama_embedding_base_url)
+    reachable, models, error = await catalog.list_models()
+
+    return {
+        "vector_store_enabled": bool(
+            request.app.state.settings.memory.vector_store.enabled
+        ),
+        "provider": memory.vector.embedding_provider,
+        "selected_model": memory.vector.embedding_model,
+        "dimensions": memory.vector.vector_size,
+        "ollama": {
+            "base_url": memory.ollama_embedding_base_url,
+            "reachable": reachable,
+            "error": error,
+        },
+        "models": [model.as_dict() for model in models],
+    }
+
+
+@router.patch("/embedding")
+async def update_embedding_settings(
+    body: EmbeddingSettingsUpdate,
+    request: Request,
+) -> dict[str, Any]:
+    """Probe a model, swap the embedder, rebuild Qdrant and persist the choice."""
+
+    memory = _provider(request)
+
+    if memory is None or memory.sqlite is None:
+        raise HTTPException(status_code=503, detail="Memory store is not ready")
+
+    if not request.app.state.settings.memory.vector_store.enabled:
+        raise HTTPException(status_code=409, detail="Vector store is disabled")
+
+    model = body.model.strip()
+
+    catalog = OllamaEmbeddingCatalogService(memory.ollama_embedding_base_url)
+
+    try:
+        dimensions = await catalog.probe(model)
+        reindexed = await memory.reconfigure_embedding(
+            model=model,
+            dimensions=dimensions,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    # Persist only after a successful switch, so a failed probe leaves the
+    # previously configured model in place for the next startup.
+    await _policy(request).set_setting(
+        "memory.embedding",
+        {
+            "provider": "ollama",
+            "model": model,
+            "dimensions": dimensions,
+        },
+    )
+
+    return {
+        "provider": "ollama",
+        "selected_model": model,
+        "dimensions": dimensions,
+        "reindexed": reindexed,
+    }
 
 
 @router.get("/semantic/{key:path}")

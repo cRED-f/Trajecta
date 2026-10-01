@@ -16,6 +16,8 @@ import type {
 import type { McpCatalog } from "../types/tools";
 
 import type {
+  EmbeddingCatalog,
+  EmbeddingSelectionResult,
   MemoryCatalog,
   PermissionCatalog,
   PermissionMode,
@@ -494,6 +496,19 @@ export const settingsApi = {
     return request("/memory/settings", {
       method: "PATCH",
       body: JSON.stringify({ automatic_memory: automaticMemory }),
+    });
+  },
+
+  embedding(): Promise<EmbeddingCatalog> {
+    return request("/memory/embedding");
+  },
+
+  setEmbeddingModel(
+    model: string,
+  ): Promise<EmbeddingSelectionResult> {
+    return request("/memory/embedding", {
+      method: "PATCH",
+      body: JSON.stringify({ model }),
     });
   },
 
