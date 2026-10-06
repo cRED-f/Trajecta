@@ -26,14 +26,20 @@ from server.src.guardrails.content import (
 )
 from server.src.guardrails.policy import PermissionPolicyStore
 from server.src.memory.provider import MemoryProvider, get_memory_provider
+from server.src.runtime_encoding import configure_utf8_runtime
 from server.src.skills.service import build_skills_service
 from server.src.tools.personal import PersonalToolProvider
 from server.src.tools.personal.scheduler import SchedulerService
 from server.src.tools.verification import ConnectorVerificationService
 
+# Fallback protection when the app module is loaded some other way than
+# through server.src.main (which re-execs the interpreter with -X utf8).
+configure_utf8_runtime()
+
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build and configure the FastAPI application."""
+    configure_utf8_runtime()
     settings = settings or Settings.load()
 
     @asynccontextmanager

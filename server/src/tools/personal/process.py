@@ -91,6 +91,15 @@ class ProcessManager:
             raise ValueError("command cannot be empty")
         host_cwd = self._resolve_cwd(cwd)
         clean_env = dict(os.environ)
+        # Python-based child tools should also be Unicode-safe on Windows.
+        clean_env.setdefault(
+            "PYTHONUTF8",
+            "1",
+        )
+        clean_env.setdefault(
+            "PYTHONIOENCODING",
+            "utf-8",
+        )
         if env:
             # Explicit values are allowed, but never return the environment to
             # the model; credentials stay process-local.

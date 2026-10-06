@@ -16,7 +16,9 @@ def encode_sse(
 ) -> str:
     payload = json.dumps(
         data,
-        ensure_ascii=False,
+        # ASCII escapes round-trip perfectly through JSON.parse() on the
+        # frontend, while keeping the SSE transport safe on cp1252 Windows.
+        ensure_ascii=True,
         default=str,
     )
 
