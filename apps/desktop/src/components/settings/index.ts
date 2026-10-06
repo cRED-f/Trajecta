@@ -1,3 +1,4 @@
+export { EmbeddingSettings } from "./EmbeddingSettings";
 export { GeneralSettings } from "./GeneralSettings";
 export { GuardrailsSettings } from "./GuardrailsSettings";
 export { McpToolsSettings } from "./McpToolsSettings";

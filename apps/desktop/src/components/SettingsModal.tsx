@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 
 import {
+  EmbeddingSettings,
   GeneralSettings,
   GuardrailsSettings,
   McpToolsSettings,
-  MemorySettings,
   PermissionsSettings,
   SettingsHeader,
   SettingsShell,
@@ -86,7 +86,7 @@ export function SettingsModal({
           )}
 
           {page === "memory" && (
-            <MemorySettings enabled={open} backendOnline={backendOnline} />
+            <EmbeddingSettings enabled={open} backendOnline={backendOnline} />
           )}
 
           {page === "guardrails" && (

@@ -84,7 +84,7 @@ export function SettingsShell({
           page="memory"
           current={page}
           icon={<Brain size={16} />}
-          label="Memory"
+          label="Embedding"
           onSelect={onPageChange}
         />
 

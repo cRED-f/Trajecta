@@ -4,7 +4,7 @@
 - GET   /api/v1/memory/semantic/{key}   Fetch one semantic memory by key
 - PATCH /api/v1/memory/settings         Toggle automatic memory
 - GET   /api/v1/memory/embedding        Ollama embedding catalog + active model
-- PATCH /api/v1/memory/embedding        Switch embedding model and re-index
+- PATCH /api/v1/memory/embedding        Turn embedding on/off, switch model, re-index
 - GET   /api/v1/memory/{type}           List memory entries by type (semantic/episodic/procedural)
 - POST  /api/v1/memory/{type}           Upsert a semantic memory entry (key + content)
 - DELETE /api/v1/memory/{type}/{key}    Delete a semantic memory entry
@@ -34,7 +34,8 @@ class MemorySettingsUpdate(BaseModel):
 
 
 class EmbeddingSettingsUpdate(BaseModel):
-    model: str = Field(..., min_length=1, max_length=250)
+    enabled: bool | None = None
+    model: str | None = Field(default=None, min_length=1, max_length=250)
 
 
 def _provider(request: Request):
@@ -43,6 +44,14 @@ def _provider(request: Request):
 
 def _policy(request: Request):
     return request.app.state.permission_policy
+
+
+async def _embedding_config(request: Request) -> dict[str, Any]:
+    """Persisted ``memory.embedding`` row (empty when never configured)."""
+
+    stored = await _policy(request).get_setting("memory.embedding", {})
+
+    return stored if isinstance(stored, dict) else {}
 
 
 @router.get("")
@@ -99,12 +108,23 @@ async def embedding_settings(request: Request) -> dict[str, Any]:
     catalog = OllamaEmbeddingCatalogService(memory.ollama_embedding_base_url)
     reachable, models, error = await catalog.list_models()
 
+    config = await _embedding_config(request)
+    remembered_model = str(config.get("model") or "").strip() or None
+
+    enabled = config.get("enabled")
+    if not isinstance(enabled, bool):
+        # Rows written before the switch existed: on iff a model is live.
+        enabled = memory.vector.embedding_provider == "ollama"
+
     return {
         "vector_store_enabled": bool(
             request.app.state.settings.memory.vector_store.enabled
         ),
+        "enabled": enabled,
         "provider": memory.vector.embedding_provider,
-        "selected_model": memory.vector.embedding_model,
+        # Live model while running, otherwise the remembered one, so turning
+        # the switch back on restores the previous choice.
+        "selected_model": memory.vector.embedding_model or remembered_model,
         "dimensions": memory.vector.vector_size,
         "ollama": {
             "base_url": memory.ollama_embedding_base_url,
@@ -120,7 +140,7 @@ async def update_embedding_settings(
     body: EmbeddingSettingsUpdate,
     request: Request,
 ) -> dict[str, Any]:
-    """Probe a model, swap the embedder, rebuild Qdrant and persist the choice."""
+    """Turn embedding on/off, probe a model, swap the embedder and re-index."""
 
     memory = _provider(request)
 
@@ -130,7 +150,62 @@ async def update_embedding_settings(
     if not request.app.state.settings.memory.vector_store.enabled:
         raise HTTPException(status_code=409, detail="Vector store is disabled")
 
-    model = body.model.strip()
+    config = await _embedding_config(request)
+    remembered_model = str(config.get("model") or "").strip() or None
+    remembered_dimensions = int(config.get("dimensions") or 0)
+
+    enabled = True if body.enabled is None else bool(body.enabled)
+    model = (body.model or "").strip() or (remembered_model if enabled else None)
+
+    if not enabled:
+        # Off: fall back to the built-in default embedder, keeping the last
+        # model around so switching back on restores it in one step.
+        if memory.vector.embedding_provider == "placeholder":
+            reindexed = {"memories": 0, "attachment_chunks": 0}
+        else:
+            try:
+                reindexed = await memory.reconfigure_embedding(model=None)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+        await _policy(request).set_setting(
+            "memory.embedding",
+            {
+                "enabled": False,
+                "provider": "placeholder",
+                "model": remembered_model,
+                "dimensions": remembered_dimensions,
+            },
+        )
+
+        return {
+            "enabled": False,
+            "provider": "placeholder",
+            "selected_model": remembered_model,
+            "dimensions": memory.vector.vector_size,
+            "reindexed": reindexed,
+        }
+
+    if model is None:
+        # On but nothing chosen yet: the default embedder stays live until a
+        # model is picked.
+        await _policy(request).set_setting(
+            "memory.embedding",
+            {
+                "enabled": True,
+                "provider": "placeholder",
+                "model": None,
+                "dimensions": remembered_dimensions,
+            },
+        )
+
+        return {
+            "enabled": True,
+            "provider": memory.vector.embedding_provider,
+            "selected_model": None,
+            "dimensions": memory.vector.vector_size,
+            "reindexed": {"memories": 0, "attachment_chunks": 0},
+        }
 
     catalog = OllamaEmbeddingCatalogService(memory.ollama_embedding_base_url)
 
@@ -150,6 +225,7 @@ async def update_embedding_settings(
     await _policy(request).set_setting(
         "memory.embedding",
         {
+            "enabled": True,
             "provider": "ollama",
             "model": model,
             "dimensions": dimensions,
@@ -157,6 +233,7 @@ async def update_embedding_settings(
     )
 
     return {
+        "enabled": True,
         "provider": "ollama",
         "selected_model": model,
         "dimensions": dimensions,

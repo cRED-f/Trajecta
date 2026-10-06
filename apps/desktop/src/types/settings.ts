@@ -81,7 +81,10 @@ export interface OllamaEmbeddingModel {
 /** GET /memory/embedding — active embedder plus installed Ollama models. */
 export interface EmbeddingCatalog {
   vector_store_enabled: boolean;
+  /** Switch position: off means the built-in default embedder is in use. */
+  enabled: boolean;
   provider: "placeholder" | "ollama" | string;
+  /** Live model while running, otherwise the remembered one. */
   selected_model: string | null;
   dimensions: number;
   ollama: {
@@ -92,10 +95,11 @@ export interface EmbeddingCatalog {
   models: OllamaEmbeddingModel[];
 }
 
-/** PATCH /memory/embedding — switched model and what had to be re-indexed. */
+/** PATCH /memory/embedding — switched state/model and what had to be re-indexed. */
 export interface EmbeddingSelectionResult {
-  provider: "ollama";
-  selected_model: string;
+  enabled: boolean;
+  provider: "ollama" | "placeholder";
+  selected_model: string | null;
   dimensions: number;
   reindexed: {
     memories: number;

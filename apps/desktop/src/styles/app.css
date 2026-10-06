@@ -5016,6 +5016,12 @@ select:disabled {
   align-items: flex-start;
 }
 
+/* Model picker sits on its own row, indented to line up under the text of
+   the row above (icon 34 + gap 12 + row padding 14). */
+.embedding-model-row {
+  padding-left: 60px;
+}
+
 .embedding-model-control {
   display: flex;
 
@@ -5099,12 +5105,14 @@ select:disabled {
     flex-wrap: wrap;
   }
 
+  .embedding-model-row {
+    padding-left: 14px;
+  }
+
   .embedding-model-control {
     width: 100%;
 
     min-width: 0;
-
-    padding-left: 46px;
   }
 
   .embedding-model-control select {

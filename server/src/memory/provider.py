@@ -206,6 +206,12 @@ class MemoryProvider:
             self.vector.configure_placeholder()
             return
 
+        # Explicit off switch: keep whatever model was remembered, but run
+        # the built-in default embedder.
+        if config.get("enabled") is False:
+            self.vector.configure_placeholder()
+            return
+
         if config.get("provider") != "ollama":
             self.vector.configure_placeholder()
             return
@@ -226,11 +232,12 @@ class MemoryProvider:
     async def reconfigure_embedding(
         self,
         *,
-        model: str,
-        dimensions: int,
+        model: str | None,
+        dimensions: int = 0,
     ) -> dict[str, int]:
         """Switch embedding model, rebuild Qdrant collections and re-index.
 
+        ``model=None`` switches back to the built-in default embedder.
         Changing model usually changes vector dimensions, therefore old
         collections cannot be reused safely.
         """
@@ -241,11 +248,14 @@ class MemoryProvider:
         if not self._settings.memory.vector_store.enabled:
             raise RuntimeError("Vector store is disabled")
 
-        self.vector.configure_ollama(
-            base_url=self.ollama_embedding_base_url,
-            model=model,
-            vector_size=dimensions,
-        )
+        if model:
+            self.vector.configure_ollama(
+                base_url=self.ollama_embedding_base_url,
+                model=model,
+                vector_size=dimensions,
+            )
+        else:
+            self.vector.configure_placeholder()
 
         await asyncio.to_thread(
             self.vector.reset_collections,

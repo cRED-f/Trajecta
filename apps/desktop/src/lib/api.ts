@@ -514,6 +514,16 @@ export const settingsApi = {
     });
   },
 
+  /** Off falls back to the built-in default embedder; on reuses the last model. */
+  setEmbeddingEnabled(
+    enabled: boolean,
+  ): Promise<EmbeddingSelectionResult> {
+    return request("/memory/embedding", {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
+    });
+  },
+
   guardrails(): Promise<ContentGuardrailCatalog> {
     return request("/guardrails");
   },

@@ -131,23 +131,32 @@ export function useEmbeddingCatalog(enabled = true) {
 export function useEmbeddingActions() {
   const queryClient = useQueryClient();
 
+  function afterEmbeddingChange() {
+    void queryClient.invalidateQueries({
+      queryKey: settingsQueryKeys.embedding,
+    });
+    void queryClient.invalidateQueries({
+      queryKey: settingsQueryKeys.memoryAll,
+    });
+  }
+
   const selectModel = useMutation({
     mutationFn: (model: string) => settingsApi.setEmbeddingModel(model),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: settingsQueryKeys.embedding,
-      });
-      void queryClient.invalidateQueries({
-        queryKey: settingsQueryKeys.memoryAll,
-      });
-    },
+    onSuccess: afterEmbeddingChange,
+  });
+
+  const setEnabled = useMutation({
+    mutationFn: (enabled: boolean) => settingsApi.setEmbeddingEnabled(enabled),
+    onSuccess: afterEmbeddingChange,
   });
 
   return {
     selectModel: selectModel.mutateAsync,
     selectingModel: selectModel.isPending,
     pendingModel: selectModel.variables ?? null,
-    error: selectModel.error,
+    setEnabled: setEnabled.mutateAsync,
+    togglingEnabled: setEnabled.isPending,
+    error: selectModel.error ?? setEnabled.error,
   };
 }
 
