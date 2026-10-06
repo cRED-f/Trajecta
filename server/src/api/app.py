@@ -21,6 +21,9 @@ from server.src.chat.mcp_settings import MCPToolSettingsStore
 from server.src.chat.models_catalog import ModelCatalogService
 from server.src.chat.models import ConversationCreate, SendMessageRequest
 from server.src.config import Settings
+from server.src.guardrails.content import (
+    ContentGuardrailService,
+)
 from server.src.guardrails.policy import PermissionPolicyStore
 from server.src.memory.provider import MemoryProvider, get_memory_provider
 from server.src.skills.service import build_skills_service
@@ -59,6 +62,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         permission_policy = PermissionPolicyStore(memory.sqlite)
 
+        content_guardrails = ContentGuardrailService(
+            settings,
+            permission_policy,
+        )
+
         # Skills must be built before ChatService: chat and learning use the
         # same trajectory store and replay-fixture store.
         skills = build_skills_service(
@@ -74,6 +82,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             connector_verification,
             mcp_tools,
             permission_policy,
+            content_guardrails=content_guardrails,
             trajectories=skills.trajectories,
             replay_fixtures=skills.replay_fixtures,
             skills=skills,
@@ -113,6 +122,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.settings = settings
         app.state.memory_provider = memory
         app.state.permission_policy = permission_policy
+        app.state.content_guardrails = content_guardrails
         app.state.personal_tools = personal_tools
         app.state.connector_verification = connector_verification
         app.state.mcp_tools = mcp_tools

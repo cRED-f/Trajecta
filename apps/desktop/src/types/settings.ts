@@ -1,3 +1,36 @@
+export type GuardrailPromptAction = "warn" | "block";
+
+export type GuardrailSensitiveAction = "allow" | "redact" | "block";
+
+export interface ContentGuardrailSettings {
+  enabled: boolean;
+
+  prompt_injection_enabled: boolean;
+  prompt_injection_heuristic_threshold: number;
+
+  user_prompt_action: GuardrailPromptAction;
+  untrusted_content_action: GuardrailPromptAction;
+
+  jailbreak_enabled: boolean;
+  jailbreak_threshold: number;
+
+  secrets_enabled: boolean;
+
+  pii_enabled: boolean;
+  pii_entities: string[];
+
+  local_providers: string[];
+
+  cloud_sensitive_action: GuardrailSensitiveAction;
+
+  system_prompt_leakage_enabled: boolean;
+  system_prompt_leakage_threshold: number;
+}
+
+export interface ContentGuardrailCatalog {
+  content: ContentGuardrailSettings;
+}
+
 export type PermissionMode =
   | "allow"
   | "ask"

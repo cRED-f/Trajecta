@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   GeneralSettings,
+  GuardrailsSettings,
   McpToolsSettings,
   MemorySettings,
   PermissionsSettings,
@@ -86,6 +87,10 @@ export function SettingsModal({
 
           {page === "memory" && (
             <MemorySettings enabled={open} backendOnline={backendOnline} />
+          )}
+
+          {page === "guardrails" && (
+            <GuardrailsSettings enabled={open} backendOnline={backendOnline} />
           )}
 
           {page === "permissions" && (

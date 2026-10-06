@@ -21,6 +21,15 @@ langgraph = "^1.2.11"
 langgraph-sdk = "^0.4.4"
 deepagents = "^0.7.13"
 guardrails-ai = "^0.11.0"
+
+guardrails-ai-detect-prompt-injection = "0.2.1a1"
+guardrails-ai-secrets-present = "0.1.0"
+guardrails-ai-detect-pii = "0.0.6"
+guardrails-ai-detect-system-prompt-leakage = "0.1.0"
+guardrails-ai-valid-json = "0.1.0"
+
+# Optional heavier local classifier.
+guardrails-ai-detect-jailbreak = "0.1.6"
 opentelemetry-api = "^1.44.0"
 opentelemetry-sdk = "^1.44.0"
 opentelemetry-exporter-otlp = "^1.44.0"

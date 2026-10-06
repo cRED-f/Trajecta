@@ -5113,3 +5113,62 @@ select:disabled {
     min-width: 0;
   }
 }
+
+.guardrail-select {
+  min-width: 112px;
+  height: 34px;
+
+  padding: 0 28px 0 10px;
+
+  border: 1px solid var(--color-hairline);
+
+  border-radius: 8px;
+
+  background: var(--surface-conversation-canvas);
+
+  color: var(--color-graphite-ink);
+
+  font: inherit;
+}
+
+.guardrail-select:focus {
+  outline: none;
+
+  border-color: var(--color-hollow);
+}
+
+.guardrail-select:disabled {
+  opacity: 0.55;
+
+  cursor: not-allowed;
+}
+
+.guardrail-warning {
+  display: flex;
+
+  align-items: flex-start;
+
+  gap: 8px;
+
+  margin-top: 10px;
+
+  padding: 9px 11px;
+
+  color: #8a5a00;
+
+  background: rgba(245, 158, 11, 0.1);
+
+  border: 1px solid rgba(245, 158, 11, 0.24);
+
+  border-radius: 9px;
+
+  font-size: 12px;
+
+  line-height: 1.45;
+}
+
+.guardrail-warning svg {
+  flex: 0 0 auto;
+
+  margin-top: 1px;
+}

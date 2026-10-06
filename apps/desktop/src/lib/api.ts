@@ -16,6 +16,8 @@ import type {
 import type { McpCatalog } from "../types/tools";
 
 import type {
+  ContentGuardrailCatalog,
+  ContentGuardrailSettings,
   EmbeddingCatalog,
   EmbeddingSelectionResult,
   MemoryCatalog,
@@ -509,6 +511,19 @@ export const settingsApi = {
     return request("/memory/embedding", {
       method: "PATCH",
       body: JSON.stringify({ model }),
+    });
+  },
+
+  guardrails(): Promise<ContentGuardrailCatalog> {
+    return request("/guardrails");
+  },
+
+  setGuardrails(
+    patch: Partial<ContentGuardrailSettings>,
+  ): Promise<ContentGuardrailCatalog> {
+    return request("/guardrails", {
+      method: "PATCH",
+      body: JSON.stringify(patch),
     });
   },
 

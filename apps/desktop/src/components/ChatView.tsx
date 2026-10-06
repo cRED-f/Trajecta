@@ -379,6 +379,13 @@ const approval =
                 </div>
               )}
 
+              {stream?.warnings.map((warning, index) => (
+                <div className="guardrail-warning" key={`${warning}-${index}`}>
+                  <AlertCircle size={15} />
+                  <span>{warning}</span>
+                </div>
+              ))}
+
               {stream?.error && (
                 <div className="run-error">
                   <AlertCircle

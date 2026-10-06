@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { settingsApi } from "../lib/api";
 
 import type {
+  ContentGuardrailCatalog,
+  ContentGuardrailSettings,
   PermissionCatalog,
   PermissionMode,
   ScheduleCreateInput,
@@ -14,6 +16,7 @@ export const settingsQueryKeys = {
   memory: (query: string) => ["settings", "memory", query] as const,
   memoryAll: ["settings", "memory"] as const,
   embedding: ["settings", "embedding"] as const,
+  guardrails: ["settings", "guardrails"] as const,
   skills: ["settings", "skills"] as const,
   skillVersions: (skillName: string) =>
     ["settings", "skills", "versions", skillName] as const,
@@ -145,6 +148,34 @@ export function useEmbeddingActions() {
     selectingModel: selectModel.isPending,
     pendingModel: selectModel.variables ?? null,
     error: selectModel.error,
+  };
+}
+
+export function useGuardrails(enabled = true) {
+  return useQuery({
+    queryKey: settingsQueryKeys.guardrails,
+    queryFn: settingsApi.guardrails,
+    enabled,
+    staleTime: 5_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useGuardrailActions() {
+  const queryClient = useQueryClient();
+
+  const update = useMutation({
+    mutationFn: (patch: Partial<ContentGuardrailSettings>) =>
+      settingsApi.setGuardrails(patch),
+    onSuccess: (catalog: ContentGuardrailCatalog) => {
+      queryClient.setQueryData(settingsQueryKeys.guardrails, catalog);
+    },
+  });
+
+  return {
+    update: update.mutateAsync,
+    updating: update.isPending,
+    error: update.error,
   };
 }
 

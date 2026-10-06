@@ -284,12 +284,70 @@ class SandboxConfig(BaseModel):
     auto_remove: bool = True
 
 
+class ContentGuardrailsConfig(BaseModel):
+    enabled: bool = True
+
+    # User-written prompts should normally warn.
+    # Retrieved/tool/file content is treated more strictly.
+    prompt_injection_enabled: bool = True
+    prompt_injection_heuristic_threshold: float = Field(
+        default=0.75,
+        ge=0.0,
+        le=1.0,
+    )
+    user_prompt_action: Literal["warn", "block"] = "warn"
+    untrusted_content_action: Literal["warn", "block"] = "block"
+
+    # Optional heavier local ML validator.
+    jailbreak_enabled: bool = False
+    jailbreak_threshold: float = Field(
+        default=0.9,
+        ge=0.0,
+        le=1.0,
+    )
+
+    secrets_enabled: bool = True
+
+    pii_enabled: bool = True
+    pii_entities: list[str] = Field(
+        default_factory=lambda: [
+            "EMAIL_ADDRESS",
+            "PHONE_NUMBER",
+            "CREDIT_CARD",
+            "IBAN_CODE",
+            "IP_ADDRESS",
+            "US_SSN",
+            "US_BANK_NUMBER",
+        ]
+    )
+
+    # Ollama is local. Anything else crosses Trajecta's privacy boundary.
+    local_providers: list[str] = Field(
+        default_factory=lambda: ["ollama"]
+    )
+
+    cloud_sensitive_action: Literal[
+        "allow",
+        "redact",
+        "block",
+    ] = "redact"
+
+    system_prompt_leakage_enabled: bool = True
+    system_prompt_leakage_threshold: int = Field(
+        default=40,
+        ge=0,
+        le=100,
+    )
+
+
 class GuardrailsConfig(BaseModel):
     default_risk_level: str = "SENSITIVE"
     rules_path: str = "config/guardrail-rules.yaml"
     # Deep Agents HITL interrupts require a client resume flow. Keep this
     # configurable so non-interactive/headless runs can still operate.
     hitl_enabled: bool = True
+
+    content: ContentGuardrailsConfig = ContentGuardrailsConfig()
 
 
 class VectorStoreConfig(BaseModel):

@@ -169,6 +169,7 @@ export interface StreamState {
   text: string;
   tools: ToolActivity[];
   steps: string[];
+  warnings: string[];
   error: string | null;
 }
 

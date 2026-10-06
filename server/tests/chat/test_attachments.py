@@ -36,6 +36,17 @@ class FakeVector:
     def delete(self, namespace: str, doc_id: str) -> None:
         self.rows.pop((namespace, doc_id), None)
 
+    def upsert_many(self, namespace: str, items: list[dict[str, Any]]) -> int:
+        for item in items:
+            payload = item.get("payload")
+            self.upsert(
+                namespace,
+                str(item["doc_id"]),
+                str(item.get("text") or ""),
+                payload=payload if isinstance(payload, dict) else None,
+            )
+        return len(items)
+
     def search(self, namespace: str, query: str, limit: int = 10) -> list[dict[str, Any]]:
         tokens = {token.lower() for token in query.split()}
         scored: list[dict[str, Any]] = []

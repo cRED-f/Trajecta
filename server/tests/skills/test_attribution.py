@@ -17,6 +17,8 @@ from server.src.chat.runs import ChatRunRegistry
 from server.src.chat.runtime import PreparedAgentRun
 from server.src.chat.service import ChatService
 from server.src.config import Settings
+from server.src.guardrails.content import ContentGuardrailService
+from server.src.guardrails.policy import PermissionPolicyStore
 from server.src.memory.storage.sqlite import SQLiteDatabase
 from server.src.skills.analytics import SkillExecutionAttributor, SkillMetricsCollector
 from server.src.skills.evaluation.fixtures import ReplayFixtureStore
@@ -447,6 +449,7 @@ class SkillRunRuntime:
             model_name=model_name or conversation.model,
             mcp_tool_count=0,
             thread_id=thread_id,
+            system_prompt="",
         )
 
     async def stream_prepared(
@@ -520,6 +523,7 @@ async def _chat_service(
         ChatRunRegistry(),
         TrajectoryStore(db),
         ReplayFixtureStore(settings, db),
+        ContentGuardrailService(settings, PermissionPolicyStore(db)),
         None,  # skill_learning
         _attributor(db),  # skill_execution
     )

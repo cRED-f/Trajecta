@@ -31,6 +31,7 @@ from langchain.agents.middleware import (
 )
 
 from langchain_core.messages import (
+    AIMessage,
     AIMessageChunk,
     HumanMessage,
     SystemMessage,
@@ -52,6 +53,11 @@ from server.src.chat.model import (
 )
 
 from server.src.config import Settings
+
+from server.src.guardrails.structured import (
+    StructuredGuardrailError,
+    StructuredOutputGuard,
+)
 
 from server.src.memory.provider import (
     MemoryProvider,
@@ -273,6 +279,20 @@ class ReplayResult(
 # ---------------------------------------------------------------------------
 
 
+class _JudgeDecision(BaseModel):
+    success: bool
+
+    score: float = Field(
+        ge=0.0,
+        le=1.0,
+    )
+
+    reason: str = Field(
+        min_length=1,
+        max_length=2000,
+    )
+
+
 class ReplayJudge:
     """
     Judge baseline and candidate with identical criteria.
@@ -289,6 +309,10 @@ class ReplayJudge:
             BifrostModelFactory(
                 settings
             )
+        )
+
+        self._structured = (
+            StructuredOutputGuard()
         )
 
     async def grade(
@@ -600,78 +624,79 @@ class ReplayJudge:
         }
 
         try:
-            response = (
-                await model.ainvoke(
-                    [
-                        SystemMessage(
-                            content=(
-                                "You are a strict "
-                                "task-completion evaluator. "
-                                "Return valid JSON only."
-                            )
-                        ),
+            messages = [
+                SystemMessage(
+                    content=(
+                        "Return exactly one valid JSON object. "
+                        "It must contain boolean success, "
+                        "score from 0 to 1, and a non-empty reason. "
+                        "Do not use markdown fences."
+                    )
+                ),
+                HumanMessage(
+                    content=json.dumps(
+                        payload,
+                        ensure_ascii=False,
+                    )
+                ),
+            ]
 
-                        HumanMessage(
-                            content=json.dumps(
-                                payload,
-                                ensure_ascii=False,
-                            )
-                        ),
-                    ]
-                )
-            )
+            decision: _JudgeDecision | None = None
+            last_error: StructuredGuardrailError | None = None
 
-            data = (
-                self._parse_json(
-                    self._message_text(
-                        response.content
+            for attempt in range(2):
+                response = await model.ainvoke(messages)
+
+                raw = self._message_text(response.content)
+
+                try:
+                    decision = await self._structured.validate_pydantic(
+                        raw,
+                        _JudgeDecision,
+                    )
+                    break
+                except StructuredGuardrailError as exc:
+                    last_error = exc
+
+                    if attempt == 1:
+                        raise
+
+                    messages.extend(
+                        [
+                            AIMessage(content=raw),
+                            HumanMessage(
+                                content=(
+                                    "The previous response failed the "
+                                    "JSON/schema contract: "
+                                    f"{exc}. "
+                                    "Return exactly one JSON object "
+                                    "with success, score, and reason. "
+                                    "No prose or markdown fences."
+                                )
+                            ),
+                        ]
+                    )
+
+            if decision is None:
+                raise (
+                    last_error
+                    or StructuredGuardrailError(
+                        "judge did not return a valid "
+                        "structured response"
                     )
                 )
-            )
-
-            success = bool(
-                data.get(
-                    "success"
-                )
-            )
-
-            score = float(
-                data.get(
-                    "score",
-                    (
-                        1.0
-                        if success
-                        else 0.0
-                    ),
-                )
-            )
-
-            score = max(
-                0.0,
-                min(
-                    1.0,
-                    score,
-                ),
-            )
-
-            reason = str(
-                data.get(
-                    "reason"
-                )
-                or "LLM judge"
-            )[:2000]
 
             return (
                 result.model_copy(
                     update={
                         "success":
-                            success,
+                            decision.success,
 
                         "score":
-                            score,
+                            decision.score,
 
                         "judge_reason":
-                            reason,
+                            decision.reason[:2000],
                     }
                 )
             )

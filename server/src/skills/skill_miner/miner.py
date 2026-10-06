@@ -21,6 +21,7 @@ from difflib import SequenceMatcher
 from typing import Any
 
 from langchain_core.messages import (
+    AIMessage,
     HumanMessage,
     SystemMessage,
 )
@@ -35,6 +36,11 @@ from server.src.chat.model import (
 )
 
 from server.src.config import Settings
+
+from server.src.guardrails.structured import (
+    StructuredGuardrailError,
+    StructuredOutputGuard,
+)
 
 from server.src.skills.repository import (
     SkillRepository,
@@ -179,6 +185,7 @@ class SkillMiner:
         self._trajectories = trajectories
         self._repository = repository
         self._models = BifrostModelFactory(settings)
+        self._structured = StructuredOutputGuard()
 
     async def mine(
         self,
@@ -470,20 +477,61 @@ class SkillMiner:
             },
         }
 
-        response = await model.ainvoke(
-            [
-                SystemMessage(
-                    content=(
-                        "You synthesize reusable Agent Skills from "
-                        "execution evidence. Return valid JSON only."
-                    )
-                ),
-                HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
-            ]
-        )
+        messages = [
+            SystemMessage(
+                content=(
+                    "Return exactly one valid JSON object matching "
+                    "the requested CandidateSkill schema. "
+                    "Do not include prose or markdown fences."
+                )
+            ),
+            HumanMessage(
+                content=json.dumps(payload, ensure_ascii=False)
+            ),
+        ]
 
-        raw = self._message_text(response.content)
-        draft = _SkillDraft.model_validate(self._extract_json(raw))
+        draft: _SkillDraft | None = None
+        last_error: StructuredGuardrailError | None = None
+
+        for attempt in range(2):
+            response = await model.ainvoke(messages)
+            raw = self._message_text(response.content)
+
+            try:
+                draft = await self._structured.validate_pydantic(raw, _SkillDraft)
+                break
+            except StructuredGuardrailError as exc:
+                last_error = exc
+
+                if attempt == 1:
+                    raise
+
+                # The repair call goes through the SAME Bifrost model,
+                # not Guardrails or OpenAI directly.
+                messages.extend(
+                    [
+                        AIMessage(content=raw),
+                        HumanMessage(
+                            content=(
+                                "The previous response failed the "
+                                "JSON/schema contract: "
+                                f"{exc}. "
+                                "Return exactly one JSON object "
+                                "matching the requested schema, "
+                                "with no prose or markdown fences."
+                            )
+                        ),
+                    ]
+                )
+
+        if draft is None:
+            raise (
+                last_error
+                or StructuredGuardrailError(
+                    "skill synthesizer did not return "
+                    "a valid structured response"
+                )
+            )
 
         observed_tools = sorted(
             {
@@ -739,25 +787,3 @@ class SkillMiner:
                     result.append(text)
             return "".join(result)
         return str(content)
-
-    @staticmethod
-    def _extract_json(value: str) -> dict[str, Any]:
-        text = value.strip()
-
-        if text.startswith("```"):
-            text = re.sub(r"^```(?:json)?\s*", "", text)
-            text = re.sub(r"\s*```$", "", text)
-
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            start = text.find("{")
-            end = text.rfind("}")
-            if start < 0 or end <= start:
-                raise ValueError("skill synthesizer did not return JSON")
-            parsed = json.loads(text[start : end + 1])
-
-        if not isinstance(parsed, dict):
-            raise ValueError("skill synthesizer must return a JSON object")
-
-        return parsed

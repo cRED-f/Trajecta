@@ -4,7 +4,7 @@ import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -33,6 +33,10 @@ from server.src.chat.repository import ChatRepository
 from server.src.chat.runtime import DeepAgentRuntime, PreparedAgentRun
 from server.src.chat.runs import ChatRunRegistry
 from server.src.config import Settings
+from server.src.guardrails.content import (
+    ContentGuardrailService,
+    GuardrailFinding,
+)
 from server.src.guardrails.policy import PermissionPolicyStore
 from server.src.memory.provider import MemoryProvider
 from server.src.tools.personal import PersonalToolProvider
@@ -75,6 +79,10 @@ class PreparedTurn:
     runtime: PreparedAgentRun
     cancel_event: asyncio.Event
 
+    guardrail_findings: list[GuardrailFinding] = field(
+        default_factory=list
+    )
+
 
 @dataclass(slots=True)
 class PreparedResume:
@@ -99,6 +107,7 @@ class ChatService:
         runs: ChatRunRegistry,
         trajectories: TrajectoryStore,
         replay_fixtures: ReplayFixtureStore,
+        content_guardrails: ContentGuardrailService,
         skill_learning: "SkillLearningCoordinator | None" = None,
         skill_execution: "SkillExecutionAttributor | None" = None,
         skills: "SkillsService | None" = None,
@@ -112,6 +121,7 @@ class ChatService:
         self._runs = runs
         self._trajectories = trajectories
         self._replay_fixtures = replay_fixtures
+        self._content_guardrails = content_guardrails
         self._skills = skills
 
         # One service covers everything; the individual collaborators stay
@@ -284,6 +294,11 @@ class ChatService:
             request.attachment_ids,
         )
         self._validate_message_content(request.content, attachments)
+
+        guardrail_findings = await self._content_guardrails.inspect_user_prompt(
+            request.content or ""
+        )
+
         base_checkpoint_id = await self._resolve_branch_head(conversation, branch)
         runtime = await self._runtime.prepare(
             conversation=conversation,
@@ -302,6 +317,7 @@ class ChatService:
             model_name=request.model,
             revision_of=None,
             operation="send",
+            guardrail_findings=guardrail_findings,
         )
 
     async def prepare_edit(
@@ -394,6 +410,10 @@ class ChatService:
                 "The selected message is not part of the active conversation branch"
             )
 
+        guardrail_findings = await self._content_guardrails.inspect_user_prompt(
+            content or ""
+        )
+
         base_checkpoint_id = original.base_checkpoint_id
 
         # A fork at the very first user turn has no checkpoint to rewind to.
@@ -451,6 +471,7 @@ class ChatService:
                 attachments=attachments,
                 runtime=runtime,
                 cancel_event=cancel_event,
+                guardrail_findings=guardrail_findings or [],
             )
         except Exception:
             await self._runs.unregister(conversation_id, run_id)
@@ -468,6 +489,7 @@ class ChatService:
         model_name: str | None,
         revision_of: str | None,
         operation: str,
+        guardrail_findings: list[GuardrailFinding] | None = None,
     ) -> PreparedTurn:
         run_id = uuid.uuid4().hex
         cancel_event = await self._runs.register(conversation.id, run_id)
@@ -509,6 +531,7 @@ class ChatService:
                 attachments=attachments,
                 runtime=runtime,
                 cancel_event=cancel_event,
+                guardrail_findings=guardrail_findings or [],
             )
         except Exception:
             await self._runs.unregister(conversation.id, run_id)
@@ -575,6 +598,28 @@ class ChatService:
                     "branch": turn.branch.model_dump(mode="json"),
                 },
             )
+
+            for finding in turn.guardrail_findings:
+                warning = {
+                    "validator": finding.validator,
+                    "boundary": finding.boundary,
+                    "action": finding.action,
+                    "message": finding.message,
+                }
+
+                await self._trajectories.append(
+                    trajectory_id,
+                    event_type="guardrail.warning",
+                    data=warning,
+                    source="guardrails",
+                )
+
+                yield ChatEvent(
+                    type="guardrail.warning",
+                    conversation_id=turn.conversation.id,
+                    run_id=turn.run_id,
+                    data=warning,
+                )
 
             async for event in self._runtime.stream_prepared(
                 prepared=turn.runtime,
@@ -1154,6 +1199,7 @@ def build_chat_service(
     connector_verification: ConnectorVerificationService | None = None,
     mcp_tools: MCPToolProvider | None = None,
     permission_policy: PermissionPolicyStore | None = None,
+    content_guardrails: ContentGuardrailService | None = None,
     trajectories: TrajectoryStore | None = None,
     replay_fixtures: ReplayFixtureStore | None = None,
     skill_learning: "SkillLearningCoordinator | None" = None,
@@ -1165,6 +1211,11 @@ def build_chat_service(
         raise RuntimeError("MemoryProvider must be opened before ChatService")
 
     permission_policy = permission_policy or PermissionPolicyStore(memory.sqlite)
+
+    content_guardrails = content_guardrails or ContentGuardrailService(
+        settings,
+        permission_policy,
+    )
 
     repository = ChatRepository(memory.sqlite)
     attachment_service = AttachmentService(
@@ -1202,6 +1253,7 @@ def build_chat_service(
         tools,
         verification=verification,
         permission_policy=permission_policy,
+        content_guardrails=content_guardrails,
         skill_experiments=skill_experiments,
     )
     runs = ChatRunRegistry()
@@ -1216,6 +1268,7 @@ def build_chat_service(
         runs,
         trajectories,
         replay_fixtures,
+        content_guardrails,
         skill_learning,
         skill_execution,
         skills,

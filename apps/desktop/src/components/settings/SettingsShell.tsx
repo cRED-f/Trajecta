@@ -2,6 +2,7 @@ import {
   Brain,
   PlugZap,
   Settings,
+  ShieldAlert,
   ShieldCheck,
   X,
 } from "lucide-react";
@@ -84,6 +85,14 @@ export function SettingsShell({
           current={page}
           icon={<Brain size={16} />}
           label="Memory"
+          onSelect={onPageChange}
+        />
+
+        <SettingsNavItem
+          page="guardrails"
+          current={page}
+          icon={<ShieldAlert size={16} />}
+          label="Guardrails"
           onSelect={onPageChange}
         />
 

@@ -95,6 +95,7 @@ const EMPTY_STREAM: StreamState = {
   text: "",
   tools: [],
   steps: [],
+  warnings: [],
   error: null,
 };
 
@@ -439,6 +440,19 @@ export const useChatStore = create<ChatStore>()(
                 steps: [...next.steps, node].slice(-8),
               };
             }
+          }
+
+          if (event.type === "guardrail.warning") {
+            const message =
+              typeof event.data.message === "string"
+                ? event.data.message
+                : "Guardrail warning detected.";
+
+            next = {
+              ...next,
+
+              warnings: [...next.warnings, message].slice(-4),
+            };
           }
 
           if (event.type === "run.error") {

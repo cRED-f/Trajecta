@@ -17,6 +17,13 @@ from server.src.chat.model import BifrostModelFactory
 from server.src.chat.models import Attachment, ChatEvent, Conversation
 from server.src.chat.rag import AttachmentRAGIndex
 from server.src.config import Settings
+from server.src.guardrails.content import (
+    ContentGuardrailService,
+    GuardrailBlocked,
+)
+from server.src.guardrails.middleware import (
+    GuardrailsModelMiddleware,
+)
 from server.src.guardrails.policy import PermissionPolicyStore
 from server.src.memory.provider import MemoryProvider
 from server.src.tools.personal import PersonalToolProvider
@@ -89,6 +96,10 @@ class PreparedAgentRun:
     model_name: str
     mcp_tool_count: int
     thread_id: str
+
+    # Exact protected prompt used for this run.
+    system_prompt: str
+
     # Which experiment arms this run was assigned to, so chat can attach
     # them to the trajectory before the first metrics row is written.
     skill_assignments: list[ExperimentAssignment] = field(default_factory=list)
@@ -108,6 +119,7 @@ class DeepAgentRuntime:
         personal_tools: PersonalToolProvider,
         verification: ConnectorVerificationService | None = None,
         permission_policy: PermissionPolicyStore | None = None,
+        content_guardrails: ContentGuardrailService | None = None,
         skill_experiments: "SkillExperimentService | None" = None,
     ) -> None:
         self._settings = settings
@@ -117,6 +129,7 @@ class DeepAgentRuntime:
         self._personal_tools = personal_tools
         self._verification = verification
         self._permission_policy = permission_policy
+        self._content_guardrails = content_guardrails
         self._skill_experiments = skill_experiments
         self._models = BifrostModelFactory(settings)
 
@@ -199,11 +212,29 @@ class DeepAgentRuntime:
             assignment.prompt_override or "" for assignment in skill_assignments
         )
 
+        if self._content_guardrails is None:
+            raise RuntimeError(
+                "No content guardrail service wired into the runtime"
+            )
+
+        system_prompt = SYSTEM_PROMPT + experiment_prompt
+
+        guardrail_middleware = GuardrailsModelMiddleware(
+            self._content_guardrails,
+            model_name=chosen_model,
+            protected_system_prompt=system_prompt,
+        )
+
         agent = create_deep_agent(
             model=model,
             tools=tools,
-            system_prompt=SYSTEM_PROMPT + experiment_prompt,
-            middleware=[TodoListMiddleware()],
+            system_prompt=system_prompt,
+            middleware=[
+                TodoListMiddleware(),
+                guardrail_middleware,
+            ],
+            # IMPORTANT:
+            # This remains the tool-authority layer.
             permissions=self._personal_tools.permissions(policy),
             interrupt_on=interrupt_policy or None,
             **self._memory.agent_kwargs(
@@ -216,6 +247,7 @@ class DeepAgentRuntime:
             model_name=chosen_model,
             mcp_tool_count=len(mcp_tools),
             thread_id=thread_id,
+            system_prompt=system_prompt,
             skill_assignments=skill_assignments,
         )
 
@@ -305,6 +337,10 @@ class DeepAgentRuntime:
         tool_calls = 0
         tool_errors = 0
 
+        # Assistant chunks are quarantined until the completed
+        # model step has passed GuardrailsModelMiddleware.
+        quarantined_main: list[str] = []
+
         try:
             stream = prepared.agent.astream(
                 agent_input,
@@ -356,17 +392,12 @@ class DeepAgentRuntime:
                                 )
                         else:
                             text = _text_from_content(token.content)
-                            if text:
-                                yield ChatEvent(
-                                    type=(
-                                        "message.delta"
-                                        if source == "main"
-                                        else "subagent.message.delta"
-                                    ),
-                                    conversation_id=conversation.id,
-                                    run_id=run_id,
-                                    data={"source": source, "text": text},
-                                )
+
+                            if text and source == "main":
+                                quarantined_main.append(text)
+
+                            # Do NOT stream subagent model text before
+                            # its completed model response is accepted.
                     elif isinstance(token, ToolMessage):
                         if getattr(token, "status", None) == "error":
                             tool_errors += 1
@@ -386,6 +417,26 @@ class DeepAgentRuntime:
                 elif event_type == "updates":
                     data = chunk.get("data")
                     if isinstance(data, dict):
+                        # Reaching a graph node update means the model response
+                        # completed successfully and GuardrailsModelMiddleware
+                        # accepted it.
+                        if quarantined_main:
+                            safe_text = "".join(quarantined_main)
+                            quarantined_main.clear()
+
+                            # Defense in depth.
+                            await self._content_guardrails.validate_assistant_output(
+                                safe_text,
+                                system_prompt=prepared.system_prompt,
+                            )
+
+                            yield ChatEvent(
+                                type="message.delta",
+                                conversation_id=conversation.id,
+                                run_id=run_id,
+                                data={"source": "main", "text": safe_text},
+                            )
+
                         if "__interrupt__" in data:
                             checkpoint_id = await self.latest_checkpoint_id(prepared.thread_id)
                             yield ChatEvent(
@@ -409,6 +460,24 @@ class DeepAgentRuntime:
                                     "is_subagent": source != "main",
                                 },
                             )
+
+            # Defensive fallback for a graph/runtime version that finishes
+            # without emitting a final update event.
+            if quarantined_main:
+                safe_text = "".join(quarantined_main)
+                quarantined_main.clear()
+
+                await self._content_guardrails.validate_assistant_output(
+                    safe_text,
+                    system_prompt=prepared.system_prompt,
+                )
+
+                yield ChatEvent(
+                    type="message.delta",
+                    conversation_id=conversation.id,
+                    run_id=run_id,
+                    data={"source": "main", "text": safe_text},
+                )
 
             checkpoint_id = await self.latest_checkpoint_id(prepared.thread_id)
             yield ChatEvent(
@@ -435,6 +504,27 @@ class DeepAgentRuntime:
 
         except asyncio.CancelledError:
             raise
+        except GuardrailBlocked as exc:
+            # Never log the detected secret/PII itself.
+            logger.warning(
+                "Deep Agent response blocked by guardrail: "
+                "code=%s validator=%s boundary=%s",
+                exc.code,
+                exc.finding.validator,
+                exc.finding.boundary,
+            )
+
+            yield ChatEvent(
+                type="run.error",
+                conversation_id=conversation.id,
+                run_id=run_id,
+                data={
+                    "error": str(exc),
+                    "code": exc.code,
+                    "guardrail": exc.finding.validator,
+                    "boundary": exc.finding.boundary,
+                },
+            )
         except Exception as exc:
             logger.exception("Deep Agent chat run failed")
             yield ChatEvent(

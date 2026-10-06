@@ -16,6 +16,8 @@ from server.src.chat.runs import ChatRunRegistry
 from server.src.chat.runtime import PreparedAgentRun
 from server.src.chat.service import ChatService, InvalidAttachment
 from server.src.config import Settings
+from server.src.guardrails.content import ContentGuardrailService
+from server.src.guardrails.policy import PermissionPolicyStore
 from server.src.memory.storage.sqlite import SQLiteDatabase
 from server.src.skills.evaluation.fixtures import ReplayFixtureStore
 from server.src.skills.trajectory_store import TrajectoryStore
@@ -48,6 +50,7 @@ class FakeRuntime:
             model_name=model_name or conversation.model,
             mcp_tool_count=0,
             thread_id=thread_id,
+            system_prompt="",
         )
 
     async def stream_prepared(self, *, prepared, conversation, user_content, attachments, cancel_event):  # noqa: ANN001
@@ -96,6 +99,7 @@ async def test_edit_and_regenerate_create_langgraph_style_branches(tmp_path) -> 
             ChatRunRegistry(),
             TrajectoryStore(db),
             ReplayFixtureStore(settings, db),
+            ContentGuardrailService(settings, PermissionPolicyStore(db)),
         )
         conversation = await service.create_conversation(
             ConversationCreate(model="test/model")
@@ -172,6 +176,7 @@ async def test_invalid_attachment_fails_during_preflight(tmp_path) -> None:
             ChatRunRegistry(),
             TrajectoryStore(db),
             ReplayFixtureStore(settings, db),
+            ContentGuardrailService(settings, PermissionPolicyStore(db)),
         )
         conversation = await service.create_conversation(ConversationCreate(model="test/model"))
         with pytest.raises(InvalidAttachment):

@@ -33,6 +33,9 @@ from server.src.chat.service import (
     PreparedTurn,
 )
 from server.src.chat.streaming import sse_stream
+from server.src.guardrails.content import (
+    GuardrailBlocked,
+)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -48,6 +51,16 @@ def _raise_preflight(exc: Exception) -> None:
         raise HTTPException(status_code=404, detail="Message not found") from exc
     if isinstance(exc, RunAlreadyActive):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if isinstance(exc, GuardrailBlocked):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": str(exc),
+                "code": exc.code,
+                "guardrail": exc.finding.validator,
+                "boundary": exc.finding.boundary,
+            },
+        ) from exc
     if isinstance(exc, (InvalidAttachment, InvalidMessageOperation, InvalidCheckpoint, ValueError)):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if isinstance(exc, BifrostConfigurationError):

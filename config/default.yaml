@@ -138,6 +138,44 @@ guardrails:
   rules_path: "config/guardrail-rules.yaml"
   hitl_enabled: true
 
+  content:
+    enabled: true
+
+    prompt_injection_enabled: true
+    prompt_injection_heuristic_threshold: 0.75
+
+    # User-written prompts are not blindly rejected.
+    user_prompt_action: "warn"
+
+    # Tool / web / attachment / RAG output is untrusted data.
+    untrusted_content_action: "block"
+
+    jailbreak_enabled: false
+    jailbreak_threshold: 0.90
+
+    secrets_enabled: true
+
+    pii_enabled: true
+    pii_entities:
+      - "EMAIL_ADDRESS"
+      - "PHONE_NUMBER"
+      - "CREDIT_CARD"
+      - "IBAN_CODE"
+      - "IP_ADDRESS"
+      - "US_SSN"
+      - "US_BANK_NUMBER"
+
+    # Providers with this prefix are considered local/private.
+    local_providers:
+      - "ollama"
+
+    # For non-local providers:
+    # allow | redact | block
+    cloud_sensitive_action: "redact"
+
+    system_prompt_leakage_enabled: true
+    system_prompt_leakage_threshold: 40
+
 sandbox:
   enabled: true
   image: "trajecta-sandbox:latest"
