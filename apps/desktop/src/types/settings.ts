@@ -396,6 +396,52 @@ export interface SkillAnalytics {
   regressions: SkillRegression[];
 }
 
+export type LlmProviderType =
+  | "openai"
+  | "anthropic"
+  | "ollama"
+  | "openai_compat";
+
+/** GET /llm — Bifrost gateway status plus defaults and provider entries. */
+export interface LlmCatalog {
+  gateway: {
+    type: string;
+    url: string | null;
+    reachable: boolean;
+  };
+  default_provider: string;
+  default_model: string;
+  providers: LlmProviderEntry[];
+}
+
+export interface LlmProviderEntry {
+  id: string;
+  type: LlmProviderType;
+  configured: boolean;
+  reachable: boolean;
+}
+
+/** PUT /llm/providers/{id} — keys go to Bifrost, never agent_settings. */
+export interface LlmProviderUpsert {
+  type: LlmProviderType;
+  base_url?: string | null;
+  api_key?: string | null;
+  extra_headers?: Record<string, string> | null;
+}
+
+/** POST /llm/providers/{id}/test */
+export interface LlmTestResult {
+  reachable: boolean;
+  status: string;
+  detail?: string | null;
+}
+
+/** PUT /llm/default — applied to NEW conversations only. */
+export interface LlmDefaultUpdate {
+  default_provider: string;
+  default_model: string;
+}
+
 export type ScheduleType =
   | "once"
   | "interval"

@@ -1,5 +1,6 @@
 export type SettingsPage =
   | "general"
+  | "llm-providers"
   | "memory"
   | "guardrails"
   | "permissions"

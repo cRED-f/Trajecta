@@ -4,6 +4,7 @@ import {
   EmbeddingSettings,
   GeneralSettings,
   GuardrailsSettings,
+  LLMProvidersSettings,
   McpToolsSettings,
   PermissionsSettings,
   SettingsHeader,
@@ -82,6 +83,13 @@ export function SettingsModal({
               theme={theme}
               backendOnline={backendOnline}
               onSetTheme={onSetTheme}
+            />
+          )}
+
+          {page === "llm-providers" && (
+            <LLMProvidersSettings
+              enabled={open}
+              backendOnline={backendOnline}
             />
           )}
 

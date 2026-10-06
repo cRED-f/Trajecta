@@ -1,6 +1,7 @@
 export { EmbeddingSettings } from "./EmbeddingSettings";
 export { GeneralSettings } from "./GeneralSettings";
 export { GuardrailsSettings } from "./GuardrailsSettings";
+export { LLMProvidersSettings } from "./LLMProvidersSettings";
 export { McpToolsSettings } from "./McpToolsSettings";
 export { MemorySettings } from "./MemorySettings";
 export { PermissionsSettings } from "./PermissionsSettings";

@@ -35,14 +35,7 @@
         "name": "trajecta-local",
         "value": "env.BIFROST_VIRTUAL_KEY",
         "is_active": true,
-        "provider_configs": [
-          {
-            "provider": "9router",
-            "allowed_models": ["*"],
-            "key_ids": ["*"],
-            "weight": 1.0
-          }
-        ]
+        "allow_all_providers": true
       }
     ]
   },

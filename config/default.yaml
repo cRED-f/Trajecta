@@ -187,6 +187,8 @@ sandbox:
 
 chat:
   uploads_path: ".trajecta/uploads"
+  # First-run fallback only. The user-selected default is persisted
+  # in agent_settings ("llm.runtime") and wins for new conversations.
   default_model: "9router/claude-opus-free"
   max_upload_mb: 100
   max_extracted_chars: 2000000

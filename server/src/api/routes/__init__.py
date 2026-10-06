@@ -9,6 +9,7 @@ from .tools import router as tools_router
 from .permissions import router as permissions_router
 from .guardrails import router as guardrails_router
 from .models import router as models_router
+from .llm import router as llm_router
 from .traces import router as traces_router
 from .chat import router as chat_router
 from .health import router as health_router
@@ -22,6 +23,7 @@ all_routers = [
     permissions_router,
     guardrails_router,
     models_router,
+    llm_router,
     traces_router,
     health_router,
 ]

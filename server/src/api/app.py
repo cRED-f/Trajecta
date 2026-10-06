@@ -18,6 +18,7 @@ from server.src.api.routes import all_routers
 from server.src.chat import build_chat_service
 from server.src.chat.mcp import MCPToolProvider
 from server.src.chat.mcp_settings import MCPToolSettingsStore
+from server.src.chat.model import BifrostModelFactory
 from server.src.chat.models_catalog import ModelCatalogService
 from server.src.chat.models import ConversationCreate, SendMessageRequest
 from server.src.config import Settings
@@ -25,6 +26,8 @@ from server.src.guardrails.content import (
     ContentGuardrailService,
 )
 from server.src.guardrails.policy import PermissionPolicyStore
+from server.src.llm_gateway.bifrost_admin import BifrostAdminClient
+from server.src.llm_gateway.settings import LLMSettingsStore
 from server.src.memory.provider import MemoryProvider, get_memory_provider
 from server.src.runtime_encoding import configure_utf8_runtime
 from server.src.skills.service import build_skills_service
@@ -81,6 +84,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             personal_tools,
         )
 
+        # Bifrost control plane (Settings -> management API -> config DB)
+        # and the persisted global default for new conversations.
+        llm_settings = LLMSettingsStore(
+            memory.sqlite,
+            bootstrap_model=settings.chat.default_model,
+        )
+        llm_admin = BifrostAdminClient(
+            BifrostModelFactory(settings).gateway_base_url(),
+        )
+
         chat = build_chat_service(
             settings,
             memory,
@@ -92,6 +105,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             trajectories=skills.trajectories,
             replay_fixtures=skills.replay_fixtures,
             skills=skills,
+            llm_settings=llm_settings,
         )
 
         async def run_scheduled_job(job: dict) -> str:
@@ -136,6 +150,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.skills_service = skills
         app.state.scheduler = scheduler
         app.state.model_catalog = ModelCatalogService(settings)
+        app.state.llm_admin = llm_admin
+        app.state.llm_settings = llm_settings
 
         # Starts a lightweight worker. No mining happens unless the success
         # threshold is reached.

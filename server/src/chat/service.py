@@ -45,6 +45,7 @@ from server.src.skills.trajectory_store import TrajectoryStore
 from server.src.tools.verification import ConnectorVerificationService
 
 if TYPE_CHECKING:
+    from server.src.llm_gateway.settings import LLMSettingsStore
     from server.src.skills.analytics import SkillExecutionAttributor
     from server.src.skills.experiments import SkillExperimentService
     from server.src.skills.learning import SkillLearningCoordinator
@@ -111,6 +112,7 @@ class ChatService:
         skill_learning: "SkillLearningCoordinator | None" = None,
         skill_execution: "SkillExecutionAttributor | None" = None,
         skills: "SkillsService | None" = None,
+        llm_settings: "LLMSettingsStore | None" = None,
     ) -> None:
         self._settings = settings
         self._models = BifrostModelFactory(settings)
@@ -123,6 +125,7 @@ class ChatService:
         self._replay_fixtures = replay_fixtures
         self._content_guardrails = content_guardrails
         self._skills = skills
+        self._llm_settings = llm_settings
 
         # One service covers everything; the individual collaborators stay
         # overridable so callers that only have an attributor still work.
@@ -140,9 +143,17 @@ class ChatService:
     # ------------------------------------------------------------------
 
     async def create_conversation(self, request: ConversationCreate) -> Conversation:
+        model = request.model
+
+        # The global default applies to NEW conversations only; existing
+        # conversations keep the model they were created with.
+        if model is None and self._llm_settings is not None:
+            runtime = await self._llm_settings.get()
+            model = runtime["default_model"]
+
         return await self._repository.create_conversation(
             title=request.title,
-            model=self._models.canonical_model_name(request.model),
+            model=self._models.canonical_model_name(model),
             metadata=request.metadata,
         )
 
@@ -1206,9 +1217,18 @@ def build_chat_service(
     skill_execution: "SkillExecutionAttributor | None" = None,
     skills: "SkillsService | None" = None,
     skill_experiments: "SkillExperimentService | None" = None,
+    llm_settings: "LLMSettingsStore | None" = None,
 ) -> ChatService:
     if memory.sqlite is None:
         raise RuntimeError("MemoryProvider must be opened before ChatService")
+
+    if llm_settings is None:
+        from server.src.llm_gateway.settings import LLMSettingsStore
+
+        llm_settings = LLMSettingsStore(
+            memory.sqlite,
+            bootstrap_model=settings.chat.default_model,
+        )
 
     permission_policy = permission_policy or PermissionPolicyStore(memory.sqlite)
 
@@ -1272,4 +1292,5 @@ def build_chat_service(
         skill_learning,
         skill_execution,
         skills,
+        llm_settings,
     )

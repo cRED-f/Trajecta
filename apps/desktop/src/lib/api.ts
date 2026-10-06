@@ -20,6 +20,11 @@ import type {
   ContentGuardrailSettings,
   EmbeddingCatalog,
   EmbeddingSelectionResult,
+  LlmCatalog,
+  LlmDefaultUpdate,
+  LlmProviderEntry,
+  LlmProviderUpsert,
+  LlmTestResult,
   MemoryCatalog,
   PermissionCatalog,
   PermissionMode,
@@ -521,6 +526,60 @@ export const settingsApi = {
     return request("/memory/embedding", {
       method: "PATCH",
       body: JSON.stringify({ enabled }),
+    });
+  },
+
+  /** Gateway status, defaults, and the provider catalog behind Bifrost. */
+  llmCatalog(): Promise<LlmCatalog> {
+    return request("/llm");
+  },
+
+  upsertLlmProvider(
+    provider: string,
+    body: LlmProviderUpsert,
+  ): Promise<LlmProviderEntry> {
+    return request(
+      `/llm/providers/${encodeURIComponent(provider)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(body),
+      },
+    );
+  },
+
+  deleteLlmProvider(
+    provider: string,
+  ): Promise<{ deleted: string }> {
+    return request(
+      `/llm/providers/${encodeURIComponent(provider)}`,
+      { method: "DELETE" },
+    );
+  },
+
+  llmProviderModels(
+    provider: string,
+  ): Promise<{ models: string[] }> {
+    return request(
+      `/llm/providers/${encodeURIComponent(provider)}/models`,
+    );
+  },
+
+  testLlmProvider(
+    provider: string,
+  ): Promise<LlmTestResult> {
+    return request(
+      `/llm/providers/${encodeURIComponent(provider)}/test`,
+      { method: "POST" },
+    );
+  },
+
+  /** Persisted global default; applies to new conversations only. */
+  setLlmDefault(
+    body: LlmDefaultUpdate,
+  ): Promise<LlmDefaultUpdate> {
+    return request("/llm/default", {
+      method: "PUT",
+      body: JSON.stringify(body),
     });
   },
 

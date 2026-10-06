@@ -1,6 +1,7 @@
 import {
   Brain,
   PlugZap,
+  Server,
   Settings,
   ShieldAlert,
   ShieldCheck,
@@ -77,8 +78,16 @@ export function SettingsShell({
         />
 
         <div className="settings-sidebar__group-label">
-          Agent
+          AI
         </div>
+
+        <SettingsNavItem
+          page="llm-providers"
+          current={page}
+          icon={<Server size={16} />}
+          label="LLM Providers"
+          onSelect={onPageChange}
+        />
 
         <SettingsNavItem
           page="memory"
