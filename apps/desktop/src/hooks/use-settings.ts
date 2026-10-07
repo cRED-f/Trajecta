@@ -195,8 +195,16 @@ export function useLlmActions() {
   const queryClient = useQueryClient();
 
   function invalidate() {
+    // Refresh provider/settings information,
+    // including provider-specific model queries.
     void queryClient.invalidateQueries({
       queryKey: settingsQueryKeys.llm,
+    });
+
+    // Chat maintains a separate model catalog.
+    // Provider/model changes must refresh it too.
+    void queryClient.invalidateQueries({
+      queryKey: ["models"],
     });
   }
 

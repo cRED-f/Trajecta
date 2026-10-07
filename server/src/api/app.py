@@ -149,7 +149,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.chat_service = chat
         app.state.skills_service = skills
         app.state.scheduler = scheduler
-        app.state.model_catalog = ModelCatalogService(settings)
+        app.state.model_catalog = ModelCatalogService(
+            settings,
+            admin=llm_admin,
+        )
         app.state.llm_admin = llm_admin
         app.state.llm_settings = llm_settings
 

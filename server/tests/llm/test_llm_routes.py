@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from server.src.api.routes.llm import router
+from server.src.llm_gateway.bifrost_admin import BifrostAdminError
 
 
 class FakeAdmin:
@@ -219,6 +220,47 @@ def test_upsert_custom_provider_forwards_to_bifrost_and_flips_vk() -> None:
     ]
     # The Trajecta virtual key must accept the new provider.
     assert admin.vk_flips == 1
+
+
+def test_upsert_discovers_models_without_pressing_test() -> None:
+    """Saving a provider refreshes Bifrost's models, so Chat sees them."""
+    client, admin, _ = _client()
+
+    response = client.put(
+        "/api/v1/llm/providers/myrelay",
+        json={
+            "type": "openai_compat",
+            "base_url": "http://localhost:9000",
+            "api_key": "sk-test",
+        },
+    )
+
+    assert response.status_code == 200
+    assert admin.tests == ["myrelay"]
+
+
+def test_upsert_saves_even_when_discovery_is_down() -> None:
+    """Discovery is best-effort — an unreachable upstream still saves."""
+
+    class FailingAdmin(FakeAdmin):
+        async def test_provider(self, provider: str) -> dict:
+            raise BifrostAdminError("upstream is down")
+
+    admin = FailingAdmin()
+    client, _, _ = _client(admin=admin)
+
+    response = client.put(
+        "/api/v1/llm/providers/myrelay",
+        json={
+            "type": "openai_compat",
+            "base_url": "http://localhost:9000",
+            "api_key": "sk-test",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["configured"] is True
+    assert admin.upserts and admin.vk_flips == 1
 
 
 def test_ollama_defaults_to_the_docker_safe_base_url() -> None:

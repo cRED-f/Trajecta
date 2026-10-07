@@ -189,9 +189,8 @@ class ChatService:
         return await self.get_conversation(conversation_id)
 
     async def select_model(self, conversation_id: str, model: str) -> Conversation:
-        canonical = self._models.canonical_model_name(model)
-
         await self._require_conversation(conversation_id)
+        canonical = await self._models.resolve_or_default(model)
         await self._repository.update_model(conversation_id, canonical)
         result = await self._repository.get_conversation(conversation_id)
         assert result is not None

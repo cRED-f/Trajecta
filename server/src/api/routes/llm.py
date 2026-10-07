@@ -253,8 +253,19 @@ async def upsert_provider(
             extra_headers=body.extra_headers,
             api_key=body.api_key,
         )
-        # Providers added here must be usable by the chat virtual key.
+        # The Trajecta virtual key must be able to use newly
+        # configured providers.
         await admin.ensure_allow_all_providers()
+        # Immediately ask Bifrost to discover/refresh the
+        # provider's models.
+        #
+        # This is intentionally best-effort: the provider
+        # configuration should still be saved if the upstream
+        # provider is temporarily unavailable.
+        try:
+            await admin.test_provider(provider)
+        except BifrostAdminError:
+            pass
         existing = await admin.get_provider(provider)
         keys = (
             await admin.provider_keys(provider)

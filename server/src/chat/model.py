@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import logging
 import os
 
 from langchain_openai import ChatOpenAI
 
 from server.src.config import Settings
-
-logger = logging.getLogger(__name__)
 
 
 class BifrostConfigurationError(
@@ -149,24 +146,37 @@ class BifrostModelFactory:
         self,
         model_name: str | None = None,
     ) -> str:
-        """
-        Validate model against Bifrost catalog; fall back to default
-        when the model does not exist (stale/unknown model names).
-        """
-        canonical = self.canonical_model_name(model_name)
-        known = await self._known_models()
-        if known is not None and canonical not in known:
-            default = self.canonical_model_name(None)
-            logger.warning(
-                "Model %r not found in Bifrost catalog; "
-                "falling back to default %r",
-                canonical,
-                default,
+        """Resolve and validate a model without silently changing providers."""
+        canonical = self.canonical_model_name(
+            model_name
+        )
+        provider = canonical.split(
+            "/",
+            1,
+        )[0]
+        known = await self._known_models(
+            provider
+        )
+        # If Bifrost model discovery itself is unavailable,
+        # let the actual inference request determine whether
+        # the model can be used.
+        if known is None:
+            return canonical
+        if canonical not in known:
+            raise BifrostConfigurationError(
+                (
+                    f"Selected model {canonical!r} "
+                    f"is not available from provider "
+                    f"{provider!r}. Refresh the provider's "
+                    "model list and try again."
+                )
             )
-            return default
         return canonical
 
-    async def _known_models(self) -> set[str] | None:
+    async def _known_models(
+        self,
+        provider: str,
+    ) -> set[str] | None:
         import httpx
 
         base = self.gateway_base_url()
@@ -181,6 +191,7 @@ class BifrostModelFactory:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.get(
                     f"{base.rstrip('/')}/v1/models",
+                    params={"provider": provider},
                     headers=headers,
                 )
                 response.raise_for_status()
@@ -190,10 +201,19 @@ class BifrostModelFactory:
                     if isinstance(payload, dict)
                     else []
                 )
-                return {
-                    self.canonical_model_name(str(item["id"]))
-                    for item in items
-                    if isinstance(item, dict) and item.get("id")
-                }
+                known: set[str] = set()
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    model_id = str(item.get("id") or "").strip()
+                    if not model_id:
+                        continue
+                    # The catalog is scoped to `provider`, so a bare id
+                    # belongs to that provider — never to whatever
+                    # chat.default_model happens to point at.
+                    if "/" not in model_id:
+                        model_id = f"{provider}/{model_id}"
+                    known.add(model_id)
+                return known
         except Exception:
             return None

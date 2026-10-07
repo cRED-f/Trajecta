@@ -8,14 +8,24 @@ import httpx
 from server.src.chat.model import BifrostModelFactory
 from server.src.chat.models import ModelCatalog, ModelInfo
 from server.src.config import Settings
+from server.src.llm_gateway.bifrost_admin import (
+    BifrostAdminClient,
+    BifrostAdminError,
+)
 
 
 class ModelCatalogService:
     """Best-effort model discovery through Bifrost with configured fallbacks."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        admin: BifrostAdminClient | None = None,
+    ) -> None:
         self._settings = settings
         self._factory = BifrostModelFactory(settings)
+        self._admin = admin
 
     async def list_models(self) -> ModelCatalog:
         default_model = (
@@ -67,6 +77,47 @@ class ModelCatalogService:
                             },
                         )
             except (httpx.HTTPError, ValueError):
+                pass
+
+        # Also read Bifrost's management model catalog.
+        #
+        # Settings already uses this catalog, so merging it
+        # here keeps the Chat model selector consistent with
+        # Settings after dynamically adding providers such
+        # as Ollama.
+        if self._admin is not None:
+            try:
+                if await self._admin.health():
+                    gateway_reachable = True
+                    providers = await self._admin.list_providers()
+                    for entry in providers:
+                        provider = str(entry.get("name") or "").strip()
+                        if not provider:
+                            continue
+                        try:
+                            discovered = await self._admin.provider_models(
+                                provider
+                            )
+                        except BifrostAdminError:
+                            continue
+                        for raw_model_id in discovered:
+                            model_id = self._factory.canonical_model_name(
+                                str(raw_model_id).strip()
+                            )
+                            if not model_id:
+                                continue
+                            # /v1/models carries owned_by and the rest of
+                            # the payload, so keep it when both catalogs
+                            # know the same model.
+                            gateway_models.setdefault(
+                                model_id,
+                                ModelInfo(
+                                    id=model_id,
+                                    provider=model_id.split("/", 1)[0],
+                                    source="bifrost",
+                                ),
+                            )
+            except BifrostAdminError:
                 pass
 
         merged = {**configured, **gateway_models}
