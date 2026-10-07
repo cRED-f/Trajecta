@@ -964,25 +964,29 @@ select:disabled {
 }
 
 .scroll-to-latest {
-  position: sticky;
+  /* Anchored above the composer instead of riding the scroll flow, so
+     it can never land mid-screen over the text. */
+  position: absolute;
 
-  bottom: 24px;
+  top: -36px;
+  left: 50%;
+  transform: translateX(-50%);
 
   display: flex;
-
-  margin: 0 auto;
-
-  width: 36px;
-  height: 36px;
-
   align-items: center;
   justify-content: center;
 
-  background: var(--color-graphite-ink);
+  width: 28px;
+  height: 28px;
+
+  padding: 0;
 
   color: var(--color-pure-white);
 
-  border-radius: 50%;
+  background: var(--color-graphite-ink);
+
+  border: 0;
+  border-radius: 8px;
 
   cursor: pointer;
 
@@ -5396,6 +5400,12 @@ select:disabled {
 /* ================================================================ */
 /* LLM provider settings                                            */
 /* ================================================================ */
+
+/* The h4's bottom margin lives inside this flex row, so it never
+   separates the row from the card below it — give the row its own. */
+.llm-providers__heading-row {
+  margin-bottom: 10px;
+}
 
 .llm-status-pill--idle {
   color: var(--color-mid-ash);

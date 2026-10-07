@@ -70,7 +70,10 @@ STANDARD_PROVIDER_IDS = frozenset(
     }
 )
 
-DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+# Bifrost runs in Docker (docker-compose.yaml maps host.docker.internal to
+# the host gateway), so "localhost" would point at the Bifrost container
+# itself rather than the Ollama process on the host.
+DEFAULT_OLLAMA_BASE_URL = "http://host.docker.internal:11434"
 
 # The seeded Trajecta virtual key. It must allow every provider so a
 # provider added from Settings immediately works for chat.
@@ -114,6 +117,21 @@ def key_status_ok(key: dict) -> bool:
     """
     status = str(key.get("status") or "").strip().lower()
     return "fail" not in status and "error" not in status
+
+
+def _ollama_key_url(key: dict) -> str:
+    """The endpoint stored on an Ollama key, or "" when unset.
+
+    Bifrost reports secrets as ``{"value": ..., "type": ...}`` and
+    redacts them; the URL is not a credential, so it comes back whole.
+    """
+    config = key.get("ollama_key_config")
+    if not isinstance(config, dict):
+        return ""
+    url: Any = config.get("url")
+    if isinstance(url, dict):
+        url = url.get("value")
+    return str(url or "")
 
 
 def _concurrency_from(stored: Any) -> dict:
@@ -410,6 +428,7 @@ class BifrostAdminClient:
             provider,
             provider_type=provider_type,
             api_key=api_key,
+            base_url=base_url,
         )
 
     async def _ensure_key(
@@ -418,32 +437,26 @@ class BifrostAdminClient:
         *,
         provider_type: str,
         api_key: str | None,
+        base_url: str | None = None,
     ) -> None:
         """Create or rotate the provider's API key.
 
-        With no api_key from the caller, existing keys are left alone;
-        Ollama is the exception — it needs a key row (empty value is
-        allowed) for discovery and routing to have something to hold.
+        With no api_key from the caller, existing keys are left alone.
+        Ollama needs no credential but does need a key row, so it takes
+        its own path (_ensure_ollama_key) to carry the endpoint URL.
         """
         keys = await self.provider_keys(provider)
 
+        if provider_type == "ollama":
+            await self._ensure_ollama_key(
+                provider,
+                keys=keys,
+                api_key=api_key,
+                base_url=base_url,
+            )
+            return
+
         if not api_key:
-            if provider_type == "ollama" and not keys:
-                status, payload = await self._request(
-                    "POST",
-                    f"/api/providers/{provider}/keys",
-                    json={
-                        "name": f"{provider}-local",
-                        "value": "",
-                        "models": ["*"],
-                        "weight": 1.0,
-                    },
-                )
-                self._expect(
-                    f"Creating a key for provider {provider!r} failed",
-                    status,
-                    payload,
-                )
             return
 
         if not keys:
@@ -475,6 +488,72 @@ class BifrostAdminClient:
             "PUT",
             f"/api/providers/{provider}/keys/{key_id}",
             json={"value": api_key},
+        )
+        self._expect(
+            f"Updating the key for provider {provider!r} failed",
+            status,
+            payload,
+        )
+
+    async def _ensure_ollama_key(
+        self,
+        provider: str,
+        *,
+        keys: list[dict],
+        api_key: str | None,
+        base_url: str | None,
+    ) -> None:
+        """Give Ollama a key row carrying its endpoint URL.
+
+        Ollama needs no credential, but Bifrost still requires a key
+        record — and rejects it without ``ollama_key_config.url``. The
+        provider's network_config does not cover native Ollama model
+        discovery or routing, so the URL has to live on the key itself.
+
+        Unlike other providers this write is a replace, not a merge:
+        name, models and weight must ride along or they reset.
+        """
+        url = base_url or DEFAULT_OLLAMA_BASE_URL
+        stored = keys[0] if keys else None
+
+        if (
+            stored is not None
+            and not api_key
+            and _ollama_key_url(stored) == url
+        ):
+            # Already pointed at the right endpoint; leave it alone.
+            return
+
+        body: dict[str, Any] = {
+            "name": (stored or {}).get("name") or f"{provider}-local",
+            "value": api_key or "",
+            "models": (stored or {}).get("models") or ["*"],
+            "weight": (stored or {}).get("weight") or 1.0,
+            "ollama_key_config": {"url": url},
+        }
+
+        if stored is None:
+            status, payload = await self._request(
+                "POST",
+                f"/api/providers/{provider}/keys",
+                json=body,
+            )
+            self._expect(
+                f"Creating a key for provider {provider!r} failed",
+                status,
+                payload,
+            )
+            return
+
+        key_id = str(stored.get("id") or "")
+        if not key_id:
+            raise BifrostAdminError(
+                f"Provider {provider!r} has a key without an id"
+            )
+        status, payload = await self._request(
+            "PUT",
+            f"/api/providers/{provider}/keys/{key_id}",
+            json=body,
         )
         self._expect(
             f"Updating the key for provider {provider!r} failed",

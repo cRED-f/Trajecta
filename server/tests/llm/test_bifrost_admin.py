@@ -227,6 +227,168 @@ async def test_upsert_without_a_key_leaves_existing_keys_alone(
     # only keys call the handler allows, otherwise it would 404).
 
 
+async def test_ollama_key_receives_url(monkeypatch) -> None:
+    """Bifrost 400s on Ollama keys that lack ollama_key_config.url."""
+    provider_bodies: list[dict] = []
+    key_bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        method, path = request.method, request.url.path
+
+        if (method, path) == ("GET", "/api/providers/ollama"):
+            return httpx.Response(
+                200,
+                json={
+                    "name": "ollama",
+                    "network_config": {
+                        "base_url": "http://localhost:11434",
+                        "allow_private_network": True,
+                    },
+                    "concurrency_and_buffer_size": {
+                        "concurrency": 1000,
+                        "buffer_size": 5000,
+                    },
+                },
+            )
+
+        if (method, path) == ("PUT", "/api/providers/ollama"):
+            provider_bodies.append(json.loads(request.content))
+            return httpx.Response(200, json={"name": "ollama"})
+
+        if (method, path) == ("GET", "/api/providers/ollama/keys"):
+            return httpx.Response(200, json={"keys": [], "total": 0})
+
+        if (method, path) == ("POST", "/api/providers/ollama/keys"):
+            key_bodies.append(json.loads(request.content))
+            return httpx.Response(201, json={"id": "k1"})
+
+        return httpx.Response(
+            404,
+            json={"error": f"no route {method} {path}"},
+        )
+
+    _patch_transport(monkeypatch, handler)
+    admin = BifrostAdminClient("http://bifrost.test")
+
+    # No base_url from the caller — the Docker-safe default applies to
+    # both the provider's network config and the key itself.
+    await admin.upsert_provider(provider="ollama", provider_type="ollama")
+
+    assert provider_bodies[0]["network_config"]["base_url"] == (
+        "http://host.docker.internal:11434"
+    )
+    assert key_bodies == [
+        {
+            "name": "ollama-local",
+            "value": "",
+            "models": ["*"],
+            "weight": 1.0,
+            "ollama_key_config": {
+                "url": "http://host.docker.internal:11434"
+            },
+        }
+    ]
+
+
+async def test_ollama_key_url_is_backfilled_when_stale(
+    monkeypatch,
+) -> None:
+    """An existing key keeps working — its URL is corrected in place."""
+    state = {
+        "url": "http://localhost:11434",
+        "id": "k1",
+    }
+    key_writes: list[tuple[str, dict]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        method, path = request.method, request.url.path
+
+        if (method, path) == ("GET", "/api/providers/ollama"):
+            return httpx.Response(
+                200,
+                json={
+                    "name": "ollama",
+                    "network_config": {
+                        "base_url": state["url"],
+                        "allow_private_network": True,
+                    },
+                    "concurrency_and_buffer_size": {
+                        "concurrency": 1000,
+                        "buffer_size": 5000,
+                    },
+                },
+            )
+
+        if (method, path) == ("PUT", "/api/providers/ollama"):
+            return httpx.Response(200, json={"name": "ollama"})
+
+        if (method, path) == ("GET", "/api/providers/ollama/keys"):
+            return httpx.Response(
+                200,
+                json={
+                    "keys": [
+                        {
+                            "id": state["id"],
+                            "name": "ollama-local",
+                            "value": {"value": "", "type": "plain_text"},
+                            "models": ["*"],
+                            "weight": 1.0,
+                            "ollama_key_config": {
+                                "url": {
+                                    "value": state["url"],
+                                    "type": "plain_text",
+                                }
+                            },
+                            "status": "success",
+                        }
+                    ],
+                    "total": 1,
+                },
+            )
+
+        if method == "PUT" and path.startswith(
+            "/api/providers/ollama/keys/"
+        ):
+            body = json.loads(request.content)
+            key_writes.append((path, body))
+            state["url"] = body["ollama_key_config"]["url"]
+            return httpx.Response(200, json={"id": state["id"]})
+
+        if (method, path) == ("POST", "/api/providers/ollama/keys"):
+            raise AssertionError("an existing key must be updated, not added")
+
+        return httpx.Response(
+            404,
+            json={"error": f"no route {method} {path}"},
+        )
+
+    _patch_transport(monkeypatch, handler)
+    admin = BifrostAdminClient("http://bifrost.test")
+
+    await admin.upsert_provider(provider="ollama", provider_type="ollama")
+
+    # A key write is a replace, not a merge — models and weight have to
+    # come back with it or they reset and routing stops matching.
+    assert key_writes == [
+        (
+            "/api/providers/ollama/keys/k1",
+            {
+                "name": "ollama-local",
+                "value": "",
+                "models": ["*"],
+                "weight": 1.0,
+                "ollama_key_config": {
+                    "url": "http://host.docker.internal:11434"
+                },
+            },
+        )
+    ]
+
+    # Re-saving with the URL already correct writes nothing.
+    await admin.upsert_provider(provider="ollama", provider_type="ollama")
+    assert len(key_writes) == 1
+
+
 async def test_test_provider_without_keys_is_not_reachable(
     monkeypatch,
 ) -> None:

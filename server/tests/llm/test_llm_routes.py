@@ -221,7 +221,7 @@ def test_upsert_custom_provider_forwards_to_bifrost_and_flips_vk() -> None:
     assert admin.vk_flips == 1
 
 
-def test_ollama_defaults_to_the_local_base_url() -> None:
+def test_ollama_defaults_to_the_docker_safe_base_url() -> None:
     client, admin, _ = _client()
 
     response = client.put(
@@ -230,7 +230,10 @@ def test_ollama_defaults_to_the_local_base_url() -> None:
     )
 
     assert response.status_code == 200
-    assert admin.upserts[0]["base_url"] == "http://localhost:11434"
+    # Bifrost runs in Docker, where localhost is the container itself.
+    assert admin.upserts[0]["base_url"] == (
+        "http://host.docker.internal:11434"
+    )
     assert admin.upserts[0]["api_key"] is None
     assert admin.vk_flips == 1
 

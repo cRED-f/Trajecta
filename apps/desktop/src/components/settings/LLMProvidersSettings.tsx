@@ -475,7 +475,7 @@ export function LLMProvidersSettings({ enabled, backendOnline }: Props) {
 
       {/* Providers */}
       <div className="settings-subsection">
-        <div className="settings-subsection__heading-row">
+        <div className="settings-subsection__heading-row llm-providers__heading-row">
           <h4 className="settings-subsection__heading">Providers</h4>
 
           <button
@@ -661,7 +661,7 @@ function ProviderFormFields({
               type="text"
               placeholder={
                 form.type === "ollama"
-                  ? "http://localhost:11434"
+                  ? "http://host.docker.internal:11434"
                   : "https://api.example.com/v1"
               }
               value={form.baseUrl}
@@ -690,7 +690,8 @@ function ProviderFormFields({
 
       <p className="llm-form__note">
         {form.type === "ollama"
-          ? "Ollama runs locally — no API key needed."
+          ? "Ollama runs locally — no API key needed. When Bifrost runs " +
+            "in Docker, use http://host.docker.internal:11434."
           : "The key is forwarded to Bifrost and never stored in Trajecta."}
         {!form.isNew && showBaseUrl && form.type === "openai_compat"
           ? " The base URL replaces the stored one."

@@ -1,6 +1,5 @@
 import {
   AlertCircle,
-  ArrowDown,
 } from "lucide-react";
 
 import {
@@ -420,17 +419,6 @@ const approval =
           )}
 
           </div>
-
-        {scrolledUp && (
-          <button
-            className="scroll-to-latest"
-            type="button"
-            onClick={scrollToLatest}
-            aria-label="Jump to latest"
-          >
-            <ArrowDown size={16} />
-          </button>
-        )}
       </div>
 
       {memoryPanelOpen && (
@@ -469,6 +457,8 @@ const approval =
 
       <Composer
         running={running}
+        showJumpButton={scrolledUp}
+        onJumpToLatest={scrollToLatest}
         onSend={
           actions.send
         }

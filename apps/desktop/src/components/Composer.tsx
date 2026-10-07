@@ -1,4 +1,5 @@
 import {
+  ArrowDown,
   ArrowUp,
   Paperclip,
   Sparkles,
@@ -24,6 +25,11 @@ import { useChatStore } from "../stores/chat-store";
 interface Props {
   running: boolean;
 
+  /** Show the jump-to-latest button above the composer. */
+  showJumpButton: boolean;
+
+  onJumpToLatest(): void;
+
   onSend(): Promise<void> | void;
 
   onStop(): Promise<void> | void;
@@ -31,6 +37,8 @@ interface Props {
 
 export function Composer({
   running,
+  showJumpButton,
+  onJumpToLatest,
   onSend,
   onStop,
 }: Props) {
@@ -210,6 +218,18 @@ export function Composer({
 
   return (
     <div className="composer-dock">
+      {showJumpButton && (
+        <button
+          className="scroll-to-latest"
+          type="button"
+          onClick={onJumpToLatest}
+          aria-label="Jump to latest"
+          title="Jump to latest"
+        >
+          <ArrowDown size={15} />
+        </button>
+      )}
+
       <div
         className={`composer ${
           dragging
