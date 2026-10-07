@@ -1983,6 +1983,12 @@ select:disabled {
   color: var(--color-ink);
 }
 
+.run-timeline__dot--error {
+  color: #e25750;
+
+  border-color: #e25750;
+}
+
 .run-timeline__line {
   width: 1px;
 
@@ -2002,20 +2008,117 @@ select:disabled {
 .run-timeline__content {
   min-width: 0;
 
+  /* Long tool names, payloads, and meta lines wrap inside the column
+     instead of stretching the timeline past the window. */
+  overflow-wrap: anywhere;
+
   padding: 1px 0 12px 7px;
+}
+
+.run-timeline__title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  gap: 10px;
 }
 
 .run-timeline__title {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
 
   gap: 6px;
 
+  min-width: 0;
   min-height: 18px;
 
   color: var(--color-mid-ash);
 
   font-weight: 500;
+}
+
+.run-timeline__status {
+  flex: none;
+
+  color: var(--color-hollow);
+
+  font-size: 11px;
+}
+
+.run-timeline__status--active {
+  color: var(--color-ink);
+}
+
+.run-timeline__status--complete {
+  color: var(--color-mid-ash);
+}
+
+.run-timeline__status--error {
+  color: #e25750;
+}
+
+.run-timeline__source {
+  margin-top: 2px;
+
+  color: var(--color-hollow);
+
+  font-size: 11px;
+
+  overflow-wrap: anywhere;
+}
+
+.run-timeline__tool-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+
+  gap: 8px;
+
+  margin-top: 8px;
+}
+
+.run-timeline__payload {
+  min-width: 0;
+
+  padding: 8px 10px;
+
+  background: var(--color-sidebar-mist);
+
+  border: 1px solid var(--color-hairline);
+
+  border-radius: 10px;
+}
+
+.run-timeline__payload-label {
+  display: flex;
+  align-items: center;
+
+  gap: 6px;
+
+  margin-bottom: 6px;
+
+  color: var(--color-mid-ash);
+
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.run-timeline__payload pre {
+  max-height: 240px;
+
+  margin: 0;
+
+  overflow: auto;
+
+  /* Payloads are single-line JSON from the tool call; wrap them so the
+     timeline never scrolls the window sideways. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+
+  color: var(--color-graphite-ink);
+
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .run-timeline__dot--active ~ .run-timeline__content .run-timeline__title {
