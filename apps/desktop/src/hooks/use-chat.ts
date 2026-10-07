@@ -133,6 +133,8 @@ export function useChatActions() {
 
   const draft = useChatStore((state) => state.draft);
 
+  const setDraft = useChatStore((state) => state.setDraft);
+
   const files = useChatStore((state) => state.pendingFiles);
 
   const askQuote = useChatStore((state) => state.askQuote);
@@ -461,84 +463,114 @@ export function useChatActions() {
             .join("\n")}${typed ? `\n\n${typed}` : ""}`
         : typed;
 
-    const conversation = await ensureConversation();
+    // Capture everything the rest of the send needs, then drop the
+    // composer on Enter. Waiting for message.accepted kept the draft in
+    // the textarea until the backend answered, so the box looked stuck.
+    const mode = composeMode;
 
-    const conversationId = conversation.id;
+    const pending = files;
 
-    const uploaded =
-      files.length > 0
-        ? await chatApi.uploadAttachments(conversationId, files)
-        : [];
+    resetComposer();
 
-    const model = conversation.model;
+    // False until the text is safely in the transcript — only then is a
+    // failed send allowed to leave the textarea empty.
+    let handedOff = false;
 
-    if (composeMode.kind === "edit") {
-      const detail = await chatApi.getConversation(conversationId);
+    try {
+      const conversation = await ensureConversation();
 
-      const existingAttachments = messageAttachments(
-        detail,
-        composeMode.message,
-      );
+      const conversationId = conversation.id;
 
-      const attachmentIds =
-        uploaded.length > 0
-          ? [
-              ...existingAttachments.map((item) => item.id),
+      const uploaded =
+        pending.length > 0
+          ? await chatApi.uploadAttachments(conversationId, pending)
+          : [];
 
-              ...uploaded.map((item) => item.id),
-            ]
-          : null;
+      const model = conversation.model;
+
+      if (mode.kind === "edit") {
+        const detail = await chatApi.getConversation(conversationId);
+
+        const existingAttachments = messageAttachments(
+          detail,
+          mode.message,
+        );
+
+        const attachmentIds =
+          uploaded.length > 0
+            ? [
+                ...existingAttachments.map((item) => item.id),
+
+                ...uploaded.map((item) => item.id),
+              ]
+            : null;
+
+        handedOff = true;
+
+        await runStream(
+          conversationId,
+
+          (signal, onEvent) =>
+            chatApi.streamEdit(
+              conversationId,
+              mode.message.id,
+
+              {
+                content,
+                attachment_ids: attachmentIds,
+                model,
+              },
+
+              signal,
+              onEvent,
+            ),
+        );
+
+        return;
+      }
+
+      const optimisticMessageId =
+        appendOptimisticUserMessage(
+          conversationId,
+          content,
+          uploaded,
+        );
+
+      handedOff = true;
 
       await runStream(
         conversationId,
 
         (signal, onEvent) =>
-          chatApi.streamEdit(
+          chatApi.streamMessage(
             conversationId,
-            composeMode.message.id,
 
             {
               content,
-              attachment_ids: attachmentIds,
+              attachment_ids: uploaded.map((item) => item.id),
               model,
             },
 
             signal,
             onEvent,
           ),
-      );
 
-      return;
+        {
+          optimisticMessageId,
+        },
+      );
+    } catch (error) {
+      if (
+        !handedOff &&
+        !(error instanceof DOMException && error.name === "AbortError")
+      ) {
+        // Nothing reached the transcript — put the draft back instead of
+        // swallowing what the user typed.
+        setDraft(draft);
+      }
+
+      throw error;
     }
-
-    const optimisticMessageId =
-      appendOptimisticUserMessage(
-        conversationId,
-        content,
-        uploaded,
-      );
-
-    await runStream(
-      conversationId,
-
-      (signal, onEvent) =>
-        chatApi.streamMessage(
-          conversationId,
-
-          {
-            content,
-            attachment_ids: uploaded.map((item) => item.id),
-            model,
-          },
-
-          signal,
-          onEvent,
-        ),
-
-      {
-        optimisticMessageId,
-      },
-    );
   }
 
   async function resend(message: ChatMessage) {

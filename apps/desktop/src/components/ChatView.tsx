@@ -187,6 +187,8 @@ const approval =
   // scrolls up, stop following and surface a jump-to-latest button.
   // Pin the container's scrollTop directly — scrollIntoView can land
   // short while the message is still streaming and re-laying out.
+  // While scrolledUp is true (including during the button's smooth
+  // scroll) this stays out of the way so the animation can finish.
   useEffect(() => {
     if (!scrolledUp) {
       const el = scrollRef.current;
@@ -246,13 +248,19 @@ const approval =
   }, []);
 
   function scrollToLatest() {
-    setScrolledUp(false);
-
     const el = scrollRef.current;
 
-    if (el) {
-      el.scrollTop = el.scrollHeight;
+    if (!el) {
+      return;
     }
+
+    // Animate the jump instead of snapping. `scrolledUp` is deliberately
+    // left alone until the scroll handler sees the bottom: flipping it
+    // here would fire the pinning effect and cut the animation short.
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior: "smooth",
+    });
   }
 
   const streamVisible =
