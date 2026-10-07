@@ -1,10 +1,11 @@
 """Regression tests for the streaming run loop in chat.runtime.
 
-Covers two fixes:
+Covers two behaviors:
 1. Stop must cancel a run that is blocked on a silent model stream
    (the old loop only polled cancel_event when a chunk arrived).
-2. Long answers stream in validated batches before the model step
-   completes, instead of being quarantined until the updates event.
+2. Assistant text streams straight to message.delta as the model
+   emits it, before the model step completes -- no quarantine,
+   no post-generation validation.
 """
 
 from __future__ import annotations
@@ -17,7 +18,6 @@ from langchain_core.messages import AIMessageChunk
 
 from server.src.chat.models import Conversation
 from server.src.chat.runtime import (
-    OUTPUT_BATCH_CHARS,
     DeepAgentRuntime,
     PreparedAgentRun,
 )
@@ -42,27 +42,12 @@ class FakeAgent:
             yield event
 
 
-class StubGuardrails:
-    def __init__(self) -> None:
-        self.validated: list[str] = []
-
-    async def validate_assistant_output(
-        self,
-        text: str,
-        *,
-        system_prompt: str,
-    ) -> list[Any]:
-        self.validated.append(text)
-        return []
-
-
 class StubMemory:
     checkpointer = None
 
 
-def _runtime(guardrails: StubGuardrails | None = None) -> DeepAgentRuntime:
+def _runtime() -> DeepAgentRuntime:
     runtime = DeepAgentRuntime.__new__(DeepAgentRuntime)
-    runtime._content_guardrails = guardrails or StubGuardrails()
     runtime._memory = StubMemory()  # type: ignore[assignment]
     return runtime
 
@@ -87,7 +72,6 @@ def _prepared(agent: Any) -> PreparedAgentRun:
         model_name="test-model",
         mcp_tool_count=0,
         thread_id="thread-1",
-        system_prompt="SYSTEM",
     )
 
 
@@ -137,25 +121,23 @@ async def test_stop_is_observed_while_model_stream_never_yields() -> None:
     assert types[-1] == "run.cancelled"
 
 
-async def test_long_answer_streams_deltas_before_model_step_completes() -> None:
-    guardrails = StubGuardrails()
-    runtime = _runtime(guardrails)
-
-    text = "x" * (OUTPUT_BATCH_CHARS * 2 + 512)
+async def test_each_chunk_streams_as_a_delta_before_model_step_completes() -> None:
+    text = "The quick brown fox jumps over the lazy dog."
+    chunk_size = 700
     events: list[dict[str, Any]] = [
         {
             "type": "messages",
             "ns": (),
-            "data": (AIMessageChunk(content=text[offset : offset + 700]), {}),
+            "data": (AIMessageChunk(content=text[offset : offset + chunk_size]), {}),
         }
-        for offset in range(0, len(text), 700)
+        for offset in range(0, len(text), chunk_size)
     ]
-    # Model step completes: the middleware accepted the full response.
+    # Model step completes after the last chunk.
     events.append({"type": "updates", "ns": (), "data": {"agent": {}}})
 
     collected: list[Any] = []
     await asyncio.wait_for(
-        _consume(runtime, _prepared(FakeAgent(events)), asyncio.Event(), collected),
+        _consume(_runtime(), _prepared(FakeAgent(events)), asyncio.Event(), collected),
         timeout=5.0,
     )
 
@@ -165,19 +147,24 @@ async def test_long_answer_streams_deltas_before_model_step_completes() -> None:
     ]
     finished = types.index("run.finished")
 
-    # At least one batch was displayed while the model was still
-    # generating -- before the updates event -- not only at the end.
+    # The first chunk reached the SSE stream while the model was still
+    # generating -- before the updates event, with no buffering.
     first_step = types.index("agent.step")
     assert delta_indexes, "expected at least one streamed message.delta"
     assert delta_indexes[0] < first_step
     assert all(index < finished for index in delta_indexes)
+
+    # One delta per model chunk: text flows through unchanged.
+    assert len(delta_indexes) == len(
+        [event for event in events if event["type"] == "messages"]
+    )
 
     assembled = "".join(
         event.data["text"] for event in collected if event.type == "message.delta"
     )
     assert assembled == text
 
-    # Every batch (with its guard tail) passed validate_assistant_output
-    # before it was shown, and the flush re-checked the end of the answer.
-    assert len(guardrails.validated) >= 2
-    assert guardrails.validated[-1].endswith(text[-512:])
+    # Deltas carry the main-agent source so the frontend attributes
+    # them to the assistant response.
+    deltas = [event for event in collected if event.type == "message.delta"]
+    assert all(event.data.get("source") == "main" for event in deltas)

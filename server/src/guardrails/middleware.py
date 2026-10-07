@@ -8,13 +8,8 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain.agents.middleware.types import (
-    ExtendedModelResponse,
-    ModelResponse,
-)
 
 from langchain_core.messages import (
-    AIMessage,
     BaseMessage,
     SystemMessage,
     ToolMessage,
@@ -28,47 +23,14 @@ from server.src.guardrails.content import (
 logger = logging.getLogger(__name__)
 
 
-def _text_from_content(
-    content: Any,
-) -> str:
-    if isinstance(content, str):
-        return content
-
-    if not isinstance(content, list):
-        return ""
-
-    parts: list[str] = []
-
-    for block in content:
-        if not isinstance(block, dict):
-            continue
-
-        if block.get("type") not in {
-            "text",
-            "output_text",
-        }:
-            continue
-
-        value = block.get("text")
-
-        if isinstance(value, str):
-            parts.append(value)
-
-    return "".join(parts)
-
-
 class GuardrailsModelMiddleware(
     AgentMiddleware
 ):
-    """Protect every Deep Agents model call.
+    """Protect every Deep Agents model call before it reaches the model.
 
     Before model:
         ToolMessage/RAG/file/web -> prompt injection guard
         cloud-bound context -> Secrets + PII
-
-    After model:
-        secret leakage -> block
-        system prompt leakage -> block
     """
 
     def __init__(
@@ -76,14 +38,9 @@ class GuardrailsModelMiddleware(
         guardrails: ContentGuardrailService,
         *,
         model_name: str,
-        protected_system_prompt: str,
     ) -> None:
         self._guardrails = guardrails
         self._model_name = model_name
-
-        self._protected_system_prompt = (
-            protected_system_prompt
-        )
 
     async def awrap_model_call(
         self,
@@ -139,33 +96,7 @@ class GuardrailsModelMiddleware(
                 **updates
             )
 
-        response = await handler(
-            request
-        )
-
-        # Validate completed model output before accepting it.
-        for message in self._response_messages(
-            response
-        ):
-            if not isinstance(
-                message,
-                AIMessage,
-            ):
-                continue
-
-            text = _text_from_content(
-                message.content
-            )
-
-            if text:
-                await self._guardrails.validate_assistant_output(
-                    text,
-                    system_prompt=(
-                        self._protected_system_prompt
-                    ),
-                )
-
-        return response
+        return await handler(request)
 
     async def _guard_message(
         self,
@@ -298,31 +229,3 @@ class GuardrailsModelMiddleware(
             )
 
         return guarded.text
-
-    @staticmethod
-    def _response_messages(
-        response: Any,
-    ) -> list[BaseMessage]:
-        if isinstance(
-            response,
-            AIMessage,
-        ):
-            return [response]
-
-        if isinstance(
-            response,
-            ExtendedModelResponse,
-        ):
-            return list(
-                response.model_response.result
-            )
-
-        if isinstance(
-            response,
-            ModelResponse,
-        ):
-            return list(
-                response.result
-            )
-
-        return []

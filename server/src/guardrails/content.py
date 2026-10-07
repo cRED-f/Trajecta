@@ -25,9 +25,6 @@ from guardrails.validator_base import FailResult
 
 from guardrails_ai.detect_pii import DetectPII
 from guardrails_ai.detect_prompt_injection import DetectPromptInjection
-from guardrails_ai.detect_system_prompt_leakage import (
-    DetectSystemPromptLeakage,
-)
 from guardrails_ai.secrets_present import SecretsPresent
 
 from pydantic import BaseModel, Field
@@ -395,76 +392,6 @@ class ContentGuardrailService:
             findings=findings,
         )
 
-    async def validate_assistant_output(
-        self,
-        text: str,
-        *,
-        system_prompt: str,
-    ) -> list[GuardrailFinding]:
-        """Hard-fail sensitive assistant output before the UI."""
-
-        cfg = await self.get_settings()
-
-        if not cfg.enabled or not text.strip():
-            return []
-
-        if cfg.secrets_enabled:
-            result = await self._secrets(
-                text
-            )
-
-            if isinstance(result, FailResult):
-                finding = GuardrailFinding(
-                    validator="secrets_present",
-                    boundary="assistant_output",
-                    action="block",
-                    message=(
-                        result.error_message
-                        or "Secret detected in assistant output."
-                    ),
-                )
-
-                raise GuardrailBlocked(
-                    code="assistant_secret_leak",
-                    message=(
-                        "Assistant output was blocked because "
-                        "it contained a secret."
-                    ),
-                    finding=finding,
-                )
-
-        if (
-            cfg.system_prompt_leakage_enabled
-            and system_prompt.strip()
-        ):
-            result = await self._system_prompt_leakage(
-                text,
-                system_prompt,
-                cfg,
-            )
-
-            if isinstance(result, FailResult):
-                finding = GuardrailFinding(
-                    validator="detect_system_prompt_leakage",
-                    boundary="assistant_output",
-                    action="block",
-                    message=(
-                        result.error_message
-                        or "System prompt leakage detected."
-                    ),
-                )
-
-                raise GuardrailBlocked(
-                    code="system_prompt_leak",
-                    message=(
-                        "Assistant output was blocked because "
-                        "it resembled the system prompt."
-                    ),
-                    finding=finding,
-                )
-
-        return []
-
     async def _prompt_injection(
         self,
         text: str,
@@ -533,27 +460,6 @@ class ContentGuardrailService:
                 threshold=cfg.jailbreak_threshold
             ),
             text,
-        )
-
-    async def _system_prompt_leakage(
-        self,
-        text: str,
-        system_prompt: str,
-        cfg: ContentGuardrailsConfig,
-    ) -> Any:
-        # System prompt changes when experiment/skill overrides
-        # are attached, so don't cache this validator instance.
-        validator = DetectSystemPromptLeakage(
-            system_prompt=system_prompt,
-            threshold=(
-                cfg.system_prompt_leakage_threshold
-            ),
-        )
-
-        return await asyncio.to_thread(
-            validator.validate,
-            text,
-            {},
         )
 
     async def _run_validator(

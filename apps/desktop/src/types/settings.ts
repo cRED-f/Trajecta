@@ -22,9 +22,6 @@ export interface ContentGuardrailSettings {
   local_providers: string[];
 
   cloud_sensitive_action: GuardrailSensitiveAction;
-
-  system_prompt_leakage_enabled: boolean;
-  system_prompt_leakage_threshold: number;
 }
 
 export interface ContentGuardrailCatalog {

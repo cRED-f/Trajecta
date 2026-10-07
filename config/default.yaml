@@ -173,9 +173,6 @@ guardrails:
     # allow | redact | block
     cloud_sensitive_action: "redact"
 
-    system_prompt_leakage_enabled: true
-    system_prompt_leakage_threshold: 40
-
 sandbox:
   enabled: true
   image: "trajecta-sandbox:latest"

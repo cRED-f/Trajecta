@@ -449,7 +449,6 @@ class SkillRunRuntime:
             model_name=model_name or conversation.model,
             mcp_tool_count=0,
             thread_id=thread_id,
-            system_prompt="",
         )
 
     async def stream_prepared(

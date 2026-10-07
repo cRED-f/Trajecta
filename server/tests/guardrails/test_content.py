@@ -10,7 +10,6 @@ from server.src.config import Settings
 
 from server.src.guardrails.content import (
     ContentGuardrailService,
-    GuardrailBlocked,
 )
 
 
@@ -115,22 +114,3 @@ async def test_cloud_secret_is_redacted(
 
     assert "real-secret" not in guarded.text
     assert guarded.findings[0].redacted is True
-
-
-@pytest.mark.asyncio
-async def test_assistant_secret_is_hard_blocked(
-    service,
-    monkeypatch,
-) -> None:
-    async def fail(*_args, **_kwargs):
-        return FailResult(error_message="secret detected")
-
-    monkeypatch.setattr(service, "_secrets", fail)
-
-    with pytest.raises(GuardrailBlocked) as caught:
-        await service.validate_assistant_output(
-            "leaked key",
-            system_prompt="You are Trajecta",
-        )
-
-    assert caught.value.code == "assistant_secret_leak"

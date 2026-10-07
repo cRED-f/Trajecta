@@ -93,18 +93,6 @@ class ContentGuardrailsPatch(
         | None
     ) = None
 
-    system_prompt_leakage_enabled: (
-        bool | None
-    ) = None
-
-    system_prompt_leakage_threshold: (
-        int | None
-    ) = Field(
-        default=None,
-        ge=0,
-        le=100,
-    )
-
 
 def _service(
     request: Request,

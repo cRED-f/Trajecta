@@ -332,13 +332,6 @@ class ContentGuardrailsConfig(BaseModel):
         "block",
     ] = "redact"
 
-    system_prompt_leakage_enabled: bool = True
-    system_prompt_leakage_threshold: int = Field(
-        default=40,
-        ge=0,
-        le=100,
-    )
-
 
 class GuardrailsConfig(BaseModel):
     default_risk_level: str = "SENSITIVE"

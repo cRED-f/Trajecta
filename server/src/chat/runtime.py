@@ -94,15 +94,6 @@ def _source(namespace: tuple[str, ...] | list[str]) -> str:
     return "main"
 
 
-# Assistant text is shown in bounded, validated batches instead of being
-# quarantined until the whole model step completes: strict whole-response
-# validation and true streaming are incompatible, so each batch (plus a
-# rolling guard tail for cross-batch context) passes
-# validate_assistant_output before display, while GuardrailsModelMiddleware
-# still vets every completed model response before anything is persisted.
-OUTPUT_BATCH_CHARS = 2048
-GUARD_TAIL_CHARS = 4096
-
 # A provider that stops sending chunks (hung upstream, dropped socket with
 # no EOF) fails the run instead of leaving the consumer waiting forever.
 MODEL_STREAM_IDLE_TIMEOUT_SECONDS = 180.0
@@ -166,9 +157,6 @@ class PreparedAgentRun:
     model_name: str
     mcp_tool_count: int
     thread_id: str
-
-    # Exact protected prompt used for this run.
-    system_prompt: str
 
     # Which experiment arms this run was assigned to, so chat can attach
     # them to the trajectory before the first metrics row is written.
@@ -292,7 +280,6 @@ class DeepAgentRuntime:
         guardrail_middleware = GuardrailsModelMiddleware(
             self._content_guardrails,
             model_name=chosen_model,
-            protected_system_prompt=system_prompt,
         )
 
         agent = create_deep_agent(
@@ -317,7 +304,6 @@ class DeepAgentRuntime:
             model_name=chosen_model,
             mcp_tool_count=len(mcp_tools),
             thread_id=thread_id,
-            system_prompt=system_prompt,
             skill_assignments=skill_assignments,
         )
 
@@ -407,13 +393,6 @@ class DeepAgentRuntime:
         tool_calls = 0
         tool_errors = 0
 
-        # Assistant main-source text accumulates here until a batch is
-        # big enough to validate and stream. guard_tail carries the tail of
-        # the last validated text so a batch boundary cannot hide a
-        # secret or system-prompt leak that straddles two batches.
-        pending_main = ""
-        guard_tail = ""
-
         try:
             stream = prepared.agent.astream(
                 agent_input,
@@ -484,32 +463,18 @@ class DeepAgentRuntime:
                             text = _text_from_content(token.content)
 
                             if text and source == "main":
-                                pending_main += text
+                                yield ChatEvent(
+                                    type="message.delta",
+                                    conversation_id=conversation.id,
+                                    run_id=run_id,
+                                    data={
+                                        "source": "main",
+                                        "text": text,
+                                    },
+                                )
 
-                                if len(pending_main) >= OUTPUT_BATCH_CHARS:
-                                    guarded_text = guard_tail + pending_main
-
-                                    # Defense in depth on top of
-                                    # GuardrailsModelMiddleware.
-                                    await self._content_guardrails.validate_assistant_output(
-                                        guarded_text,
-                                        system_prompt=prepared.system_prompt,
-                                    )
-
-                                    guard_tail = guarded_text[-GUARD_TAIL_CHARS:]
-                                    yield ChatEvent(
-                                        type="message.delta",
-                                        conversation_id=conversation.id,
-                                        run_id=run_id,
-                                        data={
-                                            "source": "main",
-                                            "text": pending_main,
-                                        },
-                                    )
-                                    pending_main = ""
-
-                            # Do NOT stream subagent model text before
-                            # its completed model response is accepted.
+                            # Subagent model text does not belong in the
+                            # main assistant response.
                     elif isinstance(token, ToolMessage):
                         if getattr(token, "status", None) == "error":
                             tool_errors += 1
@@ -529,27 +494,6 @@ class DeepAgentRuntime:
                 elif event_type == "updates":
                     data = chunk.get("data")
                     if isinstance(data, dict):
-                        # Reaching a graph node update means the model response
-                        # completed successfully and GuardrailsModelMiddleware
-                        # accepted it. Flush the sub-2KB remainder here.
-                        if pending_main:
-                            guarded_text = guard_tail + pending_main
-
-                            # Defense in depth.
-                            await self._content_guardrails.validate_assistant_output(
-                                guarded_text,
-                                system_prompt=prepared.system_prompt,
-                            )
-
-                            guard_tail = guarded_text[-GUARD_TAIL_CHARS:]
-                            yield ChatEvent(
-                                type="message.delta",
-                                conversation_id=conversation.id,
-                                run_id=run_id,
-                                data={"source": "main", "text": pending_main},
-                            )
-                            pending_main = ""
-
                         if "__interrupt__" in data:
                             checkpoint_id = await self.latest_checkpoint_id(prepared.thread_id)
                             yield ChatEvent(
@@ -573,24 +517,6 @@ class DeepAgentRuntime:
                                     "is_subagent": source != "main",
                                 },
                             )
-
-            # Defensive fallback for a graph/runtime version that finishes
-            # without emitting a final update event.
-            if pending_main:
-                guarded_text = guard_tail + pending_main
-
-                await self._content_guardrails.validate_assistant_output(
-                    guarded_text,
-                    system_prompt=prepared.system_prompt,
-                )
-
-                yield ChatEvent(
-                    type="message.delta",
-                    conversation_id=conversation.id,
-                    run_id=run_id,
-                    data={"source": "main", "text": pending_main},
-                )
-                pending_main = ""
 
             checkpoint_id = await self.latest_checkpoint_id(prepared.thread_id)
             yield ChatEvent(
@@ -620,7 +546,7 @@ class DeepAgentRuntime:
         except GuardrailBlocked as exc:
             # Never log the detected secret/PII itself.
             logger.warning(
-                "Deep Agent response blocked by guardrail: "
+                "Deep Agent run blocked by guardrail: "
                 "code=%s validator=%s boundary=%s",
                 exc.code,
                 exc.finding.validator,

@@ -25,7 +25,6 @@ guardrails-ai = "^0.11.0"
 guardrails-ai-detect-prompt-injection = "0.2.1a1"
 guardrails-ai-secrets-present = "0.1.0"
 guardrails-ai-detect-pii = "0.0.6"
-guardrails-ai-detect-system-prompt-leakage = "0.1.0"
 guardrails-ai-valid-json = "0.1.0"
 
 # Optional heavier local classifier.

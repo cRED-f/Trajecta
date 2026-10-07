@@ -128,7 +128,7 @@ export function GuardrailsSettings({
               icon={<ShieldAlert size={16} />}
               title="Content guardrails"
               description={
-                "Master switch for prompt, privacy, and output validation."
+                "Master switch for prompt and model-context protection."
               }
               checked={settings.enabled}
               disabled={actions.updating}
@@ -151,8 +151,7 @@ export function GuardrailsSettings({
               icon={<KeyRound size={16} />}
               title="Secrets"
               description={
-                "Redact or block credentials before cloud calls and block " +
-                "leaked secrets in assistant output."
+                "Redact or block credentials before they are sent to cloud models."
               }
               checked={settings.secrets_enabled}
               disabled={actions.updating || !settings.enabled}
@@ -169,20 +168,6 @@ export function GuardrailsSettings({
               checked={settings.pii_enabled}
               disabled={actions.updating || !settings.enabled}
               onChange={(value) => patch({ pii_enabled: value })}
-            />
-
-            <ToggleRow
-              icon={<ShieldAlert size={16} />}
-              title="System prompt leakage"
-              description={
-                "Hard-block assistant responses that reproduce Trajecta's " +
-                "protected prompt."
-              }
-              checked={settings.system_prompt_leakage_enabled}
-              disabled={actions.updating || !settings.enabled}
-              onChange={(value) =>
-                patch({ system_prompt_leakage_enabled: value })
-              }
             />
 
             <ToggleRow
