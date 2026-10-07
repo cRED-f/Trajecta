@@ -135,6 +135,8 @@ export function useChatActions() {
 
   const files = useChatStore((state) => state.pendingFiles);
 
+  const askQuote = useChatStore((state) => state.askQuote);
+
   const composeMode = useChatStore((state) => state.composeMode);
 
   const newConversationModel = useChatStore(
@@ -441,11 +443,23 @@ export function useChatActions() {
   }
 
   async function send() {
-    const content = draft.trim();
+    const typed = draft.trim();
 
-    if (!content && files.length === 0) {
+    if (!typed && files.length === 0) {
       return;
     }
+
+    // The "Ask Trajecta" selection rides along as a markdown quote so
+    // the model sees exactly which passage is being asked about.
+    const quoted = askQuote?.trim() ?? "";
+
+    const content =
+      quoted.length > 0
+        ? `${quoted
+            .split("\n")
+            .map((line) => `> ${line}`)
+            .join("\n")}${typed ? `\n\n${typed}` : ""}`
+        : typed;
 
     const conversation = await ensureConversation();
 

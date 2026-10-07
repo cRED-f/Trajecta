@@ -1,6 +1,7 @@
 import {
   ArrowUp,
   Paperclip,
+  Sparkles,
   Square,
   X,
 } from "lucide-react";
@@ -59,6 +60,16 @@ export function Composer({
   const files = useChatStore(
     (state) =>
       state.pendingFiles,
+  );
+
+  const askQuote = useChatStore(
+    (state) =>
+      state.askQuote,
+  );
+
+  const setAskQuote = useChatStore(
+    (state) =>
+      state.setAskQuote,
   );
 
   const addFiles =
@@ -124,6 +135,14 @@ export function Composer({
       element.focus();
     }
   }, [draft]);
+
+  // "Ask Trajecta" hands the selection to the composer as a quote box;
+  // focus the input so the question can be typed right away.
+  useEffect(() => {
+    if (askQuote) {
+      textarea.current?.focus();
+    }
+  }, [askQuote]);
 
   function acceptFiles(
     values: FileList | File[],
@@ -251,6 +270,34 @@ export function Composer({
             )}
           </div>
         )}
+
+        {askQuote &&
+          composeMode.kind !== "edit" && (
+            <div className="composer-quote">
+              <div className="composer-quote__label">
+                <Sparkles size={13} />
+                <span>
+                  Selected text
+                </span>
+              </div>
+
+              <p className="composer-quote__text">
+                {askQuote}
+              </p>
+
+              <button
+                className="icon-button icon-button--tiny composer-quote__remove"
+                type="button"
+                onClick={() =>
+                  setAskQuote(null)
+                }
+                aria-label="Remove selected text"
+                title="Remove"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          )}
 
         <textarea
           ref={textarea}

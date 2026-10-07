@@ -33,6 +33,9 @@ interface ChatStore {
   draft: string;
   pendingFiles: File[];
 
+  /** Text picked with "Ask Trajecta"; shown as a quote box above the input. */
+  askQuote: string | null;
+
   composeMode: ComposeMode;
 
   newConversationModel: string | null;
@@ -62,6 +65,8 @@ interface ChatStore {
   setMemoryPanelOpen(value: boolean): void;
 
   setDraft(value: string): void;
+
+  setAskQuote(text: string | null): void;
 
   addFiles(files: File[]): void;
 
@@ -241,6 +246,8 @@ export const useChatStore = create<ChatStore>()(
       draft: "",
       pendingFiles: [],
 
+      askQuote: null,
+
       composeMode: {
         kind: "normal",
       },
@@ -263,6 +270,7 @@ export const useChatStore = create<ChatStore>()(
           page: null,
           draft: "",
           pendingFiles: [],
+          askQuote: null,
           composeMode: {
             kind: "normal",
           },
@@ -281,6 +289,12 @@ export const useChatStore = create<ChatStore>()(
       setDraft(value) {
         set({
           draft: value,
+        });
+      },
+
+      setAskQuote(text) {
+        set({
+          askQuote: text,
         });
       },
 
@@ -308,6 +322,7 @@ export const useChatStore = create<ChatStore>()(
         set({
           draft: "",
           pendingFiles: [],
+          askQuote: null,
           composeMode: {
             kind: "normal",
           },
@@ -320,6 +335,8 @@ export const useChatStore = create<ChatStore>()(
 
           pendingFiles: [],
 
+          askQuote: null,
+
           composeMode: {
             kind: "edit",
             message,
@@ -331,6 +348,7 @@ export const useChatStore = create<ChatStore>()(
         set({
           draft: "",
           pendingFiles: [],
+          askQuote: null,
           composeMode: {
             kind: "normal",
           },

@@ -46,6 +46,10 @@ import {
 } from "./ApprovalModal";
 
 import {
+  AskSelection,
+} from "./AskSelection";
+
+import {
   MemoryPanel,
 } from "./MemoryPanel";
 
@@ -91,6 +95,12 @@ export function ChatView({
     useChatStore(
       (state) =>
         state.setDraft,
+    );
+
+  const setAskQuote =
+    useChatStore(
+      (state) =>
+        state.setAskQuote,
     );
 
   const newModel =
@@ -443,6 +453,10 @@ const approval =
         onSubmit={async (decisions) => {
           await actions.resumeApproval(decisions);
         }}
+      />
+
+      <AskSelection
+        onAsk={setAskQuote}
       />
 
       <Composer
