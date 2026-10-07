@@ -227,6 +227,26 @@ const approval =
     setScrolledUp(false);
   }, [activeId]);
 
+  // The composer sits under the transcript, so growing it (a long
+  // draft, a quote, attachments) shrinks this viewport without firing a
+  // scroll event. Re-pin to the newest content while the reader is
+  // already at the bottom, or the tail would slip out of view mid-type.
+  useEffect(() => {
+    const el = scrollRef.current;
+
+    if (!el || scrolledUp) {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+
+    observer.observe(el);
+
+    return () => observer.disconnect();
+  }, [scrolledUp]);
+
   useEffect(() => {
     const el = scrollRef.current;
 

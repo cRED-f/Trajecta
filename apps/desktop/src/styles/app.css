@@ -961,7 +961,9 @@ select:disabled {
   /* First content clears the floating bar at the top-left. */
   padding-top: 36px;
 
-  padding-bottom: 180px;
+  /* The composer sits below the transcript now rather than over it, so
+     the column's own bottom padding is all the clearance needed. */
+  padding-bottom: 8px;
 
   overscroll-behavior: contain;
 }
@@ -1780,13 +1782,14 @@ select:disabled {
 /* -------------------------------- */
 
 .composer-dock {
-  position: absolute;
+  /* In flow, not an overlay: laying it over the transcript used to
+     cover the bottom of the scrollbar, so the thumb vanished exactly
+     when you reached the message box. Keeping it in the column ends
+     the scroll track at its top edge instead. Positioned so the
+     jump-to-latest button still anchors to it. */
+  position: relative;
 
   z-index: 20;
-
-  left: 0;
-  right: 0;
-  bottom: 0;
 
   padding: 18px 24px 12px;
 
