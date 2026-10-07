@@ -47,6 +47,7 @@ export function Dropdown({
         type="button"
         className="dropdown__trigger"
         disabled={disabled}
+        title={selected?.label}
         onClick={() =>
           setOpen(
             (open) =>

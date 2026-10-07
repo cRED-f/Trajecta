@@ -3,7 +3,6 @@ import {
   FileSearch,
   ListTree,
   GitCompare,
-  Sparkles,
 } from "lucide-react";
 
 import type {
@@ -82,13 +81,18 @@ export function ChatWelcome({
 }: Props) {
   return (
     <div className="welcome">
-      <div className="welcome__badge">
-        <Sparkles size={18} />
-      </div>
+      <div className="welcome__heading">
+        <img
+          className="welcome__mark"
+          src="/icon.svg"
+          alt=""
+          aria-hidden="true"
+        />
 
-      <h1>
-        How can I help?
-      </h1>
+        <h1>
+          How can I help?
+        </h1>
+      </div>
 
       <p>
         Ask Trajecta to inspect

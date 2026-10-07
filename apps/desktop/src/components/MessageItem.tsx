@@ -320,6 +320,7 @@ export function MessageItem({
             <button
               className="icon-button"
               type="button"
+              disabled
               aria-label="Resend message"
               title="Resend"
               onClick={() =>

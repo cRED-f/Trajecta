@@ -703,70 +703,50 @@ select:disabled {
   background: var(--surface-conversation-canvas);
 }
 
-.chat-header {
-  z-index: 10;
+/* The chat has no header row: this control floats over the
+   conversation instead, so it needs its own surface to stay legible
+   while messages scroll underneath it. */
+.chat-floating-bar {
+  position: absolute;
+
+  top: 14px;
+  left: 16px;
+  z-index: 15;
 
   display: flex;
   align-items: center;
 
-  gap: 8px;
+  gap: 4px;
 
-  min-height: 52px;
+  padding: 4px;
 
-  padding: 8px 16px;
+  background: var(--color-pure-white);
 
-  background: color-mix(in srgb, var(--color-pure-white) 96%, transparent);
+  border: 1px solid var(--color-edge-gray);
+  border-radius: 12px;
 
-  border-bottom: 1px solid var(--color-hairline);
-
-  transition:
-    padding 160ms ease;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.08);
 }
 
-.app-shell--sidebar-hidden .chat-header {
-  padding-left: 12px;
-}
-
-.chat-header__sidebar-toggle {
-  width: 32px;
-  height: 32px;
-}
-
-.chat-header__divider {
+.chat-floating-bar__divider {
   width: 1px;
-  height: 28px;
+  height: 20px;
 
   background: var(--color-hairline);
 }
 
-.chat-header__spacer {
-  flex: 1;
-}
+.chat-floating-bar__count {
+  display: inline-flex;
+  align-items: center;
 
-.model-select,
-.branch-select select {
-  appearance: none;
+  gap: 4px;
 
-  max-width: 260px;
+  padding: 0 8px;
 
-  padding: 6px 10px;
+  color: var(--color-mid-ash);
 
-  color: var(--color-graphite-ink);
-
-  background: transparent;
-
-  border: 0;
-  outline: 0;
-
-  border-radius: 999px;
-
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.model-select:hover,
-.branch-select:hover {
-  background: var(--color-hover-veil);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* -------------------------------- */
@@ -778,10 +758,22 @@ select:disabled {
 
   display: inline-flex;
 
-  min-width: 180px;
+  /* Fixed footprint: a long model id must never stretch the row it
+     sits in, so this may shrink but never grow. */
+  width: 180px;
+  min-width: 0;
 
   font-size: 14px;
   font-weight: 500;
+}
+
+.dropdown__value {
+  min-width: 0;
+
+  overflow: hidden;
+
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dropdown__trigger {
@@ -791,6 +783,7 @@ select:disabled {
   gap: 8px;
 
   width: 100%;
+  min-width: 0;
 
   padding: 6px 32px 6px 12px;
 
@@ -836,7 +829,9 @@ select:disabled {
 
   z-index: 1000;
 
-  min-width: 200px;
+  /* Fixed size: a long model id wraps inside this box instead of
+     widening it. */
+  width: 260px;
   max-height: 260px;
 
   padding: 6px;
@@ -851,7 +846,59 @@ select:disabled {
 
   overflow-y: auto;
 
-  box-shadow: var(--shadow-overlay);
+  /* --shadow-overlay only exists for the dark theme, so keep a light
+     one of its own rather than letting the popup fall back to none. */
+  box-shadow: var(
+    --shadow-overlay,
+    0 12px 30px rgb(0 0 0 / 0.16)
+  );
+}
+
+/* The picker lives in the composer, pinned to the bottom of the
+   viewport, so its menu opens over the conversation rather than
+   off the bottom of the screen. */
+.composer .dropdown__menu {
+  top: auto;
+  bottom: 100%;
+
+  margin-bottom: 8px;
+}
+
+/* Down here the picker reads as a bordered chip beside Send, not the
+   bare text control it is in a header. Sized to sit flush with the
+   attach and send buttons (32px, radius 10px). */
+.composer .dropdown__trigger {
+  height: 32px;
+
+  padding: 0 30px 0 12px;
+
+  background: var(--color-pure-white);
+
+  border: 1px solid var(--color-edge-gray);
+  border-radius: 10px;
+
+  transition:
+    background 100ms ease,
+    border-color 120ms ease,
+    color 100ms ease;
+}
+
+.composer .dropdown__trigger:hover:not(:disabled) {
+  background: var(--color-hover-veil);
+
+  border-color: var(--color-mid-ash);
+}
+
+.composer .dropdown__trigger:focus-visible {
+  border-color: var(--color-graphite-ink);
+
+  box-shadow: 0 0 0 3px var(--color-hover-veil);
+}
+
+.composer .dropdown__trigger:disabled {
+  background: var(--color-sidebar-mist);
+
+  border-color: var(--color-hairline);
 }
 
 .dropdown__option {
@@ -863,6 +910,9 @@ select:disabled {
   width: 100%;
 
   gap: 8px;
+
+  /* Long ids break onto extra lines rather than growing the menu. */
+  overflow-wrap: anywhere;
 
   padding: 6px 10px;
 
@@ -896,19 +946,9 @@ select:disabled {
   color: var(--color-ink);
 }
 
-.branch-select {
-  display: flex;
-  align-items: center;
-
-  color: var(--color-mid-ash);
-
-  border-radius: 10px;
-
-  padding-left: 8px;
-}
-
-.branch-select select {
-  padding-left: 6px;
+/* Keep the check mark from being squeezed when the label wraps. */
+.dropdown__option svg {
+  flex: none;
 }
 
 .chat-scroll {
@@ -917,6 +957,9 @@ select:disabled {
   min-height: 0;
 
   overflow-y: auto;
+
+  /* First content clears the floating bar at the top-left. */
+  padding-top: 36px;
 
   padding-bottom: 180px;
 
@@ -944,23 +987,18 @@ select:disabled {
   gap: 8px;
 }
 
-.welcome__badge {
+.welcome__heading {
   display: flex;
   align-items: center;
-  justify-content: center;
 
-  width: 36px;
-  height: 36px;
+  gap: 10px;
+}
 
-  margin-bottom: 4px;
+.welcome__mark {
+  width: 30px;
+  height: 30px;
 
-  color: var(--color-graphite-ink);
-
-  background: var(--color-sidebar-mist);
-
-  border: 1px solid var(--color-hairline);
-
-  border-radius: 12px;
+  flex: none;
 }
 
 .scroll-to-latest {
@@ -1241,6 +1279,77 @@ select:disabled {
 .message:hover .message-actions,
 .message-actions:focus-within {
   opacity: 1;
+}
+
+/* ChatGPT-style switch parked above a forked turn: pick which version
+   of the conversation to read instead of the transcript swapping out. */
+.version-switcher {
+  display: flex;
+  align-items: center;
+
+  gap: 2px;
+
+  width: fit-content;
+
+  /* The message above already carries a 28px bottom margin. */
+  margin: 0 auto 16px;
+
+  padding: 2px;
+
+  background: var(--color-pure-white);
+
+  border: 1px solid var(--color-edge-gray);
+  border-radius: 999px;
+}
+
+.version-switcher__step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 24px;
+  height: 24px;
+
+  padding: 0;
+
+  color: var(--color-mid-ash);
+
+  background: transparent;
+
+  border-radius: 999px;
+
+  transition:
+    background 100ms ease,
+    color 100ms ease;
+}
+
+.version-switcher__step:hover:not(:disabled) {
+  color: var(--color-graphite-ink);
+
+  background: var(--color-hover-veil);
+}
+
+.version-switcher__step:disabled {
+  color: var(--color-hollow);
+
+  cursor: default;
+}
+
+.version-switcher__count {
+  padding: 0 2px;
+
+  color: var(--color-mid-ash);
+
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.version-switcher__label {
+  padding: 0 8px 0 4px;
+
+  color: var(--color-hollow);
+
+  font-size: 11px;
 }
 
 .markdown {

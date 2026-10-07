@@ -20,7 +20,13 @@ import {
   PendingAttachmentChip,
 } from "./AttachmentChip";
 
+import { Dropdown } from "./Dropdown";
+
 import { useChatStore } from "../stores/chat-store";
+
+import type {
+  ModelCatalog,
+} from "../types/chat";
 
 interface Props {
   running: boolean;
@@ -28,7 +34,22 @@ interface Props {
   /** Show the jump-to-latest button above the composer. */
   showJumpButton: boolean;
 
+  /** Model this conversation is pinned to. */
+  model: string;
+
+  /** Catalog the model picker offers. */
+  models:
+    | ModelCatalog
+    | undefined;
+
+  /** Lock the picker while a run or an approval is pending. */
+  modelDisabled?: boolean;
+
   onJumpToLatest(): void;
+
+  onModelChange(
+    model: string,
+  ): void;
 
   onSend(): Promise<void> | void;
 
@@ -38,10 +59,22 @@ interface Props {
 export function Composer({
   running,
   showJumpButton,
+  model,
+  models,
+  modelDisabled,
   onJumpToLatest,
+  onModelChange,
   onSend,
   onStop,
 }: Props) {
+  const modelOptions =
+    models?.models.map(
+      (item) => ({
+        value: item.id,
+        label: item.id,
+      }),
+    ) ?? [];
+
   const textarea =
     useRef<HTMLTextAreaElement>(
       null,
@@ -384,6 +417,17 @@ export function Composer({
           </span>
 
           <div className="composer-spacer" />
+
+          <Dropdown
+            value={model}
+            options={modelOptions}
+            disabled={
+              modelDisabled
+            }
+            onChange={(value) =>
+              onModelChange(value)
+            }
+          />
 
           {running ? (
             <button

@@ -3,6 +3,7 @@ import {
 } from "lucide-react";
 
 import {
+  Fragment,
   useEffect,
   useMemo,
   useRef,
@@ -29,8 +30,8 @@ import {
 } from "./Composer";
 
 import {
-  ChatHeader,
-} from "./ChatHeader";
+  ChatFloatingBar,
+} from "./ChatFloatingBar";
 
 import {
   MessageItem,
@@ -39,6 +40,10 @@ import {
 import {
   StreamActivity,
 } from "./StreamActivity";
+
+import {
+  VersionSwitcher,
+} from "./VersionSwitcher";
 
 import {
   ApprovalModal,
@@ -54,6 +59,7 @@ import {
 
 import type {
   Attachment,
+  ChatBranch,
   ChatMessage,
 } from "../types/chat";
 
@@ -126,6 +132,17 @@ export function ChatView({
     useBranches(
       activeId,
     );
+
+  const branches =
+    branchQuery.data ?? [];
+
+  // Resends are stored as branches labelled `resend:<id>`.
+  const resendCount = branches.filter(
+    (branch) =>
+      branch.label?.startsWith(
+        "resend:",
+      ),
+  ).length;
 
   const modelQuery =
     useModels();
@@ -286,43 +303,124 @@ const approval =
       [stream?.text],
     );
 
+  // ChatGPT-style version switches: group every branch forked from the
+  // same message, then park a switch above that turn in the transcript.
+  // A resend therefore reads as "one more version of this message"
+  // instead of a conversation that silently swapped out from under you.
+  const versionSwitches = useMemo(() => {
+    const byIndex = new Map<
+      number,
+      {
+        versions: ChatBranch[];
+        activeIndex: number;
+      }
+    >();
+
+    const groups =
+      new Map<
+        string,
+        {
+          parent: string;
+          fork: string;
+          children: ChatBranch[];
+        }
+      >();
+
+    for (const branch of branches) {
+      if (
+        !branch.parent_branch_id ||
+        !branch.fork_message_id
+      ) {
+        continue;
+      }
+
+      const key = `${branch.parent_branch_id}:${branch.fork_message_id}`;
+
+      let group = groups.get(key);
+
+      if (!group) {
+        group = {
+          parent:
+            branch.parent_branch_id,
+          fork: branch.fork_message_id,
+          children: [],
+        };
+
+        groups.set(key, group);
+      }
+
+      group.children.push(branch);
+    }
+
+    for (const group of groups.values()) {
+      const parent = branches.find(
+        (branch) =>
+          branch.id === group.parent,
+      );
+
+      if (!parent) {
+        continue;
+      }
+
+      const versions = [
+        parent,
+        ...group.children,
+      ];
+
+      const activeIndex =
+        versions.findIndex(
+          (branch) =>
+            branch.id === branchId,
+        );
+
+      if (
+        activeIndex < 0 ||
+        versions.length < 2
+      ) {
+        continue;
+      }
+
+      // On the parent the original message is still there; on a fork
+      // it was replaced by the revision that carries the same origin.
+      let index = messages.findIndex(
+        (message) =>
+          message.id === group.fork,
+      );
+
+      if (index < 0) {
+        index = messages.findIndex(
+          (message) =>
+            message.revision_of ===
+            group.fork,
+        );
+      }
+
+      if (
+        index < 0 ||
+        byIndex.has(index)
+      ) {
+        continue;
+      }
+
+      byIndex.set(index, {
+        versions,
+        activeIndex,
+      });
+    }
+
+    return byIndex;
+  }, [branches, messages, branchId]);
+
   return (
     <main className="chat-main">
-      <ChatHeader
-        model={currentModel}
-        models={
-          modelQuery.data
-        }
-        branches={
-          branchQuery.data
-        }
-        activeBranchId={
-          branchId
-        }
-        disabled={
-          running ||
-          Boolean(approval)
-        }
+      <ChatFloatingBar
+        resendCount={resendCount}
         sidebarOpen={
           sidebarOpen
         }
         onToggleSidebar={
           onToggleSidebar
         }
-        onModelChange={(
-          model,
-        ) => {
-          void actions.selectModel(
-            model,
-          );
-        }}
-        onBranchChange={(
-          branch,
-        ) => {
-          void actions.activateBranch(
-            branch,
-          );
-        }}
       />
 
       <div className="chat-scroll" ref={scrollRef}>
@@ -335,38 +433,68 @@ const approval =
           )}
 
           {messages.map(
-            (message) => (
-              <MessageItem
-                key={
-                  message.id
-                }
-                message={
-                  message
-                }
-                attachments={attachmentsFor(
-                  message,
-                  detail?.attachments ??
-                    [],
-                )}
-                onEdit={
-                  startEdit
-                }
-                onResend={(
-                  value,
-                ) =>
-                  void actions.resend(
-                    value,
-                  )
-                }
-                onRegenerate={(
-                  value,
-                ) =>
-                  void actions.regenerate(
-                    value,
-                  )
-                }
-              />
-            ),
+            (message, index) => {
+              const switcher =
+                versionSwitches.get(
+                  index,
+                );
+
+              return (
+                <Fragment
+                  key={message.id}
+                >
+                  {switcher && (
+                    <VersionSwitcher
+                      versions={
+                        switcher.versions
+                      }
+                      activeIndex={
+                        switcher.activeIndex
+                      }
+                      disabled={
+                        running ||
+                        Boolean(approval)
+                      }
+                      onSelect={(
+                        id,
+                      ) => {
+                        void actions.activateBranch(
+                          id,
+                        );
+                      }}
+                    />
+                  )}
+
+                  <MessageItem
+                    message={
+                      message
+                    }
+                    attachments={attachmentsFor(
+                      message,
+                      detail?.attachments ??
+                        [],
+                    )}
+                    onEdit={
+                      startEdit
+                    }
+                    onResend={(
+                      value,
+                    ) =>
+                      void actions.resend(
+                        value,
+                      )
+                    }
+                    onRegenerate={(
+                      value,
+                    ) =>
+                      void actions.regenerate(
+                        value,
+                      )
+                    }
+                  />
+                </Fragment>
+              );
+            },
           )}
 
           {streamVisible && (
@@ -458,7 +586,22 @@ const approval =
       <Composer
         running={running}
         showJumpButton={scrolledUp}
+        model={currentModel}
+        models={
+          modelQuery.data
+        }
+        modelDisabled={
+          running ||
+          Boolean(approval)
+        }
         onJumpToLatest={scrollToLatest}
+        onModelChange={(
+          model,
+        ) => {
+          void actions.selectModel(
+            model,
+          );
+        }}
         onSend={
           actions.send
         }
