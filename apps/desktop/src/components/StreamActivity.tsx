@@ -208,7 +208,9 @@ export function StreamActivity({ stream }: Props) {
             <div className="run-timeline__title">Answering</div>
 
             <div className="run-timeline__meta">
-              Streaming the final response
+              {answering
+                ? "Streaming the final response"
+                : "Generating and validating the final response"}
             </div>
           </div>
         </div>

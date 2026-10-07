@@ -94,6 +94,71 @@ def _source(namespace: tuple[str, ...] | list[str]) -> str:
     return "main"
 
 
+# Assistant text is shown in bounded, validated batches instead of being
+# quarantined until the whole model step completes: strict whole-response
+# validation and true streaming are incompatible, so each batch (plus a
+# rolling guard tail for cross-batch context) passes
+# validate_assistant_output before display, while GuardrailsModelMiddleware
+# still vets every completed model response before anything is persisted.
+OUTPUT_BATCH_CHARS = 2048
+GUARD_TAIL_CHARS = 4096
+
+# A provider that stops sending chunks (hung upstream, dropped socket with
+# no EOF) fails the run instead of leaving the consumer waiting forever.
+MODEL_STREAM_IDLE_TIMEOUT_SECONDS = 180.0
+
+
+class RunCancelled(Exception):
+    """The user pressed Stop while the agent stream was waiting on the model."""
+
+
+async def _next_or_cancel(
+    iterator: AsyncIterator,
+    cancel_event: asyncio.Event,
+    *,
+    idle_timeout_seconds: float = MODEL_STREAM_IDLE_TIMEOUT_SECONDS,
+):
+    """Return the next stream chunk, or notice Stop / a stalled provider.
+
+    The previous loop only polled ``cancel_event`` when a chunk arrived,
+    so Stop did nothing while ``astream()`` was blocked on the model and a
+    hung provider stalled the run indefinitely. This races the pending
+    ``__anext__`` against the cancel event instead.
+    """
+    next_chunk = asyncio.create_task(anext(iterator))
+    cancelled = asyncio.create_task(cancel_event.wait())
+
+    try:
+        done, _pending = await asyncio.wait(
+            {next_chunk, cancelled},
+            timeout=idle_timeout_seconds,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+    except asyncio.CancelledError:
+        next_chunk.cancel()
+        cancelled.cancel()
+        await asyncio.gather(next_chunk, cancelled, return_exceptions=True)
+        raise
+
+    if not done:
+        next_chunk.cancel()
+        cancelled.cancel()
+        await asyncio.gather(next_chunk, cancelled, return_exceptions=True)
+        raise TimeoutError(
+            f"No output from the model for {idle_timeout_seconds:g}s"
+        )
+
+    if cancelled in done:
+        # Stop wins, even if a chunk landed in the same tick.
+        next_chunk.cancel()
+        await asyncio.gather(next_chunk, return_exceptions=True)
+        raise RunCancelled()
+
+    cancelled.cancel()
+    await asyncio.gather(cancelled, return_exceptions=True)
+    return next_chunk.result()
+
+
 @dataclass(slots=True)
 class PreparedAgentRun:
     agent: Any
@@ -342,9 +407,12 @@ class DeepAgentRuntime:
         tool_calls = 0
         tool_errors = 0
 
-        # Assistant chunks are quarantined until the completed
-        # model step has passed GuardrailsModelMiddleware.
-        quarantined_main: list[str] = []
+        # Assistant main-source text accumulates here until a batch is
+        # big enough to validate and stream. guard_tail carries the tail of
+        # the last validated text so a batch boundary cannot hide a
+        # secret or system-prompt leak that straddles two batches.
+        pending_main = ""
+        guard_tail = ""
 
         try:
             stream = prepared.agent.astream(
@@ -356,12 +424,29 @@ class DeepAgentRuntime:
                 durability="sync",
             )
 
-            async for chunk in stream:
-                if cancel_event.is_set():
+            iterator = stream.__aiter__()
+            while True:
+                try:
+                    chunk = await _next_or_cancel(iterator, cancel_event)
+                except StopAsyncIteration:
+                    break
+                except RunCancelled:
                     yield ChatEvent(
                         type="run.cancelled",
                         conversation_id=conversation.id,
                         run_id=run_id,
+                    )
+                    return
+                except TimeoutError as exc:
+                    logger.warning("Model stream stalled: %s", exc)
+                    yield ChatEvent(
+                        type="run.error",
+                        conversation_id=conversation.id,
+                        run_id=run_id,
+                        data={
+                            "error": str(exc),
+                            "code": "model_stream_timeout",
+                        },
                     )
                     return
 
@@ -399,7 +484,29 @@ class DeepAgentRuntime:
                             text = _text_from_content(token.content)
 
                             if text and source == "main":
-                                quarantined_main.append(text)
+                                pending_main += text
+
+                                if len(pending_main) >= OUTPUT_BATCH_CHARS:
+                                    guarded_text = guard_tail + pending_main
+
+                                    # Defense in depth on top of
+                                    # GuardrailsModelMiddleware.
+                                    await self._content_guardrails.validate_assistant_output(
+                                        guarded_text,
+                                        system_prompt=prepared.system_prompt,
+                                    )
+
+                                    guard_tail = guarded_text[-GUARD_TAIL_CHARS:]
+                                    yield ChatEvent(
+                                        type="message.delta",
+                                        conversation_id=conversation.id,
+                                        run_id=run_id,
+                                        data={
+                                            "source": "main",
+                                            "text": pending_main,
+                                        },
+                                    )
+                                    pending_main = ""
 
                             # Do NOT stream subagent model text before
                             # its completed model response is accepted.
@@ -424,23 +531,24 @@ class DeepAgentRuntime:
                     if isinstance(data, dict):
                         # Reaching a graph node update means the model response
                         # completed successfully and GuardrailsModelMiddleware
-                        # accepted it.
-                        if quarantined_main:
-                            safe_text = "".join(quarantined_main)
-                            quarantined_main.clear()
+                        # accepted it. Flush the sub-2KB remainder here.
+                        if pending_main:
+                            guarded_text = guard_tail + pending_main
 
                             # Defense in depth.
                             await self._content_guardrails.validate_assistant_output(
-                                safe_text,
+                                guarded_text,
                                 system_prompt=prepared.system_prompt,
                             )
 
+                            guard_tail = guarded_text[-GUARD_TAIL_CHARS:]
                             yield ChatEvent(
                                 type="message.delta",
                                 conversation_id=conversation.id,
                                 run_id=run_id,
-                                data={"source": "main", "text": safe_text},
+                                data={"source": "main", "text": pending_main},
                             )
+                            pending_main = ""
 
                         if "__interrupt__" in data:
                             checkpoint_id = await self.latest_checkpoint_id(prepared.thread_id)
@@ -468,12 +576,11 @@ class DeepAgentRuntime:
 
             # Defensive fallback for a graph/runtime version that finishes
             # without emitting a final update event.
-            if quarantined_main:
-                safe_text = "".join(quarantined_main)
-                quarantined_main.clear()
+            if pending_main:
+                guarded_text = guard_tail + pending_main
 
                 await self._content_guardrails.validate_assistant_output(
-                    safe_text,
+                    guarded_text,
                     system_prompt=prepared.system_prompt,
                 )
 
@@ -481,8 +588,9 @@ class DeepAgentRuntime:
                     type="message.delta",
                     conversation_id=conversation.id,
                     run_id=run_id,
-                    data={"source": "main", "text": safe_text},
+                    data={"source": "main", "text": pending_main},
                 )
+                pending_main = ""
 
             checkpoint_id = await self.latest_checkpoint_id(prepared.thread_id)
             yield ChatEvent(

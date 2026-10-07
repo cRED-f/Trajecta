@@ -86,6 +86,9 @@ interface ChatStore {
 
   failStream(conversationId: string, error: string): void;
 
+  /** Stop button: flip `running` off immediately, before the backend replies. */
+  stopStream(conversationId: string): void;
+
   clearStream(conversationId: string): void;
 }
 
@@ -500,6 +503,27 @@ export const useChatStore = create<ChatStore>()(
             },
           },
         }));
+      },
+
+      stopStream(conversationId) {
+        set((state) => {
+          const existing = state.streams[conversationId];
+
+          if (!existing) {
+            return state;
+          }
+
+          return {
+            streams: {
+              ...state.streams,
+
+              [conversationId]: {
+                ...existing,
+                running: false,
+              },
+            },
+          };
+        });
       },
 
       clearStream(conversationId) {

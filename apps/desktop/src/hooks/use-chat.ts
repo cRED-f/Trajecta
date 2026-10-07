@@ -151,6 +151,8 @@ export function useChatActions() {
 
   const failStream = useChatStore((state) => state.failStream);
 
+  const stopStream = useChatStore((state) => state.stopStream);
+
   const resetComposer = useChatStore((state) => state.resetComposer);
 
   const cancelEdit = useChatStore((state) => state.cancelEdit);
@@ -646,11 +648,25 @@ export function useChatActions() {
       return;
     }
 
-    await chatApi.cancel(activeConversationId);
+    // Flip `running` off first so the UI reacts to Stop on this tick,
+    // even if the backend call or the SSE abort takes a moment.
+    stopStream(activeConversationId);
+
+    const cancelRequest = chatApi.cancel(activeConversationId).catch(
+      (error) => {
+        console.error("Failed to cancel backend run:", error);
+      },
+    );
 
     controllers.get(activeConversationId)?.abort();
 
     controllers.delete(activeConversationId);
+
+    await cancelRequest;
+
+    await queryClient.invalidateQueries({
+      queryKey: queryKeys.conversation(activeConversationId),
+    });
   }
 
   async function activateBranch(branchId: string) {
