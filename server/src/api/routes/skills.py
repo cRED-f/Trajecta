@@ -240,6 +240,22 @@ async def promote_candidate(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@router.post("/candidates/{candidate_id}/approve")
+async def approve_read_only_candidate(candidate_id: str, request: Request) -> dict[str, Any]:
+    """Human-approved low-risk skill: no costly baseline/candidate replay."""
+    try:
+        result = await _service(request).promoter.promote_with_user_approval(candidate_id)
+        return {
+            "skill_name": result.skill_name,
+            "version": result.version,
+            "version_id": result.version_id,
+            "previous_version": result.previous_version,
+            "approval_method": "explicit_user_review",
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @router.post("/candidates/{candidate_id}/experiment")
 async def experiment_candidate(
     candidate_id: str,
@@ -371,14 +387,13 @@ async def queue_skill_learning_run(
     request: Request,
     body: SkillLearningRunRequest,
 ) -> dict[str, Any]:
-    service = _service(request)
-    queued = service.learning.request_run(force=body.force)
-
-    return {
-        "queued": queued,
-        "force": body.force,
-        "status": await service.learning.status(),
-    }
+    # Removed from the experience-first workflow. Do not silently enqueue
+    # the old token-expensive mining process from stale desktop clients.
+    raise HTTPException(
+        status_code=410,
+        detail="Automatic skill mining has been retired. Learning now happens "
+               "from real task outcomes and explicit user feedback.",
+    )
 
 
 @router.patch("/{skill_name}/enabled")

@@ -145,11 +145,19 @@ class BifrostModelFactory:
     async def resolve_or_default(
         self,
         model_name: str | None = None,
+        *,
+        validate_catalog: bool = True,
     ) -> str:
         """Resolve and validate a model without silently changing providers."""
         canonical = self.canonical_model_name(
             model_name
         )
+        # Chat's selected provider/model is already explicit. Doing a network
+        # /v1/models request for each turn adds seconds before SSE even begins.
+        # The settings/model-selection API still validates the catalog when
+        # requested; inference is the final source of model availability.
+        if not validate_catalog:
+            return canonical
         provider = canonical.split(
             "/",
             1,

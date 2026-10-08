@@ -68,30 +68,36 @@ class TrajectoryStore:
         data: dict[str, Any] | None = None,
         source: str | None = None,
     ) -> None:
-        row = await self._db.fetchone(
-            "SELECT steps FROM trajectories WHERE id = ?", (trajectory_id,)
-        )
-        if row is None:
-            raise ValueError(f"Trajectory {trajectory_id!r} not found")
-        steps = _loads(row.get("steps"), [])
-        if not isinstance(steps, list):
-            steps = []
-        steps.append(
-            {
-                "at": _now(),
-                "type": event_type,
-                "source": source,
-                "data": data or {},
-            }
-        )
-        # Keep local trajectory records bounded; huge raw artifacts should stay
-        # in their original files/traces and be referenced by path/id.
-        if len(steps) > 5_000:
-            steps = steps[-5_000:]
         await self._db.execute(
-            "UPDATE trajectories SET steps = ? WHERE id = ?",
-            (json.dumps(steps, ensure_ascii=False, default=str), trajectory_id),
+            """INSERT INTO trajectory_events(
+                   trajectory_id, occurred_at, event_type, source, payload
+               ) VALUES (?, ?, ?, ?, ?)""",
+            (trajectory_id, _now(), event_type, source,
+             json.dumps(data or {}, ensure_ascii=False, default=str)),
         )
+
+    async def _events_for(self, trajectory_id: str) -> list[dict[str, Any]]:
+        rows = await self._db.fetch(
+            """SELECT occurred_at, event_type, source, payload
+               FROM trajectory_events WHERE trajectory_id = ?
+               ORDER BY seq DESC LIMIT 5000""", (trajectory_id,)
+        )
+        rows.reverse()
+        return [{"at": row["occurred_at"], "type": row["event_type"],
+                 "source": row["source"], "data": _loads(row["payload"], {})}
+                for row in rows]
+
+    async def _decode(self, row: dict[str, Any]) -> dict[str, Any]:
+        value = dict(row)
+        legacy = _loads(value.get("steps"), [])
+        value["steps"] = (legacy if isinstance(legacy, list) else []) + (
+            await self._events_for(str(value["id"]))
+        )
+        value["steps"] = value["steps"][-5000:]
+        value["metadata"] = _loads(value.get("metadata"), {})
+        if "task_metadata" in value:
+            value["task_metadata"] = _loads(value.get("task_metadata"), {})
+        return value
 
     async def finish(
         self,
@@ -123,10 +129,7 @@ class TrajectoryStore:
         row = await self._db.fetchone("SELECT * FROM trajectories WHERE id = ?", (trajectory_id,))
         if row is None:
             return None
-        value = dict(row)
-        value["steps"] = _loads(value.get("steps"), [])
-        value["metadata"] = _loads(value.get("metadata"), {})
-        return value
+        return await self._decode(row)
 
     async def count(self, *, outcome: str | None = None) -> int:
         if outcome is None:
@@ -161,13 +164,7 @@ class TrajectoryStore:
                 "SELECT * FROM trajectories ORDER BY created_at DESC LIMIT ?",
                 (max(1, min(limit, 500)),),
             )
-        result: list[dict[str, Any]] = []
-        for row in rows:
-            value = dict(row)
-            value["steps"] = _loads(value.get("steps"), [])
-            value["metadata"] = _loads(value.get("metadata"), {})
-            result.append(value)
-        return result
+        return [await self._decode(row) for row in rows]
 
     async def list_with_tasks(
         self,
@@ -209,14 +206,7 @@ class TrajectoryStore:
                 (limit,),
             )
 
-        result: list[dict[str, Any]] = []
-        for row in rows:
-            value = dict(row)
-            value["steps"] = _loads(value.get("steps"), [])
-            value["metadata"] = _loads(value.get("metadata"), {})
-            value["task_metadata"] = _loads(value.get("task_metadata"), {})
-            result.append(value)
-        return result
+        return [await self._decode(row) for row in rows]
 
     async def get_with_task(self, trajectory_id: str) -> dict[str, Any] | None:
         rows = await self._db.fetch(
@@ -234,8 +224,4 @@ class TrajectoryStore:
         if not rows:
             return None
 
-        value = dict(rows[0])
-        value["steps"] = _loads(value.get("steps"), [])
-        value["metadata"] = _loads(value.get("metadata"), {})
-        value["task_metadata"] = _loads(value.get("task_metadata"), {})
-        return value
+        return await self._decode(rows[0])

@@ -11,6 +11,8 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Any
 
+import pytest
+
 from server.src.chat.models import ChatEvent, ConversationCreate, SendMessageRequest
 from server.src.chat.repository import ChatRepository
 from server.src.chat.runs import ChatRunRegistry
@@ -546,7 +548,8 @@ async def test_a_completed_chat_run_leaves_a_metrics_row(tmp_path: Any) -> None:
         assert len(rows) == 1
         assert rows[0]["skill_name"] == "demo-skill"
         assert rows[0]["skill_version"] == "1.2.0"
-        assert rows[0]["success"] == 1
+        # Finishing a chat is not evidence that the task succeeded.
+        assert rows[0]["outcome_verified"] == 0
         assert rows[0]["tokens_used"] == 42
     finally:
         await db.close()
@@ -566,5 +569,68 @@ async def test_a_chat_run_that_never_reads_a_skill_records_nothing(tmp_path: Any
             pass
 
         assert await _rows(db) == []
+    finally:
+        await db.close()
+
+
+async def test_prebound_unverified_metrics_keep_usage_totals(tmp_path: Any) -> None:
+    from server.src.skills.analytics import SkillAnalyticsService
+
+    db = await _db(tmp_path)
+    try:
+        analytics = SkillAnalyticsService(db)
+        await analytics.bind_run(
+            trajectory_id="prebound-1", skill_name="demo-skill", skill_version="1.2.0",
+            experiment_id=None, arm_kind="active", unit_id="thread-1",
+        )
+        await analytics.complete_trajectory(
+            "prebound-1", success=None, duration_seconds=0.35,
+            input_tokens=30, output_tokens=12, tool_calls=2, tool_errors=1,
+        )
+        row = (await _rows(db))[0]
+        assert row["outcome_verified"] == 0
+        assert row["tokens_used"] == 42
+        assert row["latency_ms"] == pytest.approx(350)
+        assert row["tool_failures"] == 1
+        assert (await analytics.version_summary("demo-skill", "1.2.0"))["total"] == 0
+    finally:
+        await db.close()
+
+
+async def test_completed_run_can_be_verified_without_duplicate_metrics(tmp_path: Any) -> None:
+    from server.src.skills.analytics import SkillAnalytics, SkillAnalyticsService
+
+    db = await _db(tmp_path)
+    try:
+        await _register(db, "demo-skill", "1.2.0")
+        store = TrajectoryStore(db)
+        trajectory_id = await _trajectory(store, _view("demo-skill"), outcome="completed")
+        attributor = _attributor(db)
+
+        assert await attributor.attribute(trajectory_id) == ["demo-skill"]
+        assert await attributor.attribute(trajectory_id) == ["demo-skill"]
+        assert len(await _rows(db)) == 1
+        assert (await _rows(db))[0]["outcome_verified"] == 0
+
+        # Unverified completions must not affect quality or regression rates.
+        unverified = await SkillAnalytics(db).summary("demo-skill")
+        assert unverified["total"] == 0
+        assert (await SkillAnalyticsService(db).version_summary(
+            "demo-skill", "1.2.0"
+        ))["total"] == 0
+
+        await SkillAnalyticsService(db).complete_trajectory(
+            trajectory_id, success=True, input_tokens=30, output_tokens=12,
+        )
+        await store.finish(trajectory_id, outcome="success", result="done")
+        assert await attributor.attribute(trajectory_id) == ["demo-skill"]
+
+        rows = await _rows(db)
+        assert len(rows) == 1
+        assert rows[0]["outcome_verified"] == 1
+        assert rows[0]["success"] == 1
+        assert rows[0]["input_tokens"] == 30
+        assert rows[0]["output_tokens"] == 12
+        assert (await SkillAnalytics(db).summary("demo-skill"))["total"] == 1
     finally:
         await db.close()

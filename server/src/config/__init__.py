@@ -158,9 +158,10 @@ class ToolsConfig(BaseModel):
 
 
 class SkillFixtureConfig(BaseModel):
-    enabled: bool = True
+    # Full workspace snapshots are costly: explicitly opt in for replay work.
+    enabled: bool = False
     root: str = ".trajecta/data/replay-fixtures"
-    capture_workspace: bool = True
+    capture_workspace: bool = False
     max_files: int = 1000
     max_file_mb: int = 8
     max_total_mb: int = 100
@@ -184,7 +185,9 @@ class SkillFixtureConfig(BaseModel):
 class SkillLearningConfig(BaseModel):
     """Automatic verified-skill learning from successful trajectories."""
 
-    enabled: bool = True
+    # Expensive skill synthesis is manually triggered by default; everyday
+    # experience learning is handled independently and without model calls.
+    enabled: bool = False
 
     # Run the miner after N new successful trajectories.
     trigger_every_successes: int = Field(default=4, ge=1, le=1000)
@@ -204,7 +207,7 @@ class SkillLearningConfig(BaseModel):
     model_name: str | None = None
 
     # Candidate evaluation can be disabled independently.
-    auto_evaluate: bool = True
+    auto_evaluate: bool = False
 
     # Promotion still requires evaluator verdict == "pass".
     auto_promote_initial: bool = True
@@ -215,9 +218,9 @@ class SkillLearningConfig(BaseModel):
 
 
 class SkillExperimentConfig(BaseModel):
-    """Live A/B and Thompson-sampling comparisons between skill versions."""
+    """Legacy A/B experiments, opt-in only (no traffic split by default)."""
 
-    enabled: bool = True
+    enabled: bool = False
 
     # Classic A/B or adaptive multi-arm Thompson sampling.
     default_strategy: Literal["ab", "thompson"] = "ab"

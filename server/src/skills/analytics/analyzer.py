@@ -44,6 +44,8 @@ class SkillAnalytics:
                 AVG(tool_failures) AS failures
             FROM skill_execution_metrics
             WHERE skill_name = ?
+              AND completed_at IS NOT NULL
+              AND outcome_verified = 1
         """
 
         params: list[Any] = [skill_name]

@@ -77,9 +77,13 @@ async def _db(tmp_path: Any) -> SQLiteDatabase:
     return db
 
 
-async def _harness(db: SQLiteDatabase) -> tuple[SkillExperimentService, SkillRepository,
-                                               SkillMetricsCollector, _FakeVersioner]:
+async def _harness(
+    db: SQLiteDatabase, *, experiments_enabled: bool = True,
+) -> tuple[SkillExperimentService, SkillRepository, SkillMetricsCollector, _FakeVersioner]:
     settings = Settings.load()
+    # These tests deliberately exercise the opt-in experiment engine. The
+    # production default must stay disabled for experience-first learning.
+    settings.skills.experiments.enabled = experiments_enabled
     repository = SkillRepository(db)
     analytics = SkillAnalyticsService(db)
     metrics = SkillMetricsCollector(db)
@@ -473,13 +477,26 @@ async def test_attribution_tags_rows_with_the_assigned_arm(
 def test_settings_expose_experiment_and_regression_sections() -> None:
     settings = Settings.load()
 
-    assert settings.skills.experiments.enabled is True
+    assert settings.skills.experiments.enabled is False
     assert settings.skills.experiments.default_strategy in {"ab", "thompson"}
     assert settings.skills.regression.enabled is True
-    assert settings.skills.learning.auto_promote_initial is True
-    assert settings.skills.learning.auto_experiment_upgrades is True
+    assert settings.skills.learning.auto_promote_initial is False
+    assert settings.skills.learning.auto_experiment_upgrades is False
 
 
 def test_skill_status_includes_experimenting() -> None:
     assert SkillStatus.EXPERIMENTING.value == "experimenting"
     assert SkillStatus.VERIFIED.value == "verified"
+
+
+async def test_experiments_are_disabled_unless_explicitly_enabled(tmp_path: Any) -> None:
+    db = await _db(tmp_path)
+    try:
+        assert Settings.load().skills.experiments.enabled is False
+        service, repository, _metrics, _versioner = await _harness(
+            db, experiments_enabled=False,
+        )
+        with pytest.raises(ValueError, match="skill experiments are disabled"):
+            await service.start_candidate(await _candidate_id(repository))
+    finally:
+        await db.close()

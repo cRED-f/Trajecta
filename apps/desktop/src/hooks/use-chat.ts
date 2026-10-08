@@ -368,12 +368,40 @@ export function useChatActions() {
     );
 
     let composerReset = false;
+    let pendingText = "";
+    let frame: number | null = null;
+
+    const flushText = () => {
+      if (frame !== null) {
+        cancelAnimationFrame(frame);
+        frame = null;
+      }
+      if (!pendingText) return;
+      const text = pendingText;
+      pendingText = "";
+      consumeEvent(conversationId, {
+        type: "message.delta",
+        conversation_id: conversationId,
+        run_id: "",
+        data: { text },
+      });
+    };
 
     try {
       await execute(
         controller.signal,
 
         async (event) => {
+          if (event.type === "message.delta") {
+            if (typeof event.data.text === "string") {
+              pendingText += event.data.text;
+              if (frame === null) {
+                frame = requestAnimationFrame(flushText);
+              }
+            }
+            return;
+          }
+          flushText();
           consumeEvent(conversationId, event);
 
           if (event.type === "message.accepted") {
@@ -390,11 +418,12 @@ export function useChatActions() {
                 event,
               );
 
-              await queryClient.invalidateQueries({
+              void queryClient.invalidateQueries({
                 queryKey: queryKeys.conversations,
               });
             } else {
-              await refresh(conversationId);
+              // Do not block the SSE reader on a transcript refetch.
+              void refresh(conversationId).catch(() => undefined);
             }
           }
 
@@ -440,6 +469,7 @@ export function useChatActions() {
 
       throw error;
     } finally {
+      flushText();
       controllers.delete(conversationId);
     }
   }

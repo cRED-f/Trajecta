@@ -96,7 +96,7 @@ class SkillAnalyticsService:
         self,
         trajectory_id: str,
         *,
-        success: bool,
+        success: bool | None,
         duration_seconds: float = 0.0,
         input_tokens: int = 0,
         output_tokens: int = 0,
@@ -123,7 +123,11 @@ class SkillAnalyticsService:
                 """
                 UPDATE skill_execution_metrics
                 SET success = ?,
+                    outcome_verified = ?,
                     duration_seconds = ?,
+                    latency_ms = CASE WHEN ? > 0 THEN ? * 1000 ELSE latency_ms END,
+                    tokens_used = CASE WHEN ? > 0 THEN ? ELSE tokens_used END,
+                    tool_failures = CASE WHEN ? > 0 THEN ? ELSE tool_failures END,
                     input_tokens = ?,
                     output_tokens = ?,
                     tool_calls = ?,
@@ -133,8 +137,13 @@ class SkillAnalyticsService:
                 WHERE id = ?
                 """,
                 (
-                    int(success),
+                    int(success) if success is not None else 0,
+                    int(success is not None),
                     float(duration_seconds),
+                    float(duration_seconds), float(duration_seconds),
+                    max(0, int(input_tokens)) + max(0, int(output_tokens)),
+                    max(0, int(input_tokens)) + max(0, int(output_tokens)),
+                    max(0, int(tool_errors)), max(0, int(tool_errors)),
                     max(0, int(input_tokens)),
                     max(0, int(output_tokens)),
                     max(0, int(tool_calls)),
@@ -164,6 +173,7 @@ class SkillAnalyticsService:
             "skill_name = ?",
             "skill_version = ?",
             "completed_at IS NOT NULL",
+            "outcome_verified = 1",
         ]
 
         params: list[Any] = [skill_name, version]

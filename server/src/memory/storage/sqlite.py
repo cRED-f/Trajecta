@@ -196,7 +196,75 @@ class SQLiteDatabase:
 
             version = 14
 
+        if version < 15:
+            await self._migrate_v15()
+            await self._conn.execute(
+                "INSERT INTO schema_version(version) VALUES (15)"
+            )
+            version = 15
+
+        if version < 16:
+            await self._migrate_v16()
+            await self._conn.execute(
+                "INSERT INTO schema_version(version) VALUES (16)"
+            )
+            version = 16
+
         await self._conn.commit()
+
+    async def _migrate_v16(self) -> None:
+        """Separate observed completion metrics from verified task quality."""
+        assert self._conn is not None
+        await self._conn.execute(
+            """ALTER TABLE skill_execution_metrics
+               ADD COLUMN outcome_verified INTEGER NOT NULL DEFAULT 1"""
+        )
+        # v13-v15 samples were deliberately graded on insert and remain
+        # backward-compatible. New completed (unconfirmed) runs use 0.
+
+    async def _migrate_v15(self) -> None:
+        """Append-only trajectories and opt-in, evidence-linked experience."""
+        assert self._conn is not None
+        await self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS trajectory_events (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                trajectory_id TEXT NOT NULL REFERENCES trajectories(id) ON DELETE CASCADE,
+                occurred_at TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                source TEXT,
+                payload TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_trajectory_events_run
+                ON trajectory_events(trajectory_id, seq);
+
+            CREATE TABLE IF NOT EXISTS learned_experiences (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL CHECK(kind IN ('preference', 'correction', 'procedure')),
+                status TEXT NOT NULL CHECK(status IN ('active', 'needs_review', 'rejected')),
+                scope TEXT NOT NULL DEFAULT 'local',
+                fingerprint TEXT NOT NULL,
+                content TEXT NOT NULL,
+                confidence REAL NOT NULL DEFAULT 0.0,
+                version INTEGER NOT NULL DEFAULT 1,
+                source_trajectory_id TEXT REFERENCES trajectories(id),
+                evidence TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(scope, kind, fingerprint)
+            );
+            CREATE INDEX IF NOT EXISTS idx_experience_active
+                ON learned_experiences(scope, status, kind, updated_at);
+            CREATE TABLE IF NOT EXISTS experience_revisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                experience_id TEXT NOT NULL REFERENCES learned_experiences(id),
+                version INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                evidence TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            """
+        )
 
     async def _migrate_v1(self) -> None:
         """Schema v1: tasks, trajectories, skills, memories metadata."""

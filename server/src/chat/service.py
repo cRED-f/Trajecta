@@ -113,6 +113,8 @@ class ChatService:
         skill_execution: "SkillExecutionAttributor | None" = None,
         skills: "SkillsService | None" = None,
         llm_settings: "LLMSettingsStore | None" = None,
+        experiences: Any | None = None,
+        permission_policy: PermissionPolicyStore | None = None,
     ) -> None:
         self._settings = settings
         self._models = BifrostModelFactory(settings)
@@ -126,6 +128,8 @@ class ChatService:
         self._content_guardrails = content_guardrails
         self._skills = skills
         self._llm_settings = llm_settings
+        self._experiences = experiences
+        self._permission_policy = permission_policy
 
         # One service covers everything; the individual collaborators stay
         # overridable so callers that only have an attributor still work.
@@ -583,7 +587,22 @@ class ChatService:
             },
             source="user",
         )
-        await self._capture_replay_fixture(
+        # User-stated preferences are captured without a separate model call.
+        # They become available to future turns; the current turn already
+        # carries this instruction as its ordinary user message.
+        automatic_memory = (
+            await self._permission_policy.get_setting("automatic_memory", True)
+            if self._permission_policy is not None else True
+        )
+        if self._experiences is not None and automatic_memory:
+            try:
+                await self._experiences.observe_user(
+                    turn.user_message.content, trajectory_id=trajectory_id
+                )
+            except Exception:
+                logger.warning("experience capture failed", exc_info=True)
+        if self._settings.skills.fixtures.enabled:
+            await self._capture_replay_fixture(
             trajectory_id,
             attachment_paths=[
                 path
@@ -599,7 +618,9 @@ class ChatService:
                 "branch_id": turn.branch.id,
                 "user_message_id": turn.user_message.id,
             },
-        )
+            )
+        if self._skill_learning is not None:
+            self._skill_learning.begin_interactive()
         try:
             yield ChatEvent(
                 type="message.accepted",
@@ -716,6 +737,7 @@ class ChatService:
                 metadata={
                     "model": turn.runtime.model_name,
                     "run_id": turn.run_id,
+                    "trajectory_id": trajectory_id,
                     "activity_events": activity_events,
                 },
                 branch_id=turn.branch.id,
@@ -724,20 +746,20 @@ class ChatService:
                 turn.branch.id,
                 final_checkpoint_id,
             )
-            await self._capture_success_outcome(trajectory_id)
+            if self._settings.skills.fixtures.enabled:
+                await self._capture_success_outcome(trajectory_id)
             await self._trajectories.finish(
                 trajectory_id,
-                outcome="success",
+                # Reaching EOF means completion, not verified task success.
+                outcome="completed",
                 result=final_text[:100_000],
-                metadata={"checkpoint_id": final_checkpoint_id},
+                metadata={"checkpoint_id": final_checkpoint_id,
+                          "run_metrics": final_run_metrics},
             )
-            # Do NOT await mining here. Chat completion only wakes the
-            # background worker.
-            if self._skill_learning is not None:
-                self._skill_learning.notify_success(trajectory_id)
             await self._complete_runtime_trajectory(
-                trajectory_id, success=True, metrics=final_run_metrics
+                trajectory_id, success=None, metrics=final_run_metrics,
             )
+            # No evaluation or quality scoring without independent evidence.
             yield ChatEvent(
                 type="message.completed",
                 conversation_id=turn.conversation.id,
@@ -760,6 +782,8 @@ class ChatService:
                 pass
             raise
         finally:
+            if self._skill_learning is not None:
+                self._skill_learning.end_interactive()
             await self._attribute_skill_execution(trajectory_id)
             await self._runs.unregister(turn.conversation.id, turn.run_id)
 
@@ -947,6 +971,8 @@ class ChatService:
                 "decisions": turn.decisions,
             },
         )
+        if self._skill_learning is not None:
+            self._skill_learning.begin_interactive()
         try:
             async for event in self._runtime.stream_resume(
                 prepared=turn.runtime,
@@ -1025,6 +1051,7 @@ class ChatService:
                 metadata={
                     "model": turn.runtime.model_name,
                     "run_id": turn.run_id,
+                    "trajectory_id": trajectory_id,
                     "resumed": True,
                     "activity_events": activity_events,
                 },
@@ -1032,13 +1059,15 @@ class ChatService:
             )
             await self._repository.update_branch_head(turn.branch.id, final_checkpoint_id)
             await self._repository.clear_pending_approval(turn.conversation.id)
-            await self._capture_success_outcome(trajectory_id)
+            if self._settings.skills.fixtures.enabled:
+                await self._capture_success_outcome(trajectory_id)
             await self._trajectories.finish(
-                trajectory_id, outcome="success", result=final_text[:100_000],
-                metadata={"checkpoint_id": final_checkpoint_id, "approval_resume": True},
+                trajectory_id, outcome="completed", result=final_text[:100_000],
+                metadata={"checkpoint_id": final_checkpoint_id, "approval_resume": True,
+                          "run_metrics": final_run_metrics},
             )
             await self._complete_runtime_trajectory(
-                trajectory_id, success=True, metrics=final_run_metrics
+                trajectory_id, success=None, metrics=final_run_metrics,
             )
             yield ChatEvent(
                 type="message.completed",
@@ -1062,6 +1091,8 @@ class ChatService:
                 pass
             raise
         finally:
+            if self._skill_learning is not None:
+                self._skill_learning.end_interactive()
             await self._attribute_skill_execution(trajectory_id)
             await self._runs.unregister(turn.conversation.id, turn.run_id)
 
@@ -1232,6 +1263,7 @@ def build_chat_service(
     skills: "SkillsService | None" = None,
     skill_experiments: "SkillExperimentService | None" = None,
     llm_settings: "LLMSettingsStore | None" = None,
+    experiences: Any | None = None,
 ) -> ChatService:
     if memory.sqlite is None:
         raise RuntimeError("MemoryProvider must be opened before ChatService")
@@ -1289,6 +1321,7 @@ def build_chat_service(
         permission_policy=permission_policy,
         content_guardrails=content_guardrails,
         skill_experiments=skill_experiments,
+        experiences=experiences,
     )
     runs = ChatRunRegistry()
     trajectories = trajectories or TrajectoryStore(memory.sqlite)
@@ -1307,4 +1340,6 @@ def build_chat_service(
         skill_execution,
         skills,
         llm_settings,
+        experiences,
+        permission_policy,
     )

@@ -31,6 +31,7 @@ from server.src.llm_gateway.settings import LLMSettingsStore
 from server.src.memory.provider import MemoryProvider, get_memory_provider
 from server.src.runtime_encoding import configure_utf8_runtime
 from server.src.skills.service import build_skills_service
+from server.src.skills.learning.experience import ExperienceLearningService
 from server.src.tools.personal import PersonalToolProvider
 from server.src.tools.personal.scheduler import SchedulerService
 from server.src.tools.verification import ConnectorVerificationService
@@ -83,6 +84,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             memory,
             personal_tools,
         )
+        experiences = ExperienceLearningService(memory.sqlite, skills.trajectories)
 
         # Bifrost control plane (Settings -> management API -> config DB)
         # and the persisted global default for new conversations.
@@ -105,6 +107,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             trajectories=skills.trajectories,
             replay_fixtures=skills.replay_fixtures,
             skills=skills,
+            experiences=experiences,
             llm_settings=llm_settings,
         )
 
@@ -148,6 +151,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.mcp_tools = mcp_tools
         app.state.chat_service = chat
         app.state.skills_service = skills
+        app.state.experience_learning = experiences
         app.state.scheduler = scheduler
         app.state.model_catalog = ModelCatalogService(
             settings,
@@ -156,9 +160,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.llm_admin = llm_admin
         app.state.llm_settings = llm_settings
 
-        # Starts a lightweight worker. No mining happens unless the success
-        # threshold is reached.
-        skills.learning.start()
+        # Experience learning is synchronous/deterministic on explicit user
+        # statements and feedback. The old mining/evaluation worker MUST NOT
+        # start from chat or application startup, including when a stale local
+        # config still says skills.learning.enabled=true.
+        # Manual replay evaluation endpoints are retained for diagnostics.
 
         try:
             yield

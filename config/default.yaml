@@ -54,7 +54,8 @@ skills:
   storage_path: ".trajecta/skills"
 
   learning:
-    enabled: true
+    # Expensive skill generation is manual; ordinary experience is learned on real turns.
+    enabled: false
 
     # Run learning after every 4 newly successful trajectories.
     trigger_every_successes: 4
@@ -70,12 +71,12 @@ skills:
     # null = normal Bifrost/default model resolution
     model_name: null
 
-    auto_evaluate: true
-    auto_promote_initial: true
-    auto_experiment_upgrades: true
+    auto_evaluate: false
+    auto_promote_initial: false
+    auto_experiment_upgrades: false
 
   experiments:
-    enabled: true
+    enabled: false
 
     default_strategy: "ab"
 
@@ -114,9 +115,10 @@ skills:
     auto_rollback: true
 
   fixtures:
-    enabled: true
+    # Enable explicitly only when preparing reproducible replay tests.
+    enabled: false
     root: ".trajecta/data/replay-fixtures"
-    capture_workspace: true
+    capture_workspace: false
     max_files: 1000
     max_file_mb: 8
     max_total_mb: 100

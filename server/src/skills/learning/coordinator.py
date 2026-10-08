@@ -83,6 +83,9 @@ class SkillLearningCoordinator:
         self._evaluation_streams = evaluation_streams
 
         self._wake = asyncio.Event()
+        self._interactive_idle = asyncio.Event()
+        self._interactive_idle.set()
+        self._interactive_count = 0
 
         # Guarantees only one learning pass runs at a time.
         self._run_lock = asyncio.Lock()
@@ -148,6 +151,16 @@ class SkillLearningCoordinator:
         self._last_notified_trajectory_id = trajectory_id
         self._wake.set()
 
+    def begin_interactive(self) -> None:
+        """Chat always has priority over automatic skill mining."""
+        self._interactive_count += 1
+        self._interactive_idle.clear()
+
+    def end_interactive(self) -> None:
+        self._interactive_count = max(0, self._interactive_count - 1)
+        if self._interactive_count == 0:
+            self._interactive_idle.set()
+
     def request_run(self, *, force: bool = True) -> bool:
         """Manually request a learning pass.
 
@@ -189,6 +202,7 @@ class SkillLearningCoordinator:
             "worker_running": bool(
                 self._worker_task is not None and not self._worker_task.done()
             ),
+            "interactive_runs": self._interactive_count,
             "learning_run_active": self._run_lock.locked(),
             "total_successful_trajectories": total_successes,
             "success_count_checkpoint": checkpoint,
@@ -230,6 +244,8 @@ class SkillLearningCoordinator:
             self._force_requested = False
 
             try:
+                # Queue work rather than running LLM synthesis alongside chat.
+                await self._interactive_idle.wait()
                 await self.run_once(force=force)
             except asyncio.CancelledError:
                 raise

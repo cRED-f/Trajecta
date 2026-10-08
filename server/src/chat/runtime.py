@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
@@ -157,6 +158,8 @@ class PreparedAgentRun:
     model_name: str
     mcp_tool_count: int
     thread_id: str
+    requires_sync: bool = False
+    prepare_ms: float = 0.0
 
     # Which experiment arms this run was assigned to, so chat can attach
     # them to the trajectory before the first metrics row is written.
@@ -179,6 +182,7 @@ class DeepAgentRuntime:
         permission_policy: PermissionPolicyStore | None = None,
         content_guardrails: ContentGuardrailService | None = None,
         skill_experiments: "SkillExperimentService | None" = None,
+        experiences: Any | None = None,
     ) -> None:
         self._settings = settings
         self._memory = memory
@@ -189,6 +193,7 @@ class DeepAgentRuntime:
         self._permission_policy = permission_policy
         self._content_guardrails = content_guardrails
         self._skill_experiments = skill_experiments
+        self._experiences = experiences
         self._models = BifrostModelFactory(settings)
 
     async def prepare(
@@ -201,8 +206,10 @@ class DeepAgentRuntime:
         task_text: str = "",
     ) -> PreparedAgentRun:
         """Do all validation that can fail before SSE headers are returned."""
+        prepare_started = time.perf_counter()
         chosen_model = await self._models.resolve_or_default(
-            model_name or conversation.model
+            model_name or conversation.model,
+            validate_catalog=False,
         )
         model = self._models.create(chosen_model)
         mcp_tools = await self._mcp.get_tools()
@@ -275,7 +282,11 @@ class DeepAgentRuntime:
                 "No content guardrail service wired into the runtime"
             )
 
-        system_prompt = SYSTEM_PROMPT + experiment_prompt
+        experience_prompt = (
+            await self._experiences.context(task_text)
+            if self._experiences is not None and automatic_memory else ""
+        )
+        system_prompt = SYSTEM_PROMPT + experiment_prompt + experience_prompt
 
         guardrail_middleware = GuardrailsModelMiddleware(
             self._content_guardrails,
@@ -304,6 +315,8 @@ class DeepAgentRuntime:
             model_name=chosen_model,
             mcp_tool_count=len(mcp_tools),
             thread_id=thread_id,
+            requires_sync=bool(interrupt_policy),
+            prepare_ms=round((time.perf_counter() - prepare_started) * 1000, 2),
             skill_assignments=skill_assignments,
         )
 
@@ -377,6 +390,7 @@ class DeepAgentRuntime:
                 "mcp_tool_count": prepared.mcp_tool_count,
                 "base_checkpoint_id": prepared.config["configurable"].get("checkpoint_id"),
                 "resumed": resumed,
+                "preflight_ms": prepared.prepare_ms,
             },
         )
 
@@ -390,6 +404,8 @@ class DeepAgentRuntime:
         # and the regression monitor.
         loop = asyncio.get_running_loop()
         started_at = loop.time()
+        first_token_at: float | None = None
+        visible_characters = 0
         tool_calls = 0
         tool_errors = 0
 
@@ -400,7 +416,9 @@ class DeepAgentRuntime:
                 stream_mode=["messages", "updates"],
                 subgraphs=True,
                 version="v2",
-                durability="sync",
+                # Interrupt handling keeps durable checkpoints for HITL; other
+                # runs can checkpoint asynchronously for lower token latency.
+                durability="sync" if getattr(prepared, "requires_sync", False) else "async",
             )
 
             iterator = stream.__aiter__()
@@ -463,6 +481,9 @@ class DeepAgentRuntime:
                             text = _text_from_content(token.content)
 
                             if text and source == "main":
+                                if first_token_at is None:
+                                    first_token_at = loop.time()
+                                visible_characters += len(text)
                                 yield ChatEvent(
                                     type="message.delta",
                                     conversation_id=conversation.id,
@@ -533,6 +554,13 @@ class DeepAgentRuntime:
                     # Flat keys for experiment arms and the regression
                     # monitor; `tokens` above stays for the dashboard.
                     "duration_seconds": loop.time() - started_at,
+                    "ttft_seconds": (
+                        first_token_at - started_at if first_token_at is not None else None
+                    ),
+                    "visible_characters": visible_characters,
+                    "tokens_per_second": round(
+                        output_tokens / max(loop.time() - started_at, 0.001), 2
+                    ),
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
                     "total_tokens": input_tokens + output_tokens,

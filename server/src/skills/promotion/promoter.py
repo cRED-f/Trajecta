@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from server.src.skills.repository import SkillRepository
-from server.src.skills.representation.skill import Skill, SkillStatus
+from server.src.skills.representation.skill import Skill, SkillRisk, SkillStatus
 from server.src.skills.versioning.versioner import PromotionResult, SkillVersioner
 
 
@@ -46,6 +46,53 @@ class SkillPromoter:
             },
         )
 
+        return result
+
+    async def promote_with_user_approval(self, candidate_id: str) -> PromotionResult:
+        """Explicit review path for low-risk candidates without model replay.
+
+        Risky candidates must still pass the existing evaluator. Runtime tool
+        permission/HITL remains authoritative regardless of the skill content.
+        """
+        candidate = await self._repository.get_candidate(candidate_id)
+        skill = await self._repository.get_candidate_skill(candidate_id)
+        if candidate is None or skill is None:
+            raise ValueError("candidate not found")
+        if candidate["status"] != "candidate":
+            raise ValueError("candidate is not pending review")
+        if skill.metadata.risk != SkillRisk.READ_ONLY:
+            raise ValueError("Non-read-only skills require explicit evaluation")
+        # Treat author-supplied risk metadata as a claim, never as proof.
+        # Unknown tool names might write, execute, or call external services.
+        read_only_tools = {
+            "read_file", "list_files", "list_directory", "search_files",
+            "search_attachments", "web_search", "search", "grep",
+        }
+        unknown_tools = set(skill.workflow.tool_names) - read_only_tools
+        if unknown_tools:
+            raise ValueError(
+                "Explicit evaluation required for tools that are not known read-only: "
+                + ", ".join(sorted(unknown_tools))
+            )
+        # Do not accidentally reactivate a skill deliberately disabled by user.
+        active = await self._repository.get_active(skill.name)
+        if active and active.get("status") == "disabled":
+            raise ValueError("Skill was disabled by the user")
+        result = await self._versioner.promote_new_version(
+            skill,
+            candidate_id=candidate_id,
+            evaluation_id=f"manual-approval:{candidate_id}",
+        )
+        await self._repository.update_candidate(
+            candidate_id,
+            status="promoted",
+            extra_metadata={
+                "approval_method": "explicit_user_review",
+                "promoted_version": result.version,
+                "promoted_version_id": result.version_id,
+                "previous_version": result.previous_version,
+            },
+        )
         return result
 
     async def stage(

@@ -6,6 +6,8 @@ import {
   Pencil,
   RefreshCcw,
   RotateCcw,
+  ThumbsUp,
+  ThumbsDown,
 } from "lucide-react";
 
 import {
@@ -25,7 +27,7 @@ import { StreamActivity } from "./StreamActivity";
 
 import { restoreActivityEvents } from "../stores/chat-store";
 
-import { chatApi } from "../lib/api";
+import { chatApi, learningApi } from "../lib/api";
 
 import {
   relativeTime,
@@ -122,7 +124,6 @@ function CodeBlock({
 }) {
   const [copied, setCopied] =
     useState(false);
-
   const language =
     codeLanguage(children);
 
@@ -179,6 +180,27 @@ export function MessageItem({
 }: Props) {
   const [copied, setCopied] =
     useState(false);
+
+  const [feedback, setFeedback] = useState<"success" | "failure" | null>(null);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
+  const [feedbackBusy, setFeedbackBusy] = useState(false);
+  const trajectoryId = typeof message.metadata?.trajectory_id === "string"
+    ? message.metadata.trajectory_id : null;
+
+  async function rate(rating: "success" | "failure") {
+    if (!trajectoryId || feedbackBusy || feedback) return;
+    setFeedbackBusy(true);
+    try {
+      await learningApi.feedback(trajectoryId, rating);
+      setFeedback(rating);
+      setFeedbackError(null);
+    } catch (cause) {
+      setFeedbackError(cause instanceof Error ? cause.message : "Could not save feedback");
+    } finally {
+      setFeedbackBusy(false);
+    }
+  }
+
 
   const user =
     message.role === "user";
@@ -371,6 +393,21 @@ export function MessageItem({
         )}
 
         {!user && (
+          <>
+          {trajectoryId && <>
+            <button className="icon-button" type="button" aria-label="Helpful response"
+              title={feedback === "success" ? "Saved as successful" : "Mark helpful"}
+              disabled={feedbackBusy || feedback !== null}
+              onClick={() => void rate("success")}>
+              <ThumbsUp size={15} />
+            </button>
+            <button className="icon-button" type="button" aria-label="Unhelpful response"
+              title={feedback === "failure" ? "Feedback recorded" : "Mark unhelpful"}
+              disabled={feedbackBusy || feedback !== null}
+              onClick={() => void rate("failure")}>
+              <ThumbsDown size={15} />
+            </button>
+          </>}
           <button
             className="icon-button"
             type="button"
@@ -386,8 +423,10 @@ export function MessageItem({
               size={15}
             />
           </button>
+          </>
         )}
       </div>
+      {feedbackError && <p role="alert" className="settings-error-card">{feedbackError}</p>}
     </article>
   );
 }

@@ -13,8 +13,10 @@ from .llm import router as llm_router
 from .traces import router as traces_router
 from .chat import router as chat_router
 from .health import router as health_router
+from .learning import router as learning_router
 
 all_routers = [
+    learning_router,
     chat_router,
     tasks_router,
     skills_router,

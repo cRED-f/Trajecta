@@ -35,6 +35,8 @@ import type {
   ScheduleUpdateInput,
   SkillAnalytics,
   SkillCatalog,
+  SkillCandidate,
+  SkillRegistryItem,
   SkillDependency,
   SkillEvaluationReport,
   SkillExperiment,
@@ -905,5 +907,51 @@ export const settingsApi = {
       `/tasks/schedules/${encodeURIComponent(scheduleId)}`,
       { method: "DELETE" },
     );
+  },
+};
+export interface LearnedExperience {
+  id: string;
+  kind: "preference" | "correction" | "procedure";
+  status: "active" | "needs_review" | "rejected";
+  content: string;
+  confidence: number;
+  version: number;
+  source_trajectory_id: string | null;
+  evidence: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LearningOverview {
+  items: LearnedExperience[];
+  skills: SkillRegistryItem[];
+  previous_candidates: SkillCandidate[];
+}
+
+export const learningApi = {
+  overview(): Promise<LearningOverview> {
+    return request("/learning/overview");
+  },
+  list(): Promise<{ items: LearnedExperience[] }> {
+    return request("/learning/experiences");
+  },
+  review(id: string, decision: "approve" | "reject"): Promise<LearnedExperience> {
+    return request(`/learning/experiences/${encodeURIComponent(id)}/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision }),
+    });
+  },
+  feedback(trajectoryId: string, rating: "success" | "failure", note = "") {
+    return request("/learning/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ trajectory_id: trajectoryId, rating, note }),
+    });
+  },
+  approveCandidate(id: string) {
+    return request(`/skills/candidates/${encodeURIComponent(id)}/approve`, {
+      method: "POST",
+    });
   },
 };

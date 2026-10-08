@@ -48,6 +48,7 @@ class SkillsService:
         memory: "MemoryProvider",
         personal_tools: "PersonalToolProvider",
     ) -> None:
+        self._settings = settings
         if memory.sqlite is None:
             raise RuntimeError("MemoryProvider must be opened before SkillsService")
 
@@ -170,77 +171,58 @@ class SkillsService:
         *,
         candidate_id: str,
         reason: str | None = None,
+        evaluation_id: str | None = None,
+        model_name: str | None = None,
     ) -> dict[str, Any]:
-        """Evaluate a candidate and promote it only if it passes.
+        """Explicit manual upgrade with strict evaluation-based promotion.
 
-        An upgrade never swaps the active version directly: it runs the normal
-        evaluate -> promote path, which creates the next version and
-        activates it. A failing evaluation leaves the current version alone.
+        This method is an explicit upgrade action, never part of the ordinary
+        experience-learning/chat loop. Reuse a provided evaluation, otherwise
+        run one targeted manual evaluation. Never promote a failed report.
         """
+        if evaluation_id is not None:
+            report = await self.repository.get_evaluation(evaluation_id)
+            if report is None:
+                raise ValueError(f"evaluation {evaluation_id!r} not found")
+            if str(report.get("candidate_id")) != candidate_id:
+                raise ValueError("evaluation does not belong to candidate")
+        else:
+            report = await self.evaluator.evaluate(
+                candidate_id, model_name=model_name,
+            )
 
-        evaluation = await self.evaluator.evaluate(candidate_id)
+        def field(obj: Any, name: str, default: Any = None) -> Any:
+            return obj.get(name, default) if isinstance(obj, dict) else getattr(obj, name, default)
 
-        if evaluation.verdict != "pass":
-            # Keep the gate itself intact, but hand the caller the evidence
-            # instead of one opaque code: the gate reasons first, then the
-            # held-out cases that actually failed.
-            reasons = list(evaluation.comparison.reasons)
-
-            for case in evaluation.case_results:
-                candidate = case.get("candidate")
-
-                if not isinstance(candidate, dict):
+        verdict = str(field(report, "verdict", "needs_review"))
+        report_id = str(field(report, "id"))
+        if verdict != "pass":
+            comparison = field(report, "comparison", {})
+            reasons = list(field(comparison, "reasons", []) or [])
+            for case in field(report, "case_results", []) or []:
+                candidate = field(case, "candidate", {})
+                if field(candidate, "skipped") or field(candidate, "success"):
                     continue
-
-                if (
-                    candidate.get("success") is True
-                    and not candidate.get("skipped")
-                ):
-                    continue
-
-                detail = candidate.get("error") or candidate.get("judge_reason")
-
-                if not detail:
-                    continue
-
-                message = f"{case.get('case_id', 'unknown')}: {detail}"[:300]
-
-                if message not in reasons:
-                    reasons.append(message)
-
-                if len(reasons) >= 6:
-                    break
-
-            if (
-                not reasons
-                and not evaluation.comparison.improvement_pass
-            ):
-                reasons.append(
-                    "Candidate did not demonstrate the required "
-                    "improvement over baseline."
-                )
-
-            if not reasons:
-                reasons.append(f"Evaluation verdict: {evaluation.verdict}.")
-
+                case_id = field(case, "case_id", "unknown")
+                message = field(candidate, "judge_reason", None)
+                if message:
+                    reasons.append(f"{case_id}: {message}")
+            payload = (
+                report if isinstance(report, dict)
+                else report.model_dump(mode="json")
+            )
             return {
                 "status": "rejected",
-                "reason": (
-                    "evaluation_needs_review"
-                    if evaluation.verdict == "needs_review"
-                    else "evaluation_failed"
-                ),
-                "evaluation": evaluation.id,
-                "verdict": evaluation.verdict,
+                "reason": "evaluation_needs_review" if verdict == "needs_review" else "evaluation_failed",
+                "evaluation": report_id,
+                "verdict": verdict,
                 "reasons": reasons,
-                "report": evaluation.model_dump(mode="json"),
+                "report": payload,
             }
 
         promoted = await self.promoter.promote(
-            candidate_id=candidate_id,
-            evaluation_id=evaluation.id,
+            candidate_id=candidate_id, evaluation_id=report_id,
         )
-
         return {
             "status": "promoted",
             "skill": promoted.skill_name,
@@ -304,7 +286,7 @@ class SkillsService:
         self,
         trajectory_id: str,
         *,
-        success: bool,
+        success: bool | None,
         metrics: dict[str, Any] | None = None,
     ) -> None:
         """Close out live metrics, then let experiments and monitoring react.
@@ -325,6 +307,11 @@ class SkillsService:
             tool_calls=int(metrics.get("tool_calls") or 0),
             tool_errors=int(metrics.get("tool_errors") or 0),
         )
+
+        # Unverified chat completions contribute latency and cost metrics,
+        # never experiment winners or automatic regression decisions.
+        if success is None:
+            return
 
         experiment_ids = {
             str(row["experiment_id"])
@@ -372,8 +359,9 @@ class SkillsService:
         )
 
     async def choose_skill_version(self, skill_name: str) -> str | None:
-        """Version to serve for this execution, or None without an experiment."""
-
+        """No legacy traffic splitting unless experiments are explicitly enabled."""
+        if not self._settings.skills.experiments.enabled:
+            return None
         return await self.router.choose_version(skill_name)
 
     async def enforce_rollback(

@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # Only a completed run says anything about skill quality: an approval pause
 # or a user cancel is not a scored execution, and an in-flight run has no
 # outcome yet.
-RECORDED_OUTCOMES = frozenset({"success", "failure"})
+RECORDED_OUTCOMES = frozenset({"success", "failure", "completed"})
 
 # The same failure statuses the replay evaluator counts as tool errors
 # (skills/evaluation/replay.py), so both sides agree on what a failure is.
@@ -125,7 +125,8 @@ class SkillExecutionAttributor:
         if not views:
             return []
 
-        success = outcome == "success"
+        # A completed response is an observation, not a quality verdict.
+        success = None if outcome == "completed" else outcome == "success"
         latency_ms = self._latency_ms(trajectory, steps)
         tokens = self._total_tokens(steps)
         failures = self._tool_failures(steps)

@@ -438,3 +438,21 @@ def test_compare_route_maps_unknown_version_to_409(
     )
 
     assert response.status_code == 409
+
+
+async def test_upgrade_with_stored_evaluation_does_not_replay() -> None:
+    class SavedEvaluationRepository:
+        async def get_evaluation(self, evaluation_id: str):
+            return {"id": evaluation_id, "candidate_id": "cand-4", "verdict": "pass"}
+
+    service = SimpleNamespace(
+        evaluator=FakeEvaluator("pass"),
+        promoter=FakePromoter(),
+        repository=SavedEvaluationRepository(),
+    )
+    result = await SkillsService.upgrade_skill(
+        service, candidate_id="cand-4", evaluation_id="eval-previous",
+    )
+    assert result["status"] == "promoted"
+    assert service.evaluator.calls == []
+    assert service.promoter.calls == [("cand-4", "eval-previous")]

@@ -36,7 +36,7 @@ class SkillMetricsCollector:
         skill_name: str,
         skill_version: str,
         trajectory_id: str | None,
-        success: bool,
+        success: bool | None,
         latency_ms: float,
         tokens: int,
         tool_failures: int,
@@ -56,12 +56,13 @@ class SkillMetricsCollector:
 
         await self._db.execute(
             """
-            INSERT INTO skill_execution_metrics(
+            INSERT OR IGNORE INTO skill_execution_metrics(
                 id,
                 skill_name,
                 skill_version,
                 trajectory_id,
                 success,
+                outcome_verified,
                 latency_ms,
                 tokens_used,
                 tool_failures,
@@ -77,14 +78,15 @@ class SkillMetricsCollector:
                 metadata,
                 created_at
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 metric_id,
                 skill_name,
                 skill_version,
                 trajectory_id,
-                int(success),
+                int(success) if success is not None else 0,
+                int(success is not None),
                 latency_ms,
                 tokens,
                 tool_failures,
@@ -102,4 +104,13 @@ class SkillMetricsCollector:
             ),
         )
 
+        if trajectory_id is not None:
+            # Idempotent when feedback later re-attributes the same execution.
+            row = await self._db.fetchone(
+                "SELECT id FROM skill_execution_metrics "
+                "WHERE trajectory_id = ? AND skill_name = ?",
+                (trajectory_id, skill_name),
+            )
+            if row is not None:
+                return str(row["id"])
         return metric_id

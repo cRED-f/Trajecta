@@ -39,11 +39,16 @@ class FakeEvaluator:
         candidate_id: str,
         *,
         model_name: str | None = None,
+        on_event: Any | None = None,
     ) -> Any:
         self.calls.append(candidate_id)
         return SimpleNamespace(
             id=f"eval-{candidate_id}",
             verdict=self.verdict,
+            model_dump=lambda mode="json": {
+                "id": f"eval-{candidate_id}",
+                "verdict": self.verdict,
+            },
         )
 
 

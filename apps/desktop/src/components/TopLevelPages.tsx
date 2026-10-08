@@ -30,7 +30,7 @@ export function TopLevelPages({ page, backendOnline, onClose }: Props) {
             {page === "memory"
               ? "Browse durable memories and the memory types behind them."
               : page === "skills"
-                ? "Verified skills Trajecta has learned, plus candidates awaiting evaluation."
+                ? "Knowledge and reusable skills learned from real conversations."
                 : "Recurring and one-shot autonomous agent jobs."}
           </p>
         </div>

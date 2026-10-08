@@ -255,6 +255,32 @@ class SkillMiner:
             ):
                 continue
 
+            # Exact hashes miss model rewrites of the same instructions.
+            # Reuse the existing candidate/version instead of spending more
+            # evaluations and cluttering the review queue.
+            similar = False
+            existing = await self._repository.list_candidates(limit=200)
+            for row in existing:
+                if row.get("name") != skill.name:
+                    continue
+                if row.get("status") in {"rejected", "archived"}:
+                    continue
+                prior = str(row.get("content") or "")
+                if SequenceMatcher(None, prior, skill.instructions).ratio() >= 0.90:
+                    similar = True
+                    break
+            if not similar:
+                active = await self._repository.get_active(skill.name)
+                if active:
+                    previous = await self._repository.get_version_skill(
+                        skill.name, str(active["version"])
+                    )
+                    similar = bool(previous and SequenceMatcher(
+                        None, previous.instructions, skill.instructions
+                    ).ratio() >= 0.90)
+            if similar:
+                continue
+
             created.append(await self._repository.create_candidate(skill))
 
         return created

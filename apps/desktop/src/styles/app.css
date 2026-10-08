@@ -6012,3 +6012,61 @@ select:disabled {
   color: var(--color-mid-ash);
   font-size: 10px;
 }
+
+/* Evidence-linked experience UI */
+.experience-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.experience-tab { border: 1px solid var(--border, #7774); border-radius: 8px; padding: 6px 10px; background: transparent; color: inherit; cursor: pointer; }
+.experience-tab--active { background: var(--surface-raised, #8882); font-weight: 600; }
+.experience-list { padding: 0; margin: 0; list-style: none; display: grid; gap: 10px; }
+.experience-item { border: 1px solid var(--border, #7774); border-radius: 10px; padding: 12px; }
+.experience-item__head { display: flex; justify-content: space-between; gap: 12px; text-transform: capitalize; font-size: 13px; }
+.experience-item__body { white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0; font-size: 13px; }
+.experience-item__actions { display: flex; gap: 8px; }
+.experience-item__actions button { padding: 6px 10px; border: 1px solid var(--border, #7774); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
+
+.skill-candidate-review { margin-top: 8px; font-size: 12px; }
+.skill-candidate-review summary { cursor: pointer; color: var(--muted-foreground, #777); }
+.skill-candidate-review pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 280px; overflow-y: auto; padding: 12px; border-radius: 8px; background: var(--muted, rgba(127,127,127,.07)); font: inherit; }
+
+/* Experience-first Skills page: replaces the evaluation-first dashboard. */
+.learning-workspace { max-width: 1040px; margin: 0 auto; display: grid; gap: 18px; }
+.learning-workspace__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.learning-workspace__header h3 { margin: 7px 0 9px; font-size: 19px; line-height: 1.35; font-weight: 650; }
+.learning-workspace__header p { max-width: 700px; margin: 0; color: var(--color-mid-ash); font-size: 12px; line-height: 1.7; }
+.learning-workspace__eyebrow { display: flex; align-items: center; gap: 7px; color: var(--color-mid-ash); font-size: 11px; font-weight: 600; letter-spacing: .02em; }
+.learning-workspace__refresh { display: inline-flex; align-items: center; justify-content: center; gap: 7px; flex: none; padding: 8px 12px; border: 1px solid var(--color-hairline); border-radius: 9px; background: transparent; color: inherit; font-size: 12px; }
+.learning-workspace__refresh:hover:not(:disabled),
+.learning-workspace__actions button:hover:not(:disabled) { background: var(--color-hover-veil); }
+.learning-workspace__tabs { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--color-hairline); gap: 2px 16px; }
+.learning-workspace__tab { background: transparent; padding: 12px 2px 11px; margin-bottom: -1px; border-bottom: 2px solid transparent; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; font-size: 12px; color: var(--color-mid-ash); }
+.learning-workspace__tab span { display: inline-flex; align-items: center; justify-content: center; min-width: 19px; height: 18px; border: 1px solid var(--color-hairline); border-radius: 5px; padding: 0 4px; font-size: 10px; }
+.learning-workspace__tab:hover, .learning-workspace__tab.is-active { color: var(--color-graphite-ink); }
+.learning-workspace__tab.is-active { border-bottom-color: var(--color-graphite-ink); font-weight: 650; }
+.learning-workspace__search { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; color: var(--color-mid-ash); border: 1px solid var(--color-hairline); border-radius: 9px; }
+.learning-workspace__search:focus-within { border-color: var(--color-mid-ash); }
+.learning-workspace__search input { width: 100%; min-width: 0; background: transparent; border: 0; outline: 0; color: var(--color-graphite-ink); font-size: 12px; }
+.learning-workspace__empty { min-height: 215px; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 11px; text-align: center; color: var(--color-mid-ash); }
+.learning-workspace__empty strong { color: var(--color-graphite-ink); font-size: 13px; }
+.learning-workspace__empty p { max-width: 420px; line-height: 1.65; font-size: 12px; margin: 0; }
+.learning-workspace__records { display: grid; gap: 10px; }
+.learning-workspace__record { padding: 16px 18px; border: 1px solid var(--color-hairline); border-radius: 12px; min-width: 0; }
+.learning-workspace__record-head, .learning-workspace__record-bottom { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.learning-workspace__record-head { margin-bottom: 10px; }
+.learning-workspace__record-head > span, .learning-workspace__record-bottom > span { color: var(--color-mid-ash); font-size: 11px; }
+.learning-workspace__record-bottom > span { display: inline-flex; align-items: center; gap: 6px; }
+.learning-workspace__tag { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 650; text-transform: capitalize; }
+.learning-workspace__content { font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; margin: 0 0 16px; }
+.learning-workspace__description { margin: 7px 0 0; font-size: 12px; color: var(--color-mid-ash); line-height: 1.6; }
+.learning-workspace__actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.learning-workspace__actions--end { justify-content: flex-end; margin-top: 14px; }
+.learning-workspace__actions button { display: inline-flex; align-items: center; gap: 6px; padding: 7px 11px; border: 1px solid var(--color-hairline); background: transparent; border-radius: 7px; font-size: 12px; }
+.learning-workspace__actions button.learning-workspace__primary { background: var(--color-graphite-ink); color: var(--color-pure-white); }
+.learning-workspace__actions button.learning-workspace__primary:hover:not(:disabled) { opacity: .85; }
+.learning-workspace__details { margin-top: 11px; font-size: 12px; }
+.learning-workspace__details summary { color: var(--color-mid-ash); cursor: pointer; width: fit-content; }
+.learning-workspace__details pre { max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; background: var(--color-hover-veil); border-radius: 8px; }
+@media (max-width: 600px) {
+  .learning-workspace__header { flex-direction: column; }
+  .learning-workspace__tab { padding: 10px 0; }
+  .learning-workspace__record { padding: 13px; }
+}
