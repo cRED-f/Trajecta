@@ -8,8 +8,9 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+import httpx
 from deepagents import create_deep_agent
-from langchain.agents.middleware import TodoListMiddleware
+from langchain.agents.middleware import TodoListMiddleware, ToolErrorMiddleware
 from langchain_core.messages import AIMessageChunk, ToolMessage
 from langgraph.types import Command
 
@@ -69,7 +70,40 @@ Behavior:
 - Verified skills under /skills/ may be used when relevant.
 - Persistent memory under /memories/ may contain useful prior information.
 - Do not modify /skills/; Trajecta promotes skills through its verified pipeline.
+
+Web research failure recovery:
+- HTTP 403, 404, 429, 5xx, connection errors and timeouts
+  are recoverable web-source failures.
+- When web_extract uses an alternative source, attribute
+  findings to that alternative URL, not the original page.
+- If web_extract fails completely, use web_search to find
+  independent sources and web_extract to inspect them.
+- Never repeatedly request a URL that returned 403.
+- Treat search snippets as leads, not verified article content.
+- Do not invent the contents of an inaccessible page.
+- If no alternatives work, explain what could not be
+  verified and answer from the evidence already available.
+- A failed web tool must not, by itself, end the task.
 """
+
+
+def _web_tool_error(exc: Exception, request: Any) -> str | None:
+    """Turn recoverable web-source failures into error ToolMessages.
+
+    Anything else propagates, so internal and policy errors still halt the
+    run. ``request`` is LangChain's ToolCallRequest; the recovery advice is
+    the same for every call to these tools, so it is not inspected.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        return (
+            f"Web source returned HTTP {exc.response.status_code}. "
+            "Search for an independent source."
+        )
+    if isinstance(exc, httpx.TimeoutException):
+        return "Web request timed out. Search for another source."
+    if isinstance(exc, httpx.RequestError):
+        return "Web request failed. Search for another source."
+    return None
 
 
 def _text_from_content(content: Any) -> str:
@@ -299,6 +333,15 @@ class DeepAgentRuntime:
             system_prompt=system_prompt,
             middleware=[
                 TodoListMiddleware(),
+                ToolErrorMiddleware(
+                    on_error=_web_tool_error,
+                    tools=[
+                        "web_extract",
+                        "web_search",
+                        "url_metadata",
+                        "rss_read",
+                    ],
+                ),
                 guardrail_middleware,
             ],
             # IMPORTANT:

@@ -10,10 +10,11 @@ candidates.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from deepagents import FilesystemPermission
-from langchain_core.tools import BaseTool, tool
+from langchain_core.tools import BaseTool, ToolException, tool
 
 from server.src.config import Settings
 from server.src.guardrails.policy import (
@@ -439,8 +440,15 @@ class PersonalToolProvider:
 
         @tool
         async def web_extract(url: str, max_chars: int = 40_000) -> dict[str, Any]:
-            """Fetch a web page and extract readable text and links."""
-            return await network.web_extract(url, max_chars=max_chars)
+            """Fetch a page and recover using alternative web sources."""
+            result = await network.web_extract(url, max_chars=max_chars)
+            if not result.get("ok", True):
+                raise ToolException(json.dumps(result, ensure_ascii=False))
+            return result
+
+        # Convert handled ToolException into an error ToolMessage.
+        # The agent can reason about it and keep executing.
+        web_extract.handle_tool_error = True
 
         @tool
         async def rss_read(url: str, max_items: int = 20) -> dict[str, Any]:

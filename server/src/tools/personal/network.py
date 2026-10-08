@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import ipaddress
 import json
+import logging
 import re
+import socket
 from html import unescape
 from typing import Any
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
@@ -12,6 +16,8 @@ import httpx
 
 from server.src.config import Settings
 from server.src.tools.verification.values import get_path
+
+logger = logging.getLogger(__name__)
 
 
 class NetworkTools:
@@ -22,9 +28,19 @@ class NetworkTools:
             timeout=self._cfg.request_timeout_seconds,
             headers={"User-Agent": self._cfg.user_agent},
         )
+        # Alternative sources come from untrusted search results, so this
+        # client rejects any hop (redirects included) that resolves to a
+        # non-public address instead of letting a search hit turn into SSRF.
+        self._alt_client = httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=self._cfg.request_timeout_seconds,
+            headers={"User-Agent": self._cfg.user_agent},
+            event_hooks={"request": [self._assert_public_request]},
+        )
 
     async def close(self) -> None:
         await self._client.aclose()
+        await self._alt_client.aclose()
 
     @staticmethod
     def _validate_url(url: str) -> str:
@@ -34,6 +50,79 @@ class NetworkTools:
         if not parsed.hostname:
             raise ValueError("URL must include a hostname")
         return url
+
+    @staticmethod
+    def _normalize_page_url(url: str) -> str:
+        """Support both plain URLs and Markdown-formatted links."""
+        url = url.strip()
+        match = re.fullmatch(
+            r"\[[^\]]+\]\((https?://.+)\)",
+            url,
+            flags=re.I,
+        )
+        return match.group(1) if match else url
+
+    @staticmethod
+    def _fallback_query(url: str) -> str:
+        """Create a search query from the failed URL."""
+        parsed = urlparse(url)
+        slug = unquote(parsed.path.rstrip("/").split("/")[-1])
+        terms = re.sub(r"[^\w]+", " ", slug).strip()
+        if len(terms) >= 12 and not terms.isdigit():
+            return terms[:160]
+        return f"{parsed.hostname or ''} {terms}".strip()[:160]
+
+    @staticmethod
+    async def _host_is_public(host: str) -> bool:
+        """Resolve a host and require every returned address to be public."""
+        if not host:
+            return False
+        try:
+            literal = ipaddress.ip_address(host)
+        except ValueError:
+            literal = None
+        if literal is not None:
+            return literal.is_global
+        try:
+            infos = await asyncio.get_running_loop().getaddrinfo(
+                host, None, type=socket.SOCK_STREAM
+            )
+        except OSError:
+            return False
+        addresses = {info[4][0] for info in infos if info and len(info) > 4 and info[4]}
+        if not addresses:
+            return False
+        try:
+            return all(ipaddress.ip_address(a).is_global for a in addresses)
+        except ValueError:
+            return False
+
+    @staticmethod
+    async def _safe_alternative_url(
+        url: str,
+        original_host: str | None,
+    ) -> bool:
+        """Filter obvious unsafe or duplicate search targets."""
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+        if parsed.scheme not in {"http", "https"} or not host:
+            return False
+        if host.lower() == (original_host or "").lower():
+            return False
+        if host.lower() == "localhost" or host.lower().endswith(
+            (".localhost", ".local")
+        ):
+            return False
+        return await NetworkTools._host_is_public(host)
+
+    async def _assert_public_request(self, request: httpx.Request) -> None:
+        """Reject a fetch whose target does not resolve to a public address."""
+        host = request.url.host or ""
+        if not await self._host_is_public(host):
+            raise httpx.RequestError(
+                f"blocked non-public host {host!r}",
+                request=request,
+            )
 
     async def http_request(
         self,
@@ -188,26 +277,38 @@ class NetworkTools:
 
         if self._cfg.searxng_url:
             endpoint = urljoin(self._cfg.searxng_url.rstrip("/") + "/", "search")
-            response = await self._client.get(
-                endpoint,
-                params={"q": query, "format": "json", "language": "auto", "safesearch": 1},
-            )
-            response.raise_for_status()
-            payload = response.json()
-            results = []
-            for item in payload.get("results", [])[:limit]:
-                results.append(
+            try:
+                response = await self._client.get(
+                    endpoint,
+                    params={"q": query, "format": "json", "language": "auto", "safesearch": 1},
+                )
+                response.raise_for_status()
+                payload = response.json()
+                return [
                     {
                         "title": str(item.get("title") or ""),
                         "url": str(item.get("url") or ""),
                         "snippet": str(item.get("content") or ""),
                         "engine": str(item.get("engine") or "searxng"),
                     }
+                    for item in payload.get("results", [])[:limit]
+                ]
+            except (
+                httpx.HTTPError,
+                ValueError,
+                KeyError,
+                TypeError,
+            ) as exc:
+                # A dead or rate-limited local instance must not make search
+                # unavailable; the public fallback below still runs.
+                logger.warning(
+                    "SearXNG unavailable (%s); trying public search",
+                    type(exc).__name__,
                 )
-            return results
 
         # No-key best-effort fallback. This may be rate-limited by DuckDuckGo;
-        # a local SearXNG instance is the preferred production option.
+        # a local SearXNG instance is the preferred production option, so this
+        # path only runs when the configured instance is unavailable.
         response = await self._client.post(
             "https://html.duckduckgo.com/html/",
             data={"q": query},
@@ -247,10 +348,9 @@ class NetworkTools:
                 break
         return results
 
-    async def web_extract(self, url: str, *, max_chars: int = 40_000) -> dict[str, Any]:
-        url = self._validate_url(url)
-        response = await self._client.get(url)
-        response.raise_for_status()
+    @staticmethod
+    def _extract_page(response: httpx.Response, max_chars: int) -> dict[str, Any]:
+        """Turn a successful response into readable text plus its links."""
         content_type = response.headers.get("content-type", "")
         if "html" not in content_type:
             text = response.text[:max_chars]
@@ -282,6 +382,83 @@ class NetworkTools:
             if len(links) >= 100:
                 break
         return {"url": str(response.url), "title": title, "text": text, "links": links}
+
+    async def web_extract(self, url: str, *, max_chars: int = 40_000) -> dict[str, Any]:
+        """
+        Fetch a web page.
+
+        On a recoverable HTTP/network failure:
+        - Search for alternative sources.
+        - Try extracting an accessible result.
+        - Preserve original failure information.
+        - Return a nonfatal result if recovery fails.
+        """
+        url = self._validate_url(self._normalize_page_url(url))
+        limit = max(1, min(max_chars, 40_000))
+        try:
+            response = await self._client.get(url)
+            response.raise_for_status()
+            return {"ok": True, **self._extract_page(response, limit)}
+        except httpx.HTTPStatusError as exc:
+            reason = f"HTTP {exc.response.status_code}"
+        except httpx.TimeoutException:
+            reason = "request_timeout"
+        except httpx.RequestError:
+            reason = "connection_error"
+
+        # The original source failed. Find another.
+        query = self._fallback_query(url)
+        alternatives: list[dict[str, str]] = []
+        search_error: str | None = None
+        try:
+            alternatives = await self.web_search(query, max_results=8)
+        except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+            search_error = type(exc).__name__
+            logger.warning("Fallback search for %s failed (%s)", url, search_error)
+
+        original_host = urlparse(url).hostname
+        visited: set[str] = set()
+        attempted = 0
+        for item in alternatives:
+            # Bounded recovery: at most a few distinct hosts, and never the
+            # page that just failed. This is not a retry loop.
+            if attempted >= 3:
+                break
+            candidate = self._normalize_page_url(str(item.get("url") or ""))
+            if not candidate or candidate in visited:
+                continue
+            visited.add(candidate)
+            if not await self._safe_alternative_url(candidate, original_host):
+                continue
+            attempted += 1
+            try:
+                alternative = await self._alt_client.get(candidate)
+                alternative.raise_for_status()
+            except httpx.HTTPError:
+                continue
+            return {
+                "ok": True,
+                "recovered": True,
+                "reason": reason,
+                "original_url": url,
+                "search_query": query,
+                **self._extract_page(alternative, limit),
+            }
+
+        return {
+            "ok": False,
+            "recovered": False,
+            "reason": reason,
+            "url": url,
+            "search_query": query,
+            "search_error": search_error,
+            "alternatives_attempted": attempted,
+            "message": (
+                f"{url} failed ({reason}) and no accessible alternative "
+                "source was found. Say what could not be verified instead "
+                "of guessing at the page's contents."
+            ),
+        }
 
     async def rss_read(self, url: str, *, max_items: int = 20) -> dict[str, Any]:
         url = self._validate_url(url)
