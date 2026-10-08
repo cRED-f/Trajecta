@@ -45,6 +45,12 @@ interface Props {
   /** Lock the picker while a run or an approval is pending. */
   modelDisabled?: boolean;
 
+  /**
+   * A permission decision is waiting. The pause no longer covers the
+   * screen, so the composer has to stand down on its own.
+   */
+  pendingApproval?: boolean;
+
   onJumpToLatest(): void;
 
   onModelChange(
@@ -62,6 +68,7 @@ export function Composer({
   model,
   models,
   modelDisabled,
+  pendingApproval,
   onJumpToLatest,
   onModelChange,
   onSend,
@@ -228,6 +235,12 @@ export function Composer({
     }
   }
 
+  // A run and a pending permission decision both own the conversation;
+  // neither leaves room for a new message.
+  const blocked =
+    running ||
+    Boolean(pendingApproval);
+
   function onKeyDown(
     event: KeyboardEvent<HTMLTextAreaElement>,
   ) {
@@ -239,15 +252,16 @@ export function Composer({
     ) {
       event.preventDefault();
 
-      if (!running) {
+      if (!blocked) {
         void onSend();
       }
     }
   }
 
   const canSend =
-    draft.trim().length > 0 ||
-    files.length > 0;
+    !blocked &&
+    (draft.trim().length > 0 ||
+      files.length > 0);
 
   return (
     <div className="composer-dock">
@@ -363,7 +377,7 @@ export function Composer({
           }
           value={draft}
           rows={1}
-          disabled={running}
+          disabled={blocked}
           onChange={(event) =>
             setDraft(
               event.target.value,
@@ -401,7 +415,7 @@ export function Composer({
           <button
             className="icon-button"
             type="button"
-            disabled={running}
+            disabled={blocked}
             onClick={() =>
               input.current?.click()
             }

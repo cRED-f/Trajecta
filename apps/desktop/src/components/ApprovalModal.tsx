@@ -251,13 +251,21 @@ export function ApprovalModal({
   }
 
   return (
-    <div className="approval-overlay" role="presentation">
-      <section
-        className="approval-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="approval-title"
-      >
+    <article
+      className="message message--assistant"
+      aria-labelledby="approval-title"
+    >
+      <div className="message__meta">
+        <span className="message__author">
+          Trajecta
+        </span>
+
+        <span className="message__time">
+          paused
+        </span>
+      </div>
+
+      <section className="approval-modal">
         <header className="approval-modal__header">
           <div className="approval-modal__icon">
             <ShieldAlert size={20} />
@@ -463,6 +471,6 @@ export function ApprovalModal({
           </button>
         </footer>
       </section>
-    </div>
+    </article>
   );
 }

@@ -218,6 +218,7 @@ const approval =
     stream?.text,
     stream?.tools.length,
     running,
+    approval?.id,
     scrolledUp,
   ]);
 
@@ -566,6 +567,21 @@ const approval =
             </article>
           )}
 
+          {/* The permission pause renders inline as the newest message
+              instead of covering the conversation in a modal. */}
+          <ApprovalModal
+            approval={approval}
+            submitting={running && Boolean(approval)}
+            error={
+              approvalQuery.error instanceof Error
+                ? approvalQuery.error.message
+                : null
+            }
+            onSubmit={async (decisions) => {
+              await actions.resumeApproval(decisions);
+            }}
+          />
+
           </div>
       </div>
 
@@ -586,19 +602,6 @@ const approval =
         />
       )}
 
-      <ApprovalModal
-        approval={approval}
-        submitting={running && Boolean(approval)}
-        error={
-          approvalQuery.error instanceof Error
-            ? approvalQuery.error.message
-            : null
-        }
-        onSubmit={async (decisions) => {
-          await actions.resumeApproval(decisions);
-        }}
-      />
-
       <AskSelection
         onAsk={setAskQuote}
       />
@@ -614,6 +617,9 @@ const approval =
           running ||
           Boolean(approval)
         }
+        pendingApproval={Boolean(
+          approval,
+        )}
         onJumpToLatest={scrollToLatest}
         onModelChange={(
           model,

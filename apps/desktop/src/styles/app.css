@@ -2315,28 +2315,10 @@ select:disabled {
 /* Human approval                   */
 /* -------------------------------- */
 
-.approval-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 2400;
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  padding: 24px 16px;
-
-  background: var(--color-deep-charcoal);
-
-  backdrop-filter: blur(2px);
-}
-
+/* The pause is the newest message in the transcript, not an overlay: the
+   conversation stays readable and usable while a decision is pending. */
 .approval-modal {
-  width: min(680px, 100%);
-  max-height: min(820px, calc(100vh - 48px));
-
-  display: flex;
-  flex-direction: column;
+  width: 100%;
 
   color: var(--color-graphite-ink);
 
@@ -2344,9 +2326,7 @@ select:disabled {
 
   border: 1px solid var(--color-hairline);
 
-  border-radius: 18px;
-
-  box-shadow: var(--shadow-overlay, 0 18px 48px rgba(0, 0, 0, 0.24));
+  border-radius: 14px;
 
   overflow: hidden;
 }
@@ -2397,11 +2377,7 @@ select:disabled {
 }
 
 .approval-modal__body {
-  flex: 1;
-  min-height: 0;
-
-  overflow-y: auto;
-
+  /* Grows with the transcript instead of scrolling inside a fixed box. */
   padding: 16px 20px 18px;
 }
 
@@ -2699,24 +2675,6 @@ select:disabled {
 }
 
 @media (max-width: 640px) {
-  .approval-overlay {
-    align-items: flex-end;
-
-    padding: 0;
-  }
-
-  .approval-modal {
-    width: 100%;
-
-    max-height: 88vh;
-
-    border-right: 0;
-    border-bottom: 0;
-    border-left: 0;
-
-    border-radius: 18px 18px 0 0;
-  }
-
   .approval-action__heading {
     flex-direction: column;
   }
