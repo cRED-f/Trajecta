@@ -20,6 +20,7 @@ from server.src.skills.analytics import (
 from server.src.skills.dependencies import SkillDependencyGraph
 from server.src.skills.evaluation.evaluator import SkillEvaluator
 from server.src.skills.evaluation.fixtures import ReplayFixtureStore
+from server.src.skills.evaluation.live_stream import BackgroundEvaluationStreams
 from server.src.skills.evaluation.replay import DeepAgentReplayExecutor, SkillReplay
 from server.src.skills.evaluation.regression import SkillRegressionDetector
 from server.src.skills.experiments import SkillExperimentRouter, SkillExperimentService
@@ -69,6 +70,7 @@ class SkillsService:
         self.replay_fixtures = replay_fixtures
         self.evaluator = SkillEvaluator(repository=repository, replay=replay)
         self.active_ui_evaluations: set[str] = set()
+        self.background_evaluation_streams = BackgroundEvaluationStreams()
 
         # -- Versioning / promotion -----------------------------------
         # Built first: activation refuses to go live while a required
@@ -121,6 +123,7 @@ class SkillsService:
             promoter=self.promoter,
             repository=repository,
             experiments=self.experiments,
+            evaluation_streams=self.background_evaluation_streams,
         )
 
         # -- Regression policy ----------------------------------------

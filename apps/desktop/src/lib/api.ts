@@ -637,6 +637,21 @@ export const settingsApi = {
     });
   },
 
+  async followBackgroundSkillEvaluation(
+    candidateId: string,
+    onEvent: (event: SkillEvalEvent) => void,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const response = await fetch(
+      `${API_ROOT}/skills/candidates/${encodeURIComponent(candidateId)}/evaluation/live`,
+      { headers: { Accept: "text/event-stream" }, signal },
+    );
+    if (!response.ok) throw await readError(response);
+    await consumeSSE(response, ({ event, data }) => {
+      onEvent({ ...(JSON.parse(data) as SkillEvalEvent), type: event });
+    });
+  },
+
   evaluateSkill(
     candidateId: string,
   ): Promise<SkillEvaluationReport> {

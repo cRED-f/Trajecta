@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle2, ChevronDown, LoaderCircle, Terminal } from
 import type { SkillEvaluationReport } from "../../types/settings";
 
 export interface SkillEvalEvent {
+  seq?: number;
   type: string;
   case_id?: string;
   task?: string;

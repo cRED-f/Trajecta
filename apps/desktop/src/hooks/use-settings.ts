@@ -276,7 +276,7 @@ export function useSkillCatalog(enabled = true) {
     queryFn: settingsApi.skills,
     enabled,
     staleTime: 5_000,
-    refetchInterval: 15_000,
+    refetchInterval: 3_000,
     refetchOnWindowFocus: false,
   });
 }

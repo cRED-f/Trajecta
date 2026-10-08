@@ -17,7 +17,7 @@ import {
   Zap,
 } from "lucide-react";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   useSkillActions,
@@ -34,7 +34,7 @@ import {
 } from "../skills";
 
 import { SettingsToggle } from "./SettingsToggle";
-import { settingsApi } from "../../lib/api";
+import { ApiError, settingsApi } from "../../lib/api";
 import {
   SkillEvaluationWorkbench,
   advanceSkillLiveState,
@@ -86,6 +86,7 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [liveSessions, setLiveSessions] = useState<Record<string, SkillLiveState>>({});
   const abortController = useRef<AbortController | null>(null);
+  const backgroundLastSeq = useRef<Record<string, number>>({});
 
   const [activeOperation, setActiveOperation] =
     useState<CandidateOperation>(null);
@@ -127,6 +128,76 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
     candidate.description.toLowerCase().includes(normalizedSearch) ||
     (typeof candidate.metadata?.rejection_reason === "string" &&
       candidate.metadata.rejection_reason.toLowerCase().includes(normalizedSearch));
+
+  // A background evaluation already owns the backend run. Subscribe to it;
+  // do not start a second evaluation when the user opens this settings page.
+  const backgroundIds = candidates
+    .filter((candidate) =>
+      candidate.status === "evaluating" &&
+      activeOperation?.candidateId !== candidate.id,
+    )
+    .map((candidate) => candidate.id);
+  const backgroundKey = backgroundIds.slice().sort().join("|");
+
+  useEffect(() => {
+    if (!enabled || !backendOnline || !backgroundKey) return;
+    const controllers = backgroundKey.split("|").map((candidateId) => {
+      const controller = new AbortController();
+      void settingsApi.followBackgroundSkillEvaluation(
+        candidateId,
+        (event) => {
+          if (event.type === "history_truncated") {
+            setLiveSessions((current) => ({
+              ...current,
+              [candidateId]: {
+                ...(current[candidateId] ?? newSkillLiveState()),
+                activity: [
+                  ...(current[candidateId]?.activity ?? []),
+                  "Earlier model output is no longer available in the live buffer.",
+                ],
+              },
+            }));
+            return;
+          }
+          if (event.seq != null) {
+            if (event.seq <= (backgroundLastSeq.current[candidateId] ?? 0)) return;
+            backgroundLastSeq.current[candidateId] = event.seq;
+          }
+          setLiveSessions((current) => ({
+            ...current,
+            [candidateId]: advanceSkillLiveState(
+              current[candidateId] ?? newSkillLiveState(), event,
+            ),
+          }));
+          if (event.type === "completed" && event.report) {
+            setReports((current) => ({
+              ...current,
+              [candidateId]: event.report!,
+            }));
+            void query.refetch();
+          }
+          if (event.type === "error") void query.refetch();
+        },
+        controller.signal,
+      ).catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        // When upgrading from an older backend, retain the existing
+        // "automatic evaluation" status rather than crashing the page.
+        if (error instanceof ApiError && error.status === 404) return;
+        setLiveSessions((current) => ({
+          ...current,
+          [candidateId]: {
+            ...(current[candidateId] ?? newSkillLiveState()),
+            active: false,
+            phase: "finished",
+            error: messageOf(error),
+          },
+        }));
+      });
+      return controller;
+    });
+    return () => controllers.forEach((controller) => controller.abort());
+  }, [enabled, backendOnline, backgroundKey]);
 
   const filteredCandidates = reviewCandidates.filter(matchesCandidateSearch);
   const filteredRejectedCandidates = rejectedCandidates.filter(matchesCandidateSearch);

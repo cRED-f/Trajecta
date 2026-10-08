@@ -25,6 +25,7 @@ from server.src.skills.trajectory_store.store import TrajectoryStore
 
 if TYPE_CHECKING:
     from server.src.skills.evaluation.evaluator import SkillEvaluator
+    from server.src.skills.evaluation.live_stream import BackgroundEvaluationStreams
     from server.src.skills.experiments import SkillExperimentService
     from server.src.skills.promotion.promoter import SkillPromoter
     from server.src.skills.repository import SkillRepository
@@ -64,6 +65,7 @@ class SkillLearningCoordinator:
         promoter: SkillPromoter,
         repository: SkillRepository | None = None,
         experiments: SkillExperimentService | None = None,
+        evaluation_streams: BackgroundEvaluationStreams | None = None,
     ) -> None:
         self._settings = settings
         self._config = settings.skills.learning
@@ -78,6 +80,7 @@ class SkillLearningCoordinator:
         # from an upgrade, so it falls back to promoting every pass.
         self._repository = repository
         self._experiments = experiments
+        self._evaluation_streams = evaluation_streams
 
         self._wake = asyncio.Event()
 
@@ -362,15 +365,33 @@ class SkillLearningCoordinator:
                 if not self._config.auto_evaluate:
                     continue
 
+                stream = self._evaluation_streams
+                if stream is not None:
+                    stream.begin(candidate_id)
+
+                async def publish(event: dict[str, Any]) -> None:
+                    if stream is not None:
+                        await stream.publish(candidate_id, event)
+
                 try:
                     report = await self._evaluator.evaluate(
                         candidate_id,
                         model_name=self._config.model_name,
+                        on_event=publish,
                     )
                     evaluated_count += 1
+                    await publish({
+                        "type": "completed",
+                        "report": report.model_dump(mode="json"),
+                    })
                 except asyncio.CancelledError:
+                    await publish({"type": "error", "message": "Evaluation cancelled"})
                     raise
                 except Exception as exc:
+                    await publish({
+                        "type": "error",
+                        "message": f"{type(exc).__name__}: {exc}",
+                    })
                     errors.append(
                         {
                             "stage": "evaluate",

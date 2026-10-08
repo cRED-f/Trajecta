@@ -191,6 +191,38 @@ async def stream_candidate_evaluation(
     )
 
 
+@router.get("/candidates/{candidate_id}/evaluation/live")
+async def follow_background_evaluation(
+    candidate_id: str,
+    request: Request,
+) -> StreamingResponse:
+    """Join a running background evaluation, replaying its recent public events."""
+    service = _service(request)
+    if await service.repository.get_candidate(candidate_id) is None:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    streams = service.background_evaluation_streams
+    if not streams.exists(candidate_id):
+        raise HTTPException(status_code=404, detail="No live background evaluation for this candidate")
+
+    async def events():
+        async for message in streams.follow(candidate_id):
+            if await request.is_disconnected():
+                break
+            if message is None:
+                yield ": keepalive\n\n"
+                continue
+            yield (
+                f"event: {message['type']}\n"
+                f"data: {json.dumps(message, ensure_ascii=False)}\n\n"
+            )
+
+    return StreamingResponse(
+        events(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.post("/candidates/{candidate_id}/promote")
 async def promote_candidate(
     candidate_id: str,
