@@ -41,9 +41,13 @@ _ALLOWED_FUNCS = {
 _ALLOWED_CONSTS = {"pi": math.pi, "e": math.e}
 
 
-def _eval(node: ast.AST) -> float | int:
+def _eval(node: ast.AST) -> Any:
     if isinstance(node, ast.Expression):
         return _eval(node.body)
+    if isinstance(node, (ast.Tuple, ast.List)):
+        # Agents batch several conversions into one call; a bare list of
+        # whitelisted expressions is as safe to evaluate as a single one.
+        return [_eval(item) for item in node.elts]
     if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
         return node.value
     if isinstance(node, ast.Name) and node.id in _ALLOWED_CONSTS:
