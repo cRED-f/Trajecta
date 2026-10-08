@@ -63,6 +63,7 @@ from server.src.memory.provider import (
     MemoryProvider,
 )
 
+from server.src.skills.evaluation.events import EvaluationEvent, emit
 from server.src.skills.evaluation.fixtures import ReplayFixtureStore
 from server.src.skills.evaluation.tool_verifier import (
     ToolEffectVerifier,
@@ -907,6 +908,7 @@ class DeepAgentReplayExecutor:
         model_name: (
             str | None
         ) = None,
+        on_event: EvaluationEvent | None = None,
     ) -> ReplayResult:
         variant = (
             "candidate"
@@ -977,6 +979,12 @@ class DeepAgentReplayExecutor:
             .resolve_or_default(
                 model_name
             )
+        )
+
+        await emit(
+            on_event, "model_selected",
+            case_id=case.id, repetition=repetition,
+            variant=variant, model=selected_model,
         )
 
         model = (
@@ -1697,8 +1705,14 @@ class DeepAgentReplayExecutor:
                                 )
 
                                 if text:
-                                    text_chunks.append(
-                                        text
+                                    text_chunks.append(text)
+                                    # Only answer text, not internal reasoning.
+                                    await emit(
+                                        on_event, "model_delta",
+                                        case_id=case.id,
+                                        repetition=repetition,
+                                        variant=variant,
+                                        text=text,
                                     )
 
                             usage = getattr(
@@ -1840,8 +1854,14 @@ class DeepAgentReplayExecutor:
                                 )
                             )
 
-                            tool_names.append(
-                                name
+                            tool_names.append(name)
+                            await emit(
+                                on_event, "tool_event",
+                                case_id=case.id,
+                                repetition=repetition,
+                                variant=variant,
+                                name=name,
+                                status=status,
                             )
 
                             # If this tool previously failed and is being
@@ -2108,6 +2128,7 @@ class SkillReplay:
         model_name: (
             str | None
         ) = None,
+        on_event: EvaluationEvent | None = None,
     ) -> list[
         tuple[
             ReplayResult,
@@ -2125,6 +2146,10 @@ class SkillReplay:
             1,
             repetitions + 1,
         ):
+            await emit(
+                on_event, "run_started", case_id=case.id,
+                repetition=repetition, variant="baseline",
+            )
             baseline = (
                 await self
                 ._executor
@@ -2140,7 +2165,19 @@ class SkillReplay:
                     model_name=(
                         model_name
                     ),
+                    on_event=on_event,
                 )
+            )
+            await emit(
+                on_event, "run_finished", case_id=case.id,
+                repetition=repetition, variant="baseline",
+                success=baseline.success, skipped=baseline.skipped,
+                error=baseline.error, score=baseline.score,
+                judge_reason=baseline.judge_reason,
+            )
+            await emit(
+                on_event, "run_started", case_id=case.id,
+                repetition=repetition, variant="candidate",
             )
 
             candidate = (
@@ -2158,7 +2195,15 @@ class SkillReplay:
                     model_name=(
                         model_name
                     ),
+                    on_event=on_event,
                 )
+            )
+            await emit(
+                on_event, "run_finished", case_id=case.id,
+                repetition=repetition, variant="candidate",
+                success=candidate.success, skipped=candidate.skipped,
+                error=candidate.error, score=candidate.score,
+                judge_reason=candidate.judge_reason,
             )
 
             pairs.append(

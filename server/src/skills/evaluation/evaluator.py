@@ -17,6 +17,8 @@ Order:
 
 from __future__ import annotations
 
+import asyncio
+
 from statistics import mean
 
 from typing import Any
@@ -27,6 +29,7 @@ from pydantic import (
     Field,
 )
 
+from server.src.skills.evaluation.events import EvaluationEvent, emit
 from server.src.skills.evaluation.replay import (
     ReplayResult,
     SkillReplay,
@@ -231,6 +234,7 @@ class SkillEvaluator:
         model_name: (
             str | None
         ) = None,
+        on_event: EvaluationEvent | None = None,
     ) -> SkillEvaluationReport:
         skill = (
             await self
@@ -294,9 +298,20 @@ class SkillEvaluator:
         ] = []
 
         try:
+            await emit(
+                on_event, "evaluation_started",
+                candidate_id=candidate_id,
+                evaluation_id=evaluation_id,
+                total_cases=len(skill.eval_cases),
+                repetitions=skill.eval_config.repetitions_per_case,
+            )
             for case in (
                 skill.eval_cases
             ):
+                await emit(
+                    on_event, "case_started", case_id=case.id,
+                    task=case.task[:400],
+                )
                 case_pairs = (
                     await self
                     ._replay
@@ -314,7 +329,12 @@ class SkillEvaluator:
                         model_name=(
                             model_name
                         ),
+                        on_event=on_event,
                     )
+                )
+                await emit(
+                    on_event, "case_finished", case_id=case.id,
+                    total_runs=len(case_pairs),
                 )
 
                 pairs.extend(
@@ -502,7 +522,27 @@ class SkillEvaluator:
                 )
             )
 
+            await emit(
+                on_event, "evaluation_finished",
+                verdict=report.verdict,
+                report=report.model_dump(mode="json"),
+            )
             return report
+
+        except asyncio.CancelledError:
+            # The browser closed the SSE request. Never leave the candidate
+            # permanently stuck as 'evaluating'.
+            await self._repository.finish_evaluation(
+                evaluation_id, verdict="cancelled",
+                baseline_metrics={}, candidate_metrics={},
+                comparison={}, case_results=[],
+                metadata={"error": "Evaluation was cancelled"},
+            )
+            await self._repository.update_candidate(
+                candidate_id, status=SkillStatus.CANDIDATE,
+                evaluation_id=evaluation_id,
+            )
+            raise
 
         except Exception as exc:
             await (

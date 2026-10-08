@@ -218,6 +218,7 @@ export interface SkillEvaluationReport {
   comparison: Record<string, unknown> & {
     reasons?: string[];
   };
+  case_results?: Array<Record<string, unknown>>;
 }
 
 export interface SkillLearningRun {

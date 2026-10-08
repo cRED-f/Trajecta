@@ -31,9 +31,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+from contextlib import suppress
+
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from server.src.api.schemas.skills import (
@@ -114,6 +119,76 @@ async def evaluate_candidate(
         return report.model_dump(mode="json")
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/candidates/{candidate_id}/evaluate/stream")
+async def stream_candidate_evaluation(
+    candidate_id: str,
+    request: Request,
+    upgrade: bool = False,
+) -> StreamingResponse:
+    """Stream public model output and evaluation stages for ONE candidate."""
+    service = _service(request)
+    row = await service.repository.get_candidate(candidate_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    if row["status"] == "evaluating" or candidate_id in service.active_ui_evaluations:
+        raise HTTPException(status_code=409, detail="Candidate already evaluating")
+
+    # Claim this candidate before responding: concurrent button requests
+    # must not start overlapping evaluations.
+    service.active_ui_evaluations.add(candidate_id)
+    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=256)
+
+    async def send(message: dict[str, Any]) -> None:
+        await queue.put(message)
+
+    async def evaluate_one() -> None:
+        try:
+            report = await service.evaluator.evaluate(candidate_id, on_event=send)
+            if upgrade and report.verdict == "pass":
+                await send({"type": "promotion_started"})
+                promoted = await service.promoter.promote(
+                    candidate_id=candidate_id, evaluation_id=report.id,
+                )
+                await send({
+                    "type": "promoted", "skill": promoted.skill_name,
+                    "version": promoted.version,
+                })
+            await send({"type": "completed", "report": report.model_dump(mode="json")})
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await send({"type": "error", "message": str(exc)})
+        finally:
+            await send({"type": "_end"})
+
+    async def events():
+        job = asyncio.create_task(evaluate_one())
+        try:
+            while True:
+                try:
+                    message = await asyncio.wait_for(queue.get(), timeout=10)
+                except TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                if message["type"] == "_end":
+                    break
+                yield (
+                    f"event: {message['type']}\n"
+                    f"data: {json.dumps(message, ensure_ascii=False)}\n\n"
+                )
+        finally:
+            if not job.done():
+                job.cancel()
+                with suppress(asyncio.CancelledError):
+                    await job
+            service.active_ui_evaluations.discard(candidate_id)
+
+    return StreamingResponse(
+        events(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/candidates/{candidate_id}/promote")

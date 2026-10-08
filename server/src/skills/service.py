@@ -68,6 +68,7 @@ class SkillsService:
         self.trajectories = trajectories
         self.replay_fixtures = replay_fixtures
         self.evaluator = SkillEvaluator(repository=repository, replay=replay)
+        self.active_ui_evaluations: set[str] = set()
 
         # -- Versioning / promotion -----------------------------------
         # Built first: activation refuses to go live while a required

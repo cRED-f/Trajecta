@@ -1,5 +1,8 @@
 import {
   Activity,
+  Archive,
+  ChevronDown,
+  ChevronUp,
   AlertCircle,
   CheckCircle2,
   FlaskConical,
@@ -25,16 +28,21 @@ import {
 import {
   ExperimentList,
   LearningStatus,
-  RegressionBadge,
   SkillAnalyticsPanel,
   SkillDependencies,
   VersionHistory,
-  evaluationRegression,
 } from "../skills";
 
 import { SettingsToggle } from "./SettingsToggle";
+import { settingsApi } from "../../lib/api";
+import {
+  SkillEvaluationWorkbench,
+  advanceSkillLiveState,
+  newSkillLiveState,
+} from "../skills/SkillEvaluationWorkbench";
+import type { SkillEvalEvent, SkillLiveState } from "../skills/SkillEvaluationWorkbench";
 
-import type { SkillEvaluationReport } from "../../types/settings";
+import type { SkillCandidate, SkillEvaluationReport } from "../../types/settings";
 
 interface Props {
   enabled: boolean;
@@ -54,8 +62,20 @@ type CandidateOperation = {
   kind: "evaluate" | "upgrade";
 } | null;
 
+// A failed automated evaluation also sets status="rejected". Only a manual
+// Reject action adds rejection_reason: those are the ones we archive here.
+function isManuallyRejected(candidate: SkillCandidate): boolean {
+  const reason = candidate.metadata?.rejection_reason;
+  return (
+    candidate.status === "rejected" &&
+    typeof reason === "string" &&
+    reason.trim().length > 0
+  );
+}
+
 export function SkillsSettings({ enabled, backendOnline }: Props) {
   const [search, setSearch] = useState("");
+  const [showRejected, setShowRejected] = useState(false);
 
   // Skill whose version history is expanded, plus the last evaluation
   // report seen for each candidate.
@@ -64,6 +84,8 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
     Record<string, SkillEvaluationReport>
   >({});
   const [actionError, setActionError] = useState<string | null>(null);
+  const [liveSessions, setLiveSessions] = useState<Record<string, SkillLiveState>>({});
+  const abortController = useRef<AbortController | null>(null);
 
   const [activeOperation, setActiveOperation] =
     useState<CandidateOperation>(null);
@@ -94,13 +116,20 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
       )
     : skills;
 
-  const filteredCandidates = normalizedSearch
-    ? candidates.filter(
-        (candidate) =>
-          candidate.name.toLowerCase().includes(normalizedSearch) ||
-          candidate.description.toLowerCase().includes(normalizedSearch),
-      )
-    : candidates;
+  const reviewCandidates = candidates.filter(
+    (candidate) => !isManuallyRejected(candidate),
+  );
+  const rejectedCandidates = candidates.filter(isManuallyRejected);
+
+  const matchesCandidateSearch = (candidate: SkillCandidate) =>
+    !normalizedSearch ||
+    candidate.name.toLowerCase().includes(normalizedSearch) ||
+    candidate.description.toLowerCase().includes(normalizedSearch) ||
+    (typeof candidate.metadata?.rejection_reason === "string" &&
+      candidate.metadata.rejection_reason.toLowerCase().includes(normalizedSearch));
+
+  const filteredCandidates = reviewCandidates.filter(matchesCandidateSearch);
+  const filteredRejectedCandidates = rejectedCandidates.filter(matchesCandidateSearch);
 
   const filteredExperiments = normalizedSearch
     ? experiments.filter((experiment) =>
@@ -116,6 +145,24 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
     actions.rejecting ||
     actions.startingExperiment;
 
+  async function rejectCandidate(candidateId: string) {
+    if (busy) return;
+    setActionError(null);
+
+    try {
+      // The backend marks it rejected and retains the evaluation records.
+      await actions.reject({
+        candidateId,
+        reason: "Manually rejected from Skills settings.",
+      });
+      // The React Query mutation invalidates the catalog after success.
+      // Open the archive so the user sees where the candidate moved.
+      setShowRejected(true);
+    } catch (error) {
+      setActionError(messageOf(error));
+    }
+  }
+
   async function startCandidateExperiment(
     candidateId: string,
     strategy: "ab" | "thompson",
@@ -129,83 +176,81 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
     }
   }
 
-  async function evaluateCandidate(candidateId: string) {
+  async function runCandidate(candidateId: string, kind: "evaluate" | "upgrade") {
     if (operationLock.current) return;
-
     operationLock.current = true;
-    setActiveOperation({ candidateId, kind: "evaluate" });
+    const controller = new AbortController();
+    abortController.current = controller;
+    setActiveOperation({ candidateId, kind });
     setActionError(null);
+    setReports((current) => {
+      const next = { ...current };
+      delete next[candidateId];
+      return next;
+    });
+    setLiveSessions((current) => ({ ...current, [candidateId]: newSkillLiveState() }));
+    let completed = false;
+    let serverError: string | null = null;
 
     try {
-      const report = await actions.evaluate(candidateId);
-
-      setReports((previous) => ({ ...previous, [candidateId]: report }));
+      await settingsApi.streamSkillEvaluation(
+        candidateId,
+        kind === "upgrade",
+        (event: SkillEvalEvent) => {
+          setLiveSessions((current) => ({
+            ...current,
+            [candidateId]: advanceSkillLiveState(
+              current[candidateId] ?? newSkillLiveState(), event,
+            ),
+          }));
+          if (event.type === "completed" && event.report) {
+            completed = true;
+            setReports((current) => ({ ...current, [candidateId]: event.report! }));
+          }
+          if (event.type === "error") {
+            serverError = event.message ?? "Evaluation failed";
+          }
+        },
+        controller.signal,
+      );
+      if (serverError) throw new Error(serverError);
+      if (!completed) throw new Error("Evaluation stream ended unexpectedly.");
     } catch (error) {
-      setActionError(messageOf(error));
+      const message = controller.signal.aborted
+        ? "Evaluation stopped by user."
+        : messageOf(error);
+      setActionError(message);
+      setLiveSessions((current) => ({
+        ...current,
+        [candidateId]: {
+          ...(current[candidateId] ?? newSkillLiveState()),
+          active: false,
+          phase: "finished",
+          error: message,
+        },
+      }));
     } finally {
       operationLock.current = false;
+      abortController.current = null;
       setActiveOperation(null);
+      void query.refetch();
     }
   }
 
+  function stopCandidate() {
+    abortController.current?.abort();
+  }
+
+  async function evaluateCandidate(candidateId: string) {
+    await runCandidate(candidateId, "evaluate");
+  }
+
   async function upgradeCandidate(candidateId: string) {
-    if (operationLock.current) return;
-
-    operationLock.current = true;
-    setActiveOperation({ candidateId, kind: "upgrade" });
-    setActionError(null);
-
-    try {
-      const result = await actions.upgrade({
-        candidateId,
-        reason: "Upgrade requested from the Skills page.",
-      });
-
-      if (result.status === "rejected") {
-        const report = result.report;
-
-        if (report) {
-          setReports((previous) => ({
-            ...previous,
-            [candidateId]: report,
-          }));
-        }
-
-        const details = result.reasons?.length
-          ? result.reasons.join("; ")
-          : "No detailed evaluation reason was returned.";
-
-        setActionError(
-          `Upgrade blocked (${result.verdict ?? "unknown"}): ${details}`,
-        );
-      } else {
-        // The promoted candidate leaves the list; forget its report.
-        setReports((previous) => {
-          const next = { ...previous };
-          delete next[candidateId];
-          return next;
-        });
-      }
-    } catch (error) {
-      setActionError(messageOf(error));
-    } finally {
-      operationLock.current = false;
-      setActiveOperation(null);
-    }
+    await runCandidate(candidateId, "upgrade");
   }
 
   return (
     <section>
-      <div className="settings-page-header">
-        <div>
-          <h3>Skills</h3>
-          <p>
-            Verified skills Trajecta has learned, plus candidates awaiting
-            evaluation.
-          </p>
-        </div>
-      </div>
-
       {!backendOnline ? (
         <div className="settings-empty-state">
           <AlertCircle size={22} />
@@ -411,12 +456,12 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
             <div className="settings-subsection">
               <div className="settings-subsection__heading-row">
                 <h4 className="settings-subsection__heading">
-                  Candidates
+                  Skills waiting for review
                 </h4>
 
-                {candidates.length > 0 && (
+                {reviewCandidates.length > 0 && (
                   <span className="settings-subsection__count">
-                    {candidates.length} pending review
+                    {reviewCandidates.length} learned workflows
                   </span>
                 )}
               </div>
@@ -466,7 +511,10 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
                           <span
                             className={`skill-status skill-status--${candidate.status}`}
                           >
-                            {candidate.status}
+                            {candidate.status === "candidate" ? "Needs testing" :
+                             candidate.status === "verified" ? "Passed tests" :
+                             candidate.status === "rejected" ? "Did not pass" :
+                             candidate.status === "evaluating" ? "Testing" : candidate.status}
                           </span>
                         </div>
 
@@ -474,92 +522,20 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
                           {candidate.description || "No description"}
                         </div>
 
-                        {isProcessing && (
-                          <div
-                            className="skill-evaluation-progress"
-                            role="status"
-                            aria-live="polite"
-                          >
-                            <div className="skill-evaluation-progress__label">
-                              <RefreshCw
-                                size={13}
-                                className="settings-spin"
-                                aria-hidden="true"
-                              />
-
-                              <span>
-                                {isUpgrading
-                                  ? "Evaluating and upgrading..."
-                                  : "Evaluating candidate..."}
-                              </span>
-                            </div>
-
-                            <div
-                              className="skill-evaluation-progress__track"
-                              role="progressbar"
-                              aria-label={`Processing ${candidate.name}`}
-                              aria-valuetext="In progress"
-                            >
-                              <div className="skill-evaluation-progress__bar" />
-                            </div>
+                        {candidate.status === "evaluating" && !liveSessions[candidate.id] && (
+                          <div className="skill-evaluation-progress" role="status">
+                            <span className="skill-evaluation-progress__label">
+                              <RefreshCw size={13} className="settings-spin" />
+                              Automatic evaluation running. Live output is available for tests started here.
+                            </span>
                           </div>
                         )}
-
-                        {report && (
-                          <div className="skill-eval">
-                            <div className="skill-eval__head">
-                              <span
-                                className={`skill-status skill-status--${
-                                  report.verdict === "pass"
-                                    ? "verified"
-                                    : "rejected"
-                                }`}
-                              >
-                                {report.verdict}
-                              </span>
-
-                              <RegressionBadge
-                                regression={evaluationRegression(report)}
-                              />
-
-                              <span className="skill-eval__rate">
-                                {Math.round(
-                                  report.candidate.success_rate * 100,
-                                )}
-                                % vs baseline{" "}
-                                {Math.round(
-                                  report.baseline.success_rate * 100,
-                                )}
-                                %
-                              </span>
-                            </div>
-
-                            <div className="skill-eval__metrics">
-                              <span>
-                                {report.candidate.successes}/
-                                {report.candidate.graded_runs} runs succeeded
-                                ({report.candidate.graded_cases}/
-                                {report.candidate.total_cases} graded cases;
-                                {report.candidate.skipped_runs} skipped runs)
-                              </span>
-
-                              <span>
-                                {report.candidate.tool_errors} tool errors
-                                (baseline {report.baseline.tool_errors})
-                              </span>
-                            </div>
-
-                            {!!report.comparison.reasons?.length && (
-                              <ul className="skill-eval__reasons">
-                                {report.comparison.reasons.map(
-                                  (reason, index) => (
-                                    <li key={`${index}-${reason}`}>{reason}</li>
-                                  ),
-                                )}
-                              </ul>
-                            )}
-                          </div>
-                        )}
+                        <SkillEvaluationWorkbench
+                          name={candidate.name}
+                          live={liveSessions[candidate.id]}
+                          report={report}
+                          onStop={isProcessing && activeOperation?.candidateId === candidate.id ? stopCandidate : undefined}
+                        />
                       </div>
 
                       <div className="skill-row__actions">
@@ -581,7 +557,7 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
                             ) : (
                               <>
                                 <Zap size={13} />
-                                Upgrade
+                                Test & activate
                               </>
                             )}
                           </button>
@@ -609,7 +585,7 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
                             ) : (
                               <>
                                 <Play size={13} />
-                                Evaluate
+                                Test skill
                               </>
                             )}
                           </button>
@@ -671,13 +647,9 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
                         <button
                           type="button"
                           className="settings-text-button settings-text-button--danger"
-                          disabled={actions.rejecting}
-                          onClick={() =>
-                            void actions.reject({
-                              candidateId: candidate.id,
-                              reason: "Rejected from the Skills settings page.",
-                            })
-                          }
+                          disabled={busy}
+                          title="Move this candidate to the Rejected section"
+                          onClick={() => void rejectCandidate(candidate.id)}
                         >
                           <ThumbsDown size={13} />
                           Reject
@@ -687,6 +659,79 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
                     );
                   })}
                 </div>
+              )}
+            </div>
+          )}
+
+          {!query.isLoading && !query.isError && (
+            <div className="settings-subsection skill-rejected-section">
+              <div className="settings-subsection__heading-row">
+                <div>
+                  <h4 className="settings-subsection__heading">
+                    Rejected
+                    <span className="settings-subsection__count">
+                      {` (${rejectedCandidates.length})`}
+                    </span>
+                  </h4>
+                  <p className="skill-rejected-section__description">
+                    Candidates you rejected are kept for history, not deleted.
+                    Unsuccessful automatic evaluations remain in review for retry.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="settings-text-button"
+                  aria-expanded={showRejected}
+                  onClick={() => setShowRejected((previous) => !previous)}
+                >
+                  {showRejected ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                  {showRejected ? "Hide" : "Show"}
+                </button>
+              </div>
+
+              {showRejected && (
+                filteredRejectedCandidates.length === 0 ? (
+                  <div className="settings-empty-state settings-empty-state--small">
+                    <Archive size={20} />
+                    <strong>No rejected candidates</strong>
+                    <span>
+                      {search ? "Nothing matches your search." : "Candidates you reject will appear here."}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="skill-list">
+                    {filteredRejectedCandidates.map((candidate) => (
+                      <div className="skill-row" key={candidate.id}>
+                        <div className="skill-row__icon">
+                          <Archive size={16} />
+                        </div>
+                        <div className="skill-row__content">
+                          <div className="skill-row__title">
+                            {candidate.name}
+                            <span className="skill-status skill-status--rejected">
+                              Rejected
+                            </span>
+                          </div>
+                          <div className="skill-row__metadata">
+                            {candidate.description || "No description"}
+                          </div>
+                          <div className="skill-rejected-section__reason">
+                            <strong>Reason:</strong>{" "}
+                            {String(candidate.metadata.rejection_reason)}
+                          </div>
+                          <div className="skill-rejected-section__date">
+                            Last updated: {new Date(candidate.updated_at).toLocaleString()}
+                          </div>
+                          <SkillEvaluationWorkbench
+                            name={candidate.name}
+                            live={liveSessions[candidate.id]}
+                            report={reports[candidate.id]}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )
               )}
             </div>
           )}

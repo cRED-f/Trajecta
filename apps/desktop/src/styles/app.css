@@ -5802,3 +5802,161 @@ select:disabled {
 
   line-height: 1.5;
 }
+
+/* Candidate testing: plain-language three-stage workbench */
+.eval-workbench {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid var(--color-hairline);
+  border-radius: 14px;
+  background: var(--color-hover-veil);
+  min-width: 0;
+}
+.eval-workbench__header,
+.eval-workbench__transcript-title,
+.eval-workbench__progress > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.eval-workbench__header > div { min-width: 0; }
+.eval-workbench__header strong { font-size: 14px; }
+.eval-workbench__header p,
+.eval-workbench__progress p,
+.eval-workbench__transcript small {
+  margin: 5px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-mid-ash);
+}
+.eval-workbench__steps {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.eval-workbench__steps span {
+  padding: 6px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--color-hairline);
+  color: var(--color-mid-ash);
+  font-size: 11px;
+}
+.eval-workbench__steps span.is-current {
+  border-color: #6483ed;
+  color: #6483ed;
+  font-weight: 600;
+}
+.eval-workbench__progress { display: grid; gap: 8px; }
+.eval-workbench__progress strong { font-size: 12px; }
+.eval-workbench__progress span { font-size: 11px; color: var(--color-mid-ash); }
+.eval-workbench__bar {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--color-hairline);
+}
+.eval-workbench__bar > span {
+  display: block;
+  width: 36%;
+  height: 100%;
+  background: #6483ed;
+  animation: skill-evaluation-slide 1.4s ease-in-out infinite;
+}
+.eval-workbench__transcript {
+  min-width: 0;
+  padding: 12px;
+  background: var(--color-hover-veil);
+  border: 1px solid var(--color-hairline);
+  border-radius: 10px;
+}
+.eval-workbench__transcript-title {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  font-size: 12px;
+}
+.eval-workbench__transcript-title span {
+  font-size: 11px;
+  color: var(--color-mid-ash);
+  overflow-wrap: anywhere;
+}
+.eval-workbench__tabs { display: flex; gap: 6px; margin: 10px 0; }
+.eval-workbench__tabs button {
+  padding: 7px 10px;
+  border: 1px solid var(--color-hairline);
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+}
+.eval-workbench__tabs button.is-selected {
+  background: var(--color-hover-veil);
+  border-color: #6483ed;
+  font-weight: 600;
+}
+.eval-workbench__transcript pre,
+.eval-workbench__raw {
+  box-sizing: border-box;
+  max-height: 260px;
+  width: 100%;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--color-hairline);
+  border-radius: 8px;
+  font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: inherit;
+}
+.eval-workbench__comparison { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; }
+.eval-workbench__comparison > div { display: grid; gap: 6px; border: 1px solid var(--color-hairline); padding: 12px; border-radius: 8px; }
+.eval-workbench__comparison small { color: var(--color-mid-ash); }
+.eval-workbench__comparison strong { font-size: 18px; }
+.eval-workbench__results,
+.eval-workbench__reasons { display: grid; gap: 10px; }
+.eval-workbench__notice { color: #c28e49; font-size: 12px; line-height: 1.5; }
+.eval-workbench__success { color: #238f63; font-size: 12px; }
+.eval-workbench__reasons ul,
+.eval-workbench__technical ul { margin: 0; padding-left: 18px; line-height: 1.6; font-size: 12px; }
+.eval-workbench__technical summary { cursor: pointer; font-size: 12px; }
+@media (max-width: 620px) {
+  .eval-workbench__comparison { grid-template-columns: 1fr; }
+  .eval-workbench__header { align-items: flex-start; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .eval-workbench__bar > span { animation: none; }
+}
+
+.eval-workbench__transcript select {
+  padding: 6px 8px;
+  border: 1px solid var(--color-hairline);
+  border-radius: 7px;
+  color: inherit;
+  background: transparent;
+  max-width: 240px;
+}
+
+/* Manually rejected skill candidates: separate, read-only history section. */
+.skill-rejected-section__description {
+  margin: 0 0 12px;
+  color: var(--color-mid-ash);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.skill-rejected-section__reason {
+  margin-top: 5px;
+  color: var(--color-graphite-ink);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.skill-rejected-section__date {
+  color: var(--color-mid-ash);
+  font-size: 10px;
+}

@@ -1,4 +1,5 @@
 import { consumeSSE } from "./sse";
+import type { SkillEvalEvent } from "../components/skills/SkillEvaluationWorkbench";
 
 import type {
   ApprovalDecision,
@@ -616,6 +617,24 @@ export const settingsApi = {
 
   skills(): Promise<SkillCatalog> {
     return request("/skills");
+  },
+
+  async streamSkillEvaluation(
+    candidateId: string,
+    upgrade: boolean,
+    onEvent: (event: SkillEvalEvent) => void,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const url = `${API_ROOT}/skills/candidates/${encodeURIComponent(candidateId)}/evaluate/stream?upgrade=${upgrade}`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { Accept: "text/event-stream" },
+      signal,
+    });
+    if (!response.ok) throw await readError(response);
+    await consumeSSE(response, ({ event, data }) => {
+      onEvent({ ...(JSON.parse(data) as SkillEvalEvent), type: event });
+    });
   },
 
   evaluateSkill(
