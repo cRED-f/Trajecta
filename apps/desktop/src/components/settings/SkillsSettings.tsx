@@ -14,7 +14,7 @@ import {
   Zap,
 } from "lucide-react";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import {
   useSkillActions,
@@ -47,6 +47,13 @@ function messageOf(error: unknown): string {
     : "Something went wrong. Please try again.";
 }
 
+// Which single candidate a manual action is running for, so only that
+// row shows a spinner instead of every row in the list.
+type CandidateOperation = {
+  candidateId: string;
+  kind: "evaluate" | "upgrade";
+} | null;
+
 export function SkillsSettings({ enabled, backendOnline }: Props) {
   const [search, setSearch] = useState("");
 
@@ -57,6 +64,13 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
     Record<string, SkillEvaluationReport>
   >({});
   const [actionError, setActionError] = useState<string | null>(null);
+
+  const [activeOperation, setActiveOperation] =
+    useState<CandidateOperation>(null);
+
+  // Synchronous re-entry guard: state updates are async, so a second
+  // click could otherwise start before the first one is reflected.
+  const operationLock = useRef(false);
 
   const query = useSkillCatalog(enabled && backendOnline);
   const experimentsQuery = useSkillExperiments(
@@ -95,6 +109,7 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
     : experiments;
 
   const busy =
+    activeOperation !== null ||
     actions.evaluating ||
     actions.promoting ||
     actions.upgrading ||
@@ -115,6 +130,10 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
   }
 
   async function evaluateCandidate(candidateId: string) {
+    if (operationLock.current) return;
+
+    operationLock.current = true;
+    setActiveOperation({ candidateId, kind: "evaluate" });
     setActionError(null);
 
     try {
@@ -123,10 +142,17 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
       setReports((previous) => ({ ...previous, [candidateId]: report }));
     } catch (error) {
       setActionError(messageOf(error));
+    } finally {
+      operationLock.current = false;
+      setActiveOperation(null);
     }
   }
 
   async function upgradeCandidate(candidateId: string) {
+    if (operationLock.current) return;
+
+    operationLock.current = true;
+    setActiveOperation({ candidateId, kind: "upgrade" });
     setActionError(null);
 
     try {
@@ -136,8 +162,21 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
       });
 
       if (result.status === "rejected") {
+        const report = result.report;
+
+        if (report) {
+          setReports((previous) => ({
+            ...previous,
+            [candidateId]: report,
+          }));
+        }
+
+        const details = result.reasons?.length
+          ? result.reasons.join("; ")
+          : "No detailed evaluation reason was returned.";
+
         setActionError(
-          `Upgrade blocked: the evaluation did not pass (${result.reason ?? "evaluation_failed"}).`,
+          `Upgrade blocked (${result.verdict ?? "unknown"}): ${details}`,
         );
       } else {
         // The promoted candidate leaves the list; forget its report.
@@ -149,6 +188,9 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
       }
     } catch (error) {
       setActionError(messageOf(error));
+    } finally {
+      operationLock.current = false;
+      setActiveOperation(null);
     }
   }
 
@@ -395,10 +437,24 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
                   {filteredCandidates.map((candidate) => {
                     const report = reports[candidate.id];
 
+                    const isEvaluating =
+                      (activeOperation?.candidateId === candidate.id &&
+                        activeOperation.kind === "evaluate") ||
+                      candidate.status === "evaluating";
+
+                    const isUpgrading =
+                      activeOperation?.candidateId === candidate.id &&
+                      activeOperation.kind === "upgrade";
+
+                    const isProcessing = isEvaluating || isUpgrading;
+
                     return (
                     <div
-                      className="skill-row"
                       key={candidate.id}
+                      className={`skill-row ${
+                        isProcessing ? "skill-row--processing" : ""
+                      }`}
+                      aria-busy={isProcessing}
                     >
                       <div className="skill-row__icon">
                         <FlaskConical size={16} />
@@ -417,6 +473,37 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
                         <div className="skill-row__metadata">
                           {candidate.description || "No description"}
                         </div>
+
+                        {isProcessing && (
+                          <div
+                            className="skill-evaluation-progress"
+                            role="status"
+                            aria-live="polite"
+                          >
+                            <div className="skill-evaluation-progress__label">
+                              <RefreshCw
+                                size={13}
+                                className="settings-spin"
+                                aria-hidden="true"
+                              />
+
+                              <span>
+                                {isUpgrading
+                                  ? "Evaluating and upgrading..."
+                                  : "Evaluating candidate..."}
+                              </span>
+                            </div>
+
+                            <div
+                              className="skill-evaluation-progress__track"
+                              role="progressbar"
+                              aria-label={`Processing ${candidate.name}`}
+                              aria-valuetext="In progress"
+                            >
+                              <div className="skill-evaluation-progress__bar" />
+                            </div>
+                          </div>
+                        )}
 
                         {report && (
                           <div className="skill-eval">
@@ -450,7 +537,10 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
                             <div className="skill-eval__metrics">
                               <span>
                                 {report.candidate.successes}/
-                                {report.candidate.total_cases} cases
+                                {report.candidate.graded_runs} runs succeeded
+                                ({report.candidate.graded_cases}/
+                                {report.candidate.total_cases} graded cases;
+                                {report.candidate.skipped_runs} skipped runs)
                               </span>
 
                               <span>
@@ -458,6 +548,16 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
                                 (baseline {report.baseline.tool_errors})
                               </span>
                             </div>
+
+                            {!!report.comparison.reasons?.length && (
+                              <ul className="skill-eval__reasons">
+                                {report.comparison.reasons.map(
+                                  (reason, index) => (
+                                    <li key={`${index}-${reason}`}>{reason}</li>
+                                  ),
+                                )}
+                              </ul>
+                            )}
                           </div>
                         )}
                       </div>
@@ -470,17 +570,26 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
                             disabled={busy}
                             onClick={() => void upgradeCandidate(candidate.id)}
                           >
-                            {actions.upgrading ? (
-                              <RefreshCw className="settings-spin" size={13} />
+                            {isUpgrading ? (
+                              <>
+                                <RefreshCw
+                                  className="settings-spin"
+                                  size={13}
+                                />
+                                Upgrading...
+                              </>
                             ) : (
-                              <Zap size={13} />
+                              <>
+                                <Zap size={13} />
+                                Upgrade
+                              </>
                             )}
-                            Upgrade
                           </button>
                         )}
 
                         {(candidate.status === "candidate" ||
-                          candidate.status === "verified") && (
+                          candidate.status === "verified" ||
+                          candidate.status === "rejected") && (
                           <button
                             type="button"
                             className="settings-text-button"
@@ -489,12 +598,20 @@ export function SkillsSettings({ enabled, backendOnline }: Props) {
                               void evaluateCandidate(candidate.id)
                             }
                           >
-                            {actions.evaluating ? (
-                              <RefreshCw className="settings-spin" size={13} />
+                            {isEvaluating ? (
+                              <>
+                                <RefreshCw
+                                  className="settings-spin"
+                                  size={13}
+                                />
+                                Evaluating...
+                              </>
                             ) : (
-                              <Play size={13} />
+                              <>
+                                <Play size={13} />
+                                Evaluate
+                              </>
                             )}
-                            Evaluate
                           </button>
                         )}
 

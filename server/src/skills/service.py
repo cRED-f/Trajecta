@@ -177,10 +177,59 @@ class SkillsService:
         evaluation = await self.evaluator.evaluate(candidate_id)
 
         if evaluation.verdict != "pass":
+            # Keep the gate itself intact, but hand the caller the evidence
+            # instead of one opaque code: the gate reasons first, then the
+            # held-out cases that actually failed.
+            reasons = list(evaluation.comparison.reasons)
+
+            for case in evaluation.case_results:
+                candidate = case.get("candidate")
+
+                if not isinstance(candidate, dict):
+                    continue
+
+                if (
+                    candidate.get("success") is True
+                    and not candidate.get("skipped")
+                ):
+                    continue
+
+                detail = candidate.get("error") or candidate.get("judge_reason")
+
+                if not detail:
+                    continue
+
+                message = f"{case.get('case_id', 'unknown')}: {detail}"[:300]
+
+                if message not in reasons:
+                    reasons.append(message)
+
+                if len(reasons) >= 6:
+                    break
+
+            if (
+                not reasons
+                and not evaluation.comparison.improvement_pass
+            ):
+                reasons.append(
+                    "Candidate did not demonstrate the required "
+                    "improvement over baseline."
+                )
+
+            if not reasons:
+                reasons.append(f"Evaluation verdict: {evaluation.verdict}.")
+
             return {
                 "status": "rejected",
-                "reason": "evaluation_failed",
+                "reason": (
+                    "evaluation_needs_review"
+                    if evaluation.verdict == "needs_review"
+                    else "evaluation_failed"
+                ),
                 "evaluation": evaluation.id,
+                "verdict": evaluation.verdict,
+                "reasons": reasons,
+                "report": evaluation.model_dump(mode="json"),
             }
 
         promoted = await self.promoter.promote(

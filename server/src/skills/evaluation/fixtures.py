@@ -190,7 +190,19 @@ class ReplayFixtureStore:
         if manifest is None:
             raise ValueError(f"replay fixture {fixture_id!r} not found")
         if not manifest.complete:
-            raise ValueError(f"replay fixture {fixture_id!r} is incomplete")
+            reasons = "; ".join(
+                f"{item.get('path', '?')}: "
+                f"{item.get('reason', 'unknown')}"
+                for item in manifest.skipped[:5]
+            )
+            raise ValueError(
+                f"replay fixture {fixture_id!r} is incomplete"
+                + (
+                    f"; skipped: {reasons}"
+                    if reasons
+                    else "; no skip reasons recorded"
+                )
+            )
 
         await asyncio.to_thread(
             self._materialize_sync,

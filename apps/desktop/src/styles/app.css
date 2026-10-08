@@ -4288,6 +4288,14 @@ select:disabled {
   border-bottom: 0;
 }
 
+/* Highlight only the active candidate */
+.skill-row--processing {
+  padding: 11px 12px;
+  border-radius: 10px;
+  background: rgba(79, 117, 223, 0.06);
+  box-shadow: inset 3px 0 0 #4f75df;
+}
+
 .skill-row__icon {
   width: 34px;
   height: 34px;
@@ -4628,6 +4636,84 @@ select:disabled {
   font-size: 11px;
 
   color: var(--color-mid-ash);
+}
+
+.skill-eval__reasons {
+  display: flex;
+
+  flex-direction: column;
+
+  gap: 3px;
+
+  margin: 0;
+
+  padding-left: 15px;
+
+  font-size: 11px;
+
+  color: var(--color-mid-ash);
+}
+
+.skill-evaluation-progress {
+  display: flex;
+  flex-direction: column;
+
+  gap: 7px;
+
+  margin-top: 8px;
+
+  width: 100%;
+  max-width: 360px;
+}
+
+.skill-evaluation-progress__label {
+  display: flex;
+  align-items: center;
+
+  gap: 7px;
+
+  color: #4f75df;
+
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.skill-evaluation-progress__track {
+  height: 4px;
+  width: 100%;
+
+  overflow: hidden;
+
+  border-radius: 999px;
+
+  background: var(--color-hairline);
+}
+
+.skill-evaluation-progress__bar {
+  height: 100%;
+  width: 35%;
+
+  border-radius: inherit;
+
+  background: #4f75df;
+
+  animation: skill-evaluation-slide 1.4s ease-in-out infinite;
+}
+
+@keyframes skill-evaluation-slide {
+  from {
+    transform: translateX(-110%);
+  }
+
+  to {
+    transform: translateX(320%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skill-evaluation-progress__bar {
+    animation: none;
+  }
 }
 
 .skill-learning {

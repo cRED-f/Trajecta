@@ -190,11 +190,18 @@ export interface SkillUpgradeResult {
   version?: string;
   reason?: string | null;
   evaluation?: string;
+
+  verdict?: string;
+  reasons?: string[];
+  report?: SkillEvaluationReport;
 }
 
 export interface SkillAggregateMetrics {
   total_cases: number;
   total_runs: number;
+  graded_cases: number;
+  graded_runs: number;
+  skipped_runs: number;
   successes: number;
   success_rate: number;
   average_score: number;
@@ -208,7 +215,9 @@ export interface SkillEvaluationReport {
   verdict: string;
   baseline: SkillAggregateMetrics;
   candidate: SkillAggregateMetrics;
-  comparison: Record<string, unknown>;
+  comparison: Record<string, unknown> & {
+    reasons?: string[];
+  };
 }
 
 export interface SkillLearningRun {

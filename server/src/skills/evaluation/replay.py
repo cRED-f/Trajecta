@@ -1038,20 +1038,25 @@ class DeepAgentReplayExecutor:
             # Restore initial-state fixture
             # -----------------------------------
 
-            fixture_id = (
-                case
-                .metadata
-                .get(
-                    "replay_fixture_id"
-                )
-            )
-
             requires_fixture = bool(
                 case
                 .metadata
                 .get(
                     "requires_replay_fixture"
                 )
+            )
+
+            # Only honour a stored fixture when the case actually needs
+            # its original filesystem state; otherwise an unnecessary
+            # incomplete snapshot would block the replay.
+            fixture_id = (
+                case
+                .metadata
+                .get(
+                    "replay_fixture_id"
+                )
+                if requires_fixture
+                else None
             )
 
             if (

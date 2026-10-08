@@ -550,8 +550,15 @@ class SkillMiner:
 
             item_tools = set(trajectory.tool_sequence)
             needs_fixture = bool(item_tools & _LOCAL_STATE_DEPENDENT_TOOLS)
-            fixture_id = trajectory.metadata.get("replay_fixture_id")
-            fixture_complete = trajectory.metadata.get("replay_fixture_complete")
+            fixture_complete = (
+                trajectory.metadata.get("replay_fixture_complete")
+                is True
+            )
+            fixture_id = (
+                trajectory.metadata.get("replay_fixture_id")
+                if needs_fixture and fixture_complete
+                else None
+            )
 
             raw_assertions = trajectory.metadata.get("outcome_assertions")
             if not isinstance(raw_assertions, list):

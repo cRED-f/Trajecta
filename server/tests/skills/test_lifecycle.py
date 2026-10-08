@@ -21,6 +21,22 @@ from server.src.skills.service import SkillsService
 
 
 class FakeEvaluator:
+    # One held-out case that did not grade, as the real report carries.
+    case_results = [
+        {
+            "case_id": "heldout-001",
+            "candidate": {
+                "success": False,
+                "skipped": False,
+                "judge_reason": "missing final step",
+            },
+        },
+        {
+            "case_id": "heldout-002",
+            "candidate": {"success": True, "skipped": False},
+        },
+    ]
+
     def __init__(self, verdict: str = "pass") -> None:
         self.verdict = verdict
         self.calls: list[str] = []
@@ -32,7 +48,25 @@ class FakeEvaluator:
         model_name: str | None = None,
     ) -> Any:
         self.calls.append(candidate_id)
-        return SimpleNamespace(id=f"eval-{candidate_id}", verdict=self.verdict)
+
+        reasons = (
+            []
+            if self.verdict == "pass"
+            else ["candidate success rate is below minimum"]
+        )
+
+        report = {"id": f"eval-{candidate_id}", "verdict": self.verdict}
+
+        return SimpleNamespace(
+            id=f"eval-{candidate_id}",
+            verdict=self.verdict,
+            comparison=SimpleNamespace(
+                reasons=reasons,
+                improvement_pass=self.verdict == "pass",
+            ),
+            case_results=self.case_results,
+            model_dump=lambda mode="json": report,
+        )
 
 
 class FakePromoter:
@@ -83,8 +117,30 @@ async def test_upgrade_skill_never_promotes_a_failed_evaluation() -> None:
         "status": "rejected",
         "reason": "evaluation_failed",
         "evaluation": "eval-cand-2",
+        "verdict": "fail",
+        # Gate reasons first, then the held-out cases that failed. The
+        # passing case is not reported.
+        "reasons": [
+            "candidate success rate is below minimum",
+            "heldout-001: missing final step",
+        ],
+        "report": {"id": "eval-cand-2", "verdict": "fail"},
     }
     # The current active version must be left untouched.
+    assert service.promoter.calls == []
+
+
+async def test_upgrade_skill_reports_needs_review_separately() -> None:
+    service = SimpleNamespace(
+        evaluator=FakeEvaluator("needs_review"),
+        promoter=FakePromoter(),
+    )
+
+    result = await SkillsService.upgrade_skill(service, candidate_id="cand-3")
+
+    assert result["status"] == "rejected"
+    assert result["reason"] == "evaluation_needs_review"
+    assert result["verdict"] == "needs_review"
     assert service.promoter.calls == []
 
 
