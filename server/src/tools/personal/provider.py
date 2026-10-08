@@ -180,8 +180,10 @@ class PersonalToolProvider:
         actions (memory/task/schedule deletion) and ``request_approval`` always
         interrupt regardless of category.
         """
+        # Asking a question is a conversational pause, not a permission
+        # decision; it must work independently of the action-HITL toggle.
         if not self.settings.guardrails.hitl_enabled:
-            return None
+            return {"ask_user": {"allowed_decisions": ["respond"]}}
 
         approve_edit_reject = {"allowed_decisions": ["approve", "edit", "reject"]}
         approve_reject = {"allowed_decisions": ["approve", "reject"]}
@@ -222,7 +224,7 @@ class PersonalToolProvider:
             options: list[str] | None = None,
             allow_multiple: bool = False,
         ) -> str:
-            """Pause and ask the user a clarification/question. If options are supplied, present them as choices."""
+            """Ask the human a blocking clarification. Options become selectable answers. Never call for information already supplied."""
             # With HITL enabled, `interrupt_on` pauses before this function and
             # the user's `respond` decision becomes the synthetic tool result.
             # This fallback only applies to explicitly non-interactive runs.

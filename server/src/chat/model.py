@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 
 from langchain_openai import ChatOpenAI
+from langchain_core.messages import AIMessageChunk
+from langchain_core.outputs import ChatGenerationChunk
 
 from server.src.config import Settings
 
@@ -11,6 +13,41 @@ class BifrostConfigurationError(
     RuntimeError
 ):
     pass
+
+
+class BifrostReasoningChatOpenAI(ChatOpenAI):
+    """Preserve optional reasoning deltas returned by OpenAI-compatible gateways.
+
+    ChatOpenAI intentionally supports the standard OpenAI response fields and
+    can discard provider-specific `reasoning_content` / `reasoning` fields.
+    This narrow override keeps those fields without changing model routing,
+    tool calls, token accounting, or the normal assistant answer.
+    """
+
+    def _convert_chunk_to_generation_chunk(
+        self,
+        chunk: dict,
+        default_chunk_class: type,
+        base_generation_info: dict | None,
+    ) -> ChatGenerationChunk | None:
+        result = super()._convert_chunk_to_generation_chunk(
+            chunk, default_chunk_class, base_generation_info
+        )
+        if result is None or not isinstance(result.message, AIMessageChunk):
+            return result
+
+        choices = chunk.get("choices") or chunk.get("chunk", {}).get("choices") or []
+        delta = choices[0].get("delta") if choices and isinstance(choices[0], dict) else None
+        if not isinstance(delta, dict):
+            return result
+
+        # Deliberately use only a field *actually returned* by the gateway.
+        for field in ("reasoning_content", "reasoning"):
+            value = delta.get(field)
+            if isinstance(value, str) and value:
+                result.message.additional_kwargs["reasoning_content"] = value
+                break
+        return result
 
 
 class BifrostModelFactory:
@@ -61,7 +98,7 @@ class BifrostModelFactory:
             else f"{stripped}/v1"
         )
 
-        return ChatOpenAI(
+        return BifrostReasoningChatOpenAI(
             model=model,
             base_url=base_url,
             api_key=virtual_key,

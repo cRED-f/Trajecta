@@ -101,6 +101,7 @@ const EMPTY_STREAM: StreamState = {
   running: false,
   runId: null,
   text: "",
+  reasoning: "",
   tools: [],
   steps: [],
   warnings: [],
@@ -264,6 +265,11 @@ export function restoreActivityEvents(value: unknown): StreamState | null {
         ...snapshot,
         tools: updateTool(snapshot.tools, event),
       };
+    } else if (event.type === "reasoning.delta") {
+      const text = event.data.text;
+      if (typeof text === "string") {
+        snapshot = { ...snapshot, reasoning: (snapshot.reasoning + text).slice(-40_000) };
+      }
     } else if (event.type === "agent.step") {
       const node = event.data.node;
 
@@ -480,6 +486,13 @@ export const useChatStore = create<ChatStore>()(
               ...next,
               text: next.text + text,
             };
+          }
+
+          if (event.type === "reasoning.delta") {
+            const text = event.data.text;
+            if (typeof text === "string") {
+              next = { ...next, reasoning: (next.reasoning + text).slice(-40_000) };
+            }
           }
 
           if (

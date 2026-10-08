@@ -31,6 +31,7 @@ interface DecisionDraft {
   type?: ApprovalDecisionType;
   message: string;
   editedAction: string;
+  selectedOptions: string[];
 }
 
 interface Props {
@@ -92,13 +93,29 @@ function defaultDraft(
   entry: ActionEntry,
 ): DecisionDraft {
   return {
+    type: entry.action.name === "ask_user" ? "respond" : undefined,
     message: "",
+    selectedOptions: [],
 
     editedAction: pretty({
       name: entry.action.name,
       args: entry.action.args ?? {},
     }),
   };
+}
+
+function questionOptions(entry: ActionEntry): string[] {
+  const raw = entry.action.args?.options;
+  return Array.isArray(raw) ? raw.filter((option): option is string => typeof option === "string") : [];
+}
+
+function questionAnswer(entry: ActionEntry, draft: DecisionDraft): string {
+  if (entry.action.name !== "ask_user" || draft.selectedOptions.length === 0) {
+    return draft.message.trim();
+  }
+  return entry.action.args?.allow_multiple === true
+    ? JSON.stringify(draft.selectedOptions)
+    : draft.selectedOptions[0]!;
 }
 
 function allowedDecisions(
@@ -216,7 +233,8 @@ export function ApprovalModal({
       }
 
       if (draft.type === "respond") {
-        if (!draft.message.trim()) {
+        const answer = questionAnswer(entry, draft);
+        if (!answer) {
           setLocalError(`Action ${index + 1} needs a response before continuing.`);
 
           return;
@@ -224,7 +242,7 @@ export function ApprovalModal({
 
         decisions.push({
           type: "respond",
-          message: draft.message.trim(),
+          message: answer,
         });
 
         continue;
@@ -268,18 +286,20 @@ export function ApprovalModal({
       <section className="approval-modal">
         <header className="approval-modal__header">
           <div className="approval-modal__icon">
-            <ShieldAlert size={20} />
+            {entries.every((entry) => entry.action.name === "ask_user")
+              ? <MessageSquare size={20} /> : <ShieldAlert size={20} />}
           </div>
 
           <div>
-            <h2 id="approval-title">Permission required</h2>
+            <h2 id="approval-title">
+              {entries.every((entry) => entry.action.name === "ask_user")
+                ? "Trajecta has a question" : "Review requested"}
+            </h2>
 
             <p>
-              Trajecta paused before performing{" "}
-              {entries.length === 1
-                ? "a sensitive action"
-                : `${entries.length} sensitive actions`}
-              .
+              {entries.every((entry) => entry.action.name === "ask_user")
+                ? "Answer to let the agent continue its task."
+                : "Trajecta is paused for your input before continuing."}
             </p>
           </div>
         </header>
@@ -292,6 +312,53 @@ export function ApprovalModal({
               const draft = drafts[index] ?? defaultDraft(entry);
 
               const allowed = allowedDecisions(entry);
+
+              if (entry.action.name === "ask_user") {
+                const options = questionOptions(entry);
+                const multiple = entry.action.args?.allow_multiple === true;
+
+                return (
+                  <article className="approval-action" key={`question-${index}`}>
+                    <h3>{String(entry.action.args?.question || "Trajecta needs clarification")}</h3>
+                    {options.length > 0 && (
+                      <fieldset className="approval-question-options" disabled={submitting}>
+                        <legend>{multiple ? "Choose any that apply" : "Choose one"}</legend>
+                        {options.map((option) => (
+                          <label key={option} className="approval-question-option">
+                            <input
+                              type={multiple ? "checkbox" : "radio"}
+                              name={`question-${approval.id}-${index}`}
+                              value={option}
+                              checked={draft.selectedOptions.includes(option)}
+                              onChange={(event) => {
+                                const chosen = event.target.checked
+                                  ? multiple
+                                    ? [...draft.selectedOptions, option]
+                                    : [option]
+                                  : draft.selectedOptions.filter((value) => value !== option);
+                                updateDraft(index, { selectedOptions: chosen, message: "" });
+                              }}
+                            />
+                            {option}
+                          </label>
+                        ))}
+                      </fieldset>
+                    )}
+                    <label className="approval-field">
+                      <span>{options.length ? "Or type another answer" : "Your answer"}</span>
+                      <textarea
+                        value={draft.message}
+                        disabled={submitting}
+                        placeholder="Answer Trajecta..."
+                        onChange={(event) => updateDraft(index, {
+                          message: event.target.value,
+                          selectedOptions: [],
+                        })}
+                      />
+                    </label>
+                  </article>
+                );
+              }
 
               return (
                 <article
@@ -448,7 +515,7 @@ export function ApprovalModal({
         </div>
 
         <footer className="approval-modal__footer">
-          <span>Nothing runs until you continue.</span>
+          <span>The agent resumes after you submit.</span>
 
           <button
             className="approval-continue"
@@ -456,7 +523,9 @@ export function ApprovalModal({
             disabled={
               submitting ||
               entries.length === 0 ||
-              drafts.some((item) => !item.type)
+              drafts.some((item, index) =>
+                !item.type || (item.type === "respond" &&
+                  !questionAnswer(entries[index]!, item)))
             }
             onClick={() => void submit()}
           >
@@ -466,7 +535,8 @@ export function ApprovalModal({
                 Resuming
               </>
             ) : (
-              "Continue"
+              entries.every((entry) => entry.action.name === "ask_user")
+                ? "Submit answer" : "Continue"
             )}
           </button>
         </footer>

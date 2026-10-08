@@ -32,3 +32,8 @@ PROJECT_STATE.md
 trajecta.zip
 
 implement.md
+
+apps/desktop/src-tauri/gen/schemas/acl-manifests.json
+apps/desktop/src-tauri/gen/schemas/capabilities.json
+apps/desktop/src-tauri/gen/schemas/desktop-schema.json
+apps/desktop/src-tauri/gen/schemas/windows-schema.json

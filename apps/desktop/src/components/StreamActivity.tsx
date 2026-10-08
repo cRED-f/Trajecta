@@ -153,7 +153,7 @@ export function StreamActivity({ stream }: Props) {
         <div className="run-timeline__content">
           <div className="run-timeline__title">
             <Brain size={14} />
-            Thinking
+            {stream.reasoning ? "Model reasoning" : "Model activity"}
 
             {thinking && (
               <span
@@ -167,9 +167,13 @@ export function StreamActivity({ stream }: Props) {
             )}
           </div>
 
-          {stream.steps.length > 0 && (
+          {stream.reasoning ? (
+            <div className="run-timeline__reasoning" aria-label="Model-provided reasoning">
+              {stream.reasoning}
+            </div>
+          ) : stream.steps.length > 0 && (
             <div className="run-timeline__meta">
-              Preparing context and deciding the next action
+              Reasoning text is not available from this model or provider.
             </div>
           )}
         </div>

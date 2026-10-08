@@ -290,6 +290,12 @@ select:disabled {
   text-align: left;
 }
 
+/* Cards are flush otherwise, so their hover fills read as one smear
+   instead of a list of separate chats. */
+.conversation-card + .conversation-card {
+  margin-top: 3px;
+}
+
 .conversation-card:hover,
 .conversation-card--active {
   background: var(--color-hover-veil);
@@ -2384,6 +2390,60 @@ select:disabled {
   color: var(--color-hollow);
 
   font-size: 11px;
+}
+
+.run-timeline__reasoning {
+  margin-top: 10px;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 420px;
+  overflow-y: auto;
+  color: var(--color-graphite-ink);
+  background: var(--surface-conversation-canvas);
+  border: 1px solid var(--color-hairline);
+  border-radius: 9px;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.approval-question-options {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 0;
+  border: 0;
+}
+
+.approval-question-options legend {
+  padding-bottom: 8px;
+  color: var(--color-mid-ash);
+  font-size: 12px;
+}
+
+.approval-question-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  color: var(--color-graphite-ink);
+  font-size: 13px;
+}
+
+.message-interactions {
+  margin-top: 16px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--color-hairline);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.message-interactions__item + .message-interactions__item {
+  margin-top: 12px;
+}
+
+.message-interactions__item p {
+  margin: 4px 0 0;
 }
 
 .run-timeline__spinner {

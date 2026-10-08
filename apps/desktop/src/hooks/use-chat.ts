@@ -380,6 +380,25 @@ export function useChatActions() {
     let composerReset = false;
     let pendingText = "";
     let frame: number | null = null;
+    let pendingReasoning = "";
+    let reasoningFrame: number | null = null;
+    let reasoningSource = "main";
+
+    const flushReasoning = () => {
+      if (reasoningFrame !== null) {
+        cancelAnimationFrame(reasoningFrame);
+        reasoningFrame = null;
+      }
+      if (!pendingReasoning) return;
+      const text = pendingReasoning;
+      pendingReasoning = "";
+      consumeEvent(conversationId, {
+        type: "reasoning.delta",
+        conversation_id: conversationId,
+        run_id: "",
+        data: { text, source: reasoningSource },
+      });
+    };
 
     const flushText = () => {
       if (frame !== null) {
@@ -403,6 +422,7 @@ export function useChatActions() {
 
         async (event) => {
           if (event.type === "message.delta") {
+            flushReasoning();
             if (typeof event.data.text === "string") {
               pendingText += event.data.text;
               if (frame === null) {
@@ -411,6 +431,20 @@ export function useChatActions() {
             }
             return;
           }
+          if (event.type === "reasoning.delta") {
+            flushText();
+            const source = typeof event.data.source === "string" ? event.data.source : "main";
+            if (pendingReasoning && reasoningSource !== source) flushReasoning();
+            reasoningSource = source;
+            if (typeof event.data.text === "string") {
+              pendingReasoning += event.data.text;
+              if (reasoningFrame === null) {
+                reasoningFrame = requestAnimationFrame(flushReasoning);
+              }
+            }
+            return;
+          }
+          flushReasoning();
           flushText();
           consumeEvent(conversationId, event);
 
@@ -479,6 +513,7 @@ export function useChatActions() {
 
       throw error;
     } finally {
+      flushReasoning();
       flushText();
       controllers.delete(conversationId);
     }

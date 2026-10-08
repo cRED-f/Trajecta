@@ -210,6 +210,14 @@ export function MessageItem({
     [message.metadata?.activity_events],
   );
 
+  const humanInteractions = Array.isArray(message.metadata?.human_interactions)
+    ? message.metadata.human_interactions.filter(
+        (item): item is { question: string; answer: string } =>
+          item !== null && typeof item === "object" &&
+          typeof item.question === "string" && typeof item.answer === "string",
+      )
+    : [];
+
   const attachmentUrls =
     useMemo(
       () =>
@@ -284,7 +292,8 @@ export function MessageItem({
 
             <div className="thinking-disclosure__body">
               {savedActivity.steps.length === 0 &&
-              savedActivity.tools.length === 0 ? (
+              savedActivity.tools.length === 0 &&
+              !savedActivity.reasoning ? (
                 <p className="thinking-disclosure__empty">
                   No additional activity details recorded.
                 </p>
@@ -342,6 +351,16 @@ export function MessageItem({
             >
               {message.content}
             </ReactMarkdown>
+          </div>
+        )}
+        {!user && humanInteractions.length > 0 && (
+          <div className="message-interactions">
+            {humanInteractions.map(({ question, answer }, index) => (
+              <div className="message-interactions__item" key={index}>
+                <strong>{question}</strong>
+                <p>Your answer: {answer}</p>
+              </div>
+            ))}
           </div>
         )}
       </div>

@@ -167,6 +167,7 @@ export interface StreamState {
   running: boolean;
   runId: string | null;
   text: string;
+  reasoning: string;
   tools: ToolActivity[];
   steps: string[];
   warnings: string[];

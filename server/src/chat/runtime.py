@@ -68,6 +68,11 @@ Behavior:
   with a multimodal-capable file tool/model when available.
 - Use tools instead of pretending an action was completed.
 - If a tool fails, recover or explain the failure rather than fabricating a result.
+- If a decision or missing requirement materially blocks progress, use ask_user
+  with a short, specific question and options when meaningful. Continue from
+  the human response. Never use request_approval merely to ask a question.
+- Do not ask for information already provided or interrupt for minor choices
+  that can safely be resolved using existing context.
 - Verified skills under /skills/ may be used when relevant.
 - Persistent memory under /memories/ may contain useful prior information.
 - Do not modify /skills/; Trajecta promotes skills through its verified pipeline.
@@ -121,6 +126,35 @@ def _text_from_content(content: Any) -> str:
             if isinstance(value, str):
                 result.append(value)
     return "".join(result)
+
+
+def _reasoning_from_chunk(token: AIMessageChunk) -> str:
+    """Read *only* reasoning text explicitly present in a provider chunk.
+
+    This does not derive, simulate, or infer hidden chain-of-thought.
+    Third-party OpenAI-compatible gateways may discard reasoning fields before
+    LangChain sees them, in which case this intentionally returns an empty str.
+    """
+    content = token.content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "reasoning":
+                continue
+            value = block.get("text")
+            if isinstance(value, str):
+                parts.append(value)
+            summary = block.get("summary")
+            if isinstance(summary, list):
+                for item in summary:
+                    if isinstance(item, dict) and isinstance(item.get("text"), str):
+                        parts.append(item["text"])
+        if parts:
+            return "".join(parts)
+    extra = getattr(token, "additional_kwargs", None) or {}
+    if isinstance(extra, dict) and isinstance(extra.get("reasoning_content"), str):
+        return extra["reasoning_content"]
+    return ""
 
 
 def _source(namespace: tuple[str, ...] | list[str]) -> str:
@@ -518,6 +552,15 @@ class DeepAgentRuntime:
                             input_tokens += int(usage.get("input_tokens") or 0)
                             output_tokens += int(usage.get("output_tokens") or 0)
 
+                        reasoning = _reasoning_from_chunk(token)
+                        if reasoning:
+                            yield ChatEvent(
+                                type="reasoning.delta",
+                                conversation_id=conversation.id,
+                                run_id=run_id,
+                                data={"source": source, "text": reasoning},
+                            )
+
                         if token.tool_call_chunks:
                             for tool_call in token.tool_call_chunks:
                                 # Only the first chunk carrying the name is
@@ -535,25 +578,18 @@ class DeepAgentRuntime:
                                         "args": tool_call.get("args"),
                                     },
                                 )
-                        else:
-                            text = _text_from_content(token.content)
-
-                            if text and source == "main":
-                                if first_token_at is None:
-                                    first_token_at = loop.time()
-                                visible_characters += len(text)
-                                yield ChatEvent(
-                                    type="message.delta",
-                                    conversation_id=conversation.id,
-                                    run_id=run_id,
-                                    data={
-                                        "source": "main",
-                                        "text": text,
-                                    },
-                                )
-
-                            # Subagent model text does not belong in the
-                            # main assistant response.
+                        text = _text_from_content(token.content)
+                        if text and source == "main":
+                            if first_token_at is None:
+                                first_token_at = loop.time()
+                            visible_characters += len(text)
+                            yield ChatEvent(
+                                type="message.delta",
+                                conversation_id=conversation.id,
+                                run_id=run_id,
+                                data={"source": "main", "text": text},
+                            )
+                        # Subagent output never enters the main answer.
                     elif isinstance(token, ToolMessage):
                         if getattr(token, "status", None) == "error":
                             tool_errors += 1

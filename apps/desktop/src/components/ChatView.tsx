@@ -175,6 +175,12 @@ export function ChatView({
       null,
     );
 
+  // The transcript itself, so growth anywhere in it can re-pin the view.
+  const columnRef =
+    useRef<HTMLDivElement>(
+      null,
+    );
+
   const [scrolledUp, setScrolledUp] =
     useState(false);
 
@@ -229,6 +235,17 @@ const approval =
     scrolledUp,
   ]);
 
+  // Sending is an explicit request to watch the answer. A run that starts
+  // therefore re-enters follow mode: a reader parked higher up would
+  // otherwise stay parked and never see the reply arrive.
+  useEffect(() => {
+    if (!running) {
+      return;
+    }
+
+    setScrolledUp(false);
+  }, [running]);
+
   // A switched conversation starts at the top, so drop the stale
   // jump-to-latest affordance left over from the previous one.
   useEffect(() => {
@@ -239,6 +256,9 @@ const approval =
   // draft, a quote, attachments) shrinks this viewport without firing a
   // scroll event. Re-pin to the newest content while the reader is
   // already at the bottom, or the tail would slip out of view mid-type.
+  // The transcript is observed too: reasoning, activity steps and
+  // warnings all grow it, and none of them are in the pin effect's
+  // dependency list above.
   useEffect(() => {
     const el = scrollRef.current;
 
@@ -251,6 +271,12 @@ const approval =
     });
 
     observer.observe(el);
+
+    const column = columnRef.current;
+
+    if (column) {
+      observer.observe(column);
+    }
 
     return () => observer.disconnect();
   }, [scrolledUp]);
@@ -462,7 +488,7 @@ const approval =
       />
 
       <div className="chat-scroll" ref={scrollRef}>
-        <div className="conversation-column">
+        <div className="conversation-column" ref={columnRef}>
           {empty && (
             <ChatWelcome
               disabled={running}

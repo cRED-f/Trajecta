@@ -105,6 +105,8 @@ class PreparedResume:
     cancel_event: asyncio.Event
     decisions: list[dict]
     partial_text: str
+    interaction_history: list[dict[str, Any]] = field(default_factory=list)
+    prior_activity_events: list[dict[str, Any]] = field(default_factory=list)
 
 
 class ChatService:
@@ -723,7 +725,7 @@ class ChatService:
                 cancel_event=turn.cancel_event,
             ):
                 event.run_id = turn.run_id
-                if event.type in {"agent.step", "tool.call.delta", "tool.result"}:
+                if event.type in {"agent.step", "tool.call.delta", "tool.result", "reasoning.delta"}:
                     if len(activity_events) < 2_000:
                         activity_events.append({"type": event.type, "data": event.data})
                 if event.type in {
@@ -759,7 +761,10 @@ class ChatService:
                         checkpoint_id=checkpoint,
                         user_message_id=turn.user_message.id,
                         model_name=turn.runtime.model_name,
-                        interrupt_data=event.data.get("interrupt") or {},
+                        interrupt_data={
+                            **(event.data.get("interrupt") or {}),
+                            "prior_activity_events": activity_events[-1_000:],
+                        },
                         partial_text="".join(assistant_text),
                     )
                     await self._trajectories.finish(
@@ -1011,7 +1016,7 @@ class ChatService:
 
     async def stream_resume(self, turn: PreparedResume) -> AsyncIterator[ChatEvent]:
         assistant_text: list[str] = [turn.partial_text]
-        activity_events: list[dict[str, Any]] = []
+        activity_events: list[dict[str, Any]] = list(turn.prior_activity_events)
         final_checkpoint_id: str | None = None
         final_run_metrics: dict[str, Any] = {}
         # Declared before begin() so the finally below can never see an
@@ -1042,7 +1047,7 @@ class ChatService:
                 cancel_event=turn.cancel_event,
             ):
                 event.run_id = turn.run_id
-                if event.type in {"agent.step", "tool.call.delta", "tool.result"}:
+                if event.type in {"agent.step", "tool.call.delta", "tool.result", "reasoning.delta"}:
                     if len(activity_events) < 2_000:
                         activity_events.append({"type": event.type, "data": event.data})
                 if event.type in {
@@ -1078,7 +1083,11 @@ class ChatService:
                         checkpoint_id=checkpoint,
                         user_message_id=turn.user_message.id,
                         model_name=turn.runtime.model_name,
-                        interrupt_data=event.data.get("interrupt") or {},
+                        interrupt_data={
+                            **(event.data.get("interrupt") or {}),
+                            "interaction_history": turn.interaction_history,
+                            "prior_activity_events": activity_events[-1_000:],
+                        },
                         partial_text="".join(assistant_text),
                     )
                     await self._trajectories.finish(
@@ -1115,6 +1124,7 @@ class ChatService:
                     "trajectory_id": trajectory_id,
                     "resumed": True,
                     "activity_events": activity_events,
+                    "human_interactions": turn.interaction_history,
                 },
                 branch_id=turn.branch.id,
             )
@@ -1243,6 +1253,20 @@ class ChatService:
                     decision.get("message") or ""
                 ).strip():
                     raise InvalidMessageOperation(f"{decision_type} decisions require a message")
+
+            history = list(interrupt.get("interaction_history") or [])
+            for index, action in enumerate(actions):
+                if (
+                    isinstance(action, dict)
+                    and action.get("name") == "ask_user"
+                    and index < len(decisions)
+                    and decisions[index].get("type") == "respond"
+                ):
+                    args = action.get("args") or {}
+                    history.append({
+                        "question": str(args.get("question") or ""),
+                        "answer": str(decisions[index].get("message") or ""),
+                    })
             runtime = await self._runtime.prepare(
                 conversation=conversation,
                 thread_id=str(pending["thread_id"]),
@@ -1261,6 +1285,8 @@ class ChatService:
                 cancel_event=cancel_event,
                 decisions=decisions,
                 partial_text=str(pending.get("partial_text") or ""),
+                interaction_history=history,
+                prior_activity_events=list(interrupt.get("prior_activity_events") or []),
             )
 
     async def _require_conversation(self, conversation_id: str) -> Conversation:
