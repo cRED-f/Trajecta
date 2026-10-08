@@ -302,7 +302,14 @@ export function useChatActions() {
     return detail;
   }
 
-  async function ensureConversation(): Promise<Conversation> {
+  /**
+   * Open the conversation for the next message, creating one if the chat is
+   * still empty. `workspacePath` pins a folder at creation time, which is how
+   * picking a folder on a fresh chat avoids a second round-trip.
+   */
+  async function ensureConversation(
+    workspacePath?: string,
+  ): Promise<Conversation> {
     if (activeConversationId) {
       const cached = queryClient.getQueryData<ConversationDetail>(
         queryKeys.conversation(activeConversationId),
@@ -321,6 +328,9 @@ export function useChatActions() {
 
     const conversation = await chatApi.createConversation({
       model: newConversationModel ?? catalog?.default_model ?? undefined,
+      ...(workspacePath
+        ? { workspace_path: workspacePath }
+        : {}),
     });
 
     setActiveConversation(conversation.id);
@@ -788,6 +798,68 @@ export function useChatActions() {
     });
   }
 
+  /**
+   * Point this conversation at a host folder.
+   *
+   * Nothing is written to the cache until the server accepts the path, so a
+   * rejected swap (missing folder, run in flight, pending approval) leaves
+   * the previously selected folder on screen instead of a path that is not
+   * actually active.
+   */
+  async function selectWorkspace(workspacePath: string) {
+    if (!activeConversationId) {
+      // A fresh chat is created already pinned, so the folder shows up
+      // before the first message rather than after it.
+      await ensureConversation(workspacePath);
+
+      return;
+    }
+
+    const cached = queryClient.getQueryData<ConversationDetail>(
+      queryKeys.conversation(activeConversationId),
+    );
+
+    if (cached && cached.messages.length > 0) {
+      const current =
+        typeof cached.metadata.workspace_path === "string"
+          ? cached.metadata.workspace_path
+          : null;
+
+      if (current !== workspacePath) {
+        const confirmed = window.confirm(
+          "Change the workspace folder?\n\n" +
+            "Earlier chat context stays in this conversation, but new file " +
+            "operations will target the newly selected folder.",
+        );
+
+        if (!confirmed) {
+          return;
+        }
+      }
+    }
+
+    const conversation = await chatApi.selectWorkspace(
+      activeConversationId,
+      workspacePath,
+    );
+
+    queryClient.setQueryData<ConversationDetail>(
+      queryKeys.conversation(activeConversationId),
+
+      (previous) =>
+        previous
+          ? {
+              ...previous,
+              metadata: conversation.metadata,
+            }
+          : previous,
+    );
+
+    await queryClient.invalidateQueries({
+      queryKey: queryKeys.conversations,
+    });
+  }
+
   function newChat() {
     controllers.get(activeConversationId ?? "")?.abort();
 
@@ -820,6 +892,7 @@ export function useChatActions() {
     cancel,
     activateBranch,
     selectModel,
+    selectWorkspace,
     newChat,
     deleteConversation,
     saveMemory,

@@ -196,6 +196,13 @@ const approval =
     approvalQuery.data ??
     null;
 
+  // A conversation without a pinned folder falls back to the configured
+  // default, which reads as "nothing selected" in the bar.
+  const workspacePath =
+    typeof detail?.metadata.workspace_path === "string"
+      ? detail.metadata.workspace_path
+      : null;
+
   const messages =
     detail?.messages ?? [];
 
@@ -438,6 +445,16 @@ const approval =
         resendCount={resendCount}
         sidebarOpen={
           sidebarOpen
+        }
+        workspacePath={
+          workspacePath
+        }
+        workspaceDisabled={
+          running ||
+          Boolean(approval)
+        }
+        onSelectWorkspace={
+          actions.selectWorkspace
         }
         onToggleSidebar={
           onToggleSidebar

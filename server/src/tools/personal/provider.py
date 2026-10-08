@@ -11,6 +11,7 @@ candidates.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from deepagents import FilesystemPermission
@@ -36,23 +37,93 @@ from server.src.tools.personal.utility import UtilityTools
 
 
 class PersonalToolProvider:
-    def __init__(self, settings: Settings, memory: MemoryProvider) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        memory: MemoryProvider,
+        *,
+        workspace_root: str | None = None,
+        _shared: dict[str, Any] | None = None,
+    ) -> None:
         if memory.sqlite is None:
             raise RuntimeError("MemoryProvider must be open before PersonalToolProvider")
         self.settings = settings
         self.memory = memory
-        self.store = PersonalAgentStore(memory.sqlite)
-        self.network = NetworkTools(settings)
-        self.documents = DocumentTools(settings)
-        self.system = SystemTools()
-        self.utility = UtilityTools()
-        self.processes = ProcessManager(settings.tools.workspace_root, settings.chat.uploads_path)
-        self.browser = BrowserManager(settings)
-        self.computer = ComputerManager(settings)
-        self.database = DatabaseTools(settings.tools.workspace_root, settings.chat.uploads_path)
-        self.media = MediaTools(settings.tools.workspace_root, settings.chat.uploads_path)
-        self.notifications = NotificationService(self.store)
+
+        # Components that resolve against a host folder. They are rebuilt per
+        # workspace because each one embeds the directory it operates in.
+        self._workspace_root = workspace_root or settings.tools.workspace_root
+
+        if _shared is None:
+            # The root provider owns everything that is not folder-bound and
+            # hands the same objects to every workspace-scoped clone, so a
+            # second conversation does not open a second HTTP/browser stack.
+            self.store = PersonalAgentStore(memory.sqlite)
+            self.network = NetworkTools(settings)
+            self.system = SystemTools()
+            self.utility = UtilityTools()
+            self.notifications = NotificationService(self.store)
+            self._shared: dict[str, Any] = {
+                "store": self.store,
+                "network": self.network,
+                "system": self.system,
+                "utility": self.utility,
+                "notifications": self.notifications,
+            }
+            self._clones: dict[str, PersonalToolProvider] = {}
+            self._root_provider: PersonalToolProvider = self
+            self._shared["root"] = self
+        else:
+            self._shared = _shared
+            self.store = _shared["store"]
+            self.network = _shared["network"]
+            self.system = _shared["system"]
+            self.utility = _shared["utility"]
+            self.notifications = _shared["notifications"]
+            self._clones = {}
+            self._root_provider = _shared["root"]
+
+        self.documents = DocumentTools(settings, self._workspace_root)
+        self.processes = ProcessManager(self._workspace_root, settings.chat.uploads_path)
+        self.browser = BrowserManager(settings, workspace_root=self._workspace_root)
+        self.computer = ComputerManager(settings, workspace_root=self._workspace_root)
+        self.database = DatabaseTools(self._workspace_root, settings.chat.uploads_path)
+        self.media = MediaTools(self._workspace_root, settings.chat.uploads_path)
         self._tools: list[BaseTool] | None = None
+
+    # -- per-conversation binding ----------------------------------------
+
+    def for_workspace(self, workspace_root: str) -> PersonalToolProvider:
+        """Return the provider bound to ``workspace_root``.
+
+        Two conversations pointing at different folders get different
+        providers, so `/workspace/` resolves to the right directory in each.
+        The shared components are passed through untouched — nothing here
+        mutates ``settings``, which would leak one conversation's folder into
+        another that is running at the same time.
+        """
+        normalized = str(Path(workspace_root).resolve())
+        root = self._root_provider
+
+        if normalized == str(Path(root._workspace_root).resolve()):
+            return root
+
+        existing = root._clones.get(normalized)
+        if existing is not None:
+            return existing
+
+        clone = PersonalToolProvider(
+            root.settings,
+            root.memory,
+            workspace_root=normalized,
+            _shared=root._shared,
+        )
+        root._clones[normalized] = clone
+        return clone
+
+    @property
+    def workspace_root(self) -> str:
+        return self._workspace_root
 
     def permissions(self, policy: PermissionSnapshot) -> list[FilesystemPermission]:
         """Permissions for Deep Agents' built-in filesystem + execution tools.
@@ -891,9 +962,25 @@ class PersonalToolProvider:
         return list(custom)
 
     async def close(self) -> None:
+        """Release handles this provider opened.
+
+        Workspace-scoped clones own their process and browser handles, so they
+        are closed first. The shared HTTP stack is only closed by the root
+        provider — a clone's shutdown must not cut off conversations still
+        using it.
+        """
+        for clone in list(self._root_provider._clones.values()):
+            await clone._close_own()
+        self._root_provider._clones.clear()
+
+        await self._close_own()
+
+        if self._root_provider is self:
+            await self.network.close()
+
+    async def _close_own(self) -> None:
         await self.processes.close()
         await self.browser.close()
-        await self.network.close()
 
     def catalog(self) -> list[dict[str, Any]]:
         builtins = [

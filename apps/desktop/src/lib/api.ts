@@ -183,6 +183,7 @@ export const chatApi = {
   createConversation(body: {
     title?: string | null;
     model?: string | null;
+    workspace_path?: string | null;
     metadata?: Record<string, unknown>;
   }): Promise<Conversation> {
     return request(
@@ -233,6 +234,23 @@ export const chatApi = {
 
         body: JSON.stringify({
           model,
+        }),
+      },
+    );
+  },
+
+  /** Pin a conversation to a host folder. The server validates the path. */
+  selectWorkspace(
+    conversationId: string,
+    workspacePath: string,
+  ): Promise<Conversation> {
+    return request(
+      `/chat/conversations/${conversationId}/workspace`,
+      {
+        method: "PUT",
+
+        body: JSON.stringify({
+          workspace_path: workspacePath,
         }),
       },
     );

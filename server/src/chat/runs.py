@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 
@@ -30,7 +31,39 @@ class ChatRunRegistry:
             ActiveRun,
         ] = {}
 
+        # Conversations whose run has been planned but not registered yet.
+        # Reservations close the window between preflight checks and
+        # registration, so workspace swaps cannot slip in mid-preparation.
+        self._reserved: set[str] = set()
+
         self._lock = asyncio.Lock()
+
+    async def reserve(
+        self,
+        conversation_id: str,
+    ) -> None:
+        """Claim a conversation for a run that is about to be prepared."""
+
+        async with self._lock:
+            if (
+                conversation_id in self._runs
+                or conversation_id in self._reserved
+            ):
+                raise RunAlreadyActive(
+                    "A run is already active "
+                    "for this conversation"
+                )
+
+            self._reserved.add(conversation_id)
+
+    async def release(
+        self,
+        conversation_id: str,
+    ) -> None:
+        """Drop a reservation that never became a run."""
+
+        async with self._lock:
+            self._reserved.discard(conversation_id)
 
     async def register(
         self,
@@ -56,6 +89,8 @@ class ChatRunRegistry:
                 run_id=run_id,
                 cancel_event=event,
             )
+
+            self._reserved.discard(conversation_id)
 
             return event
 
@@ -93,3 +128,33 @@ class ChatRunRegistry:
                     conversation_id,
                     None,
                 )
+                self._reserved.discard(conversation_id)
+
+    async def is_active(
+        self,
+        conversation_id: str,
+    ) -> bool:
+        """Is a run (or a run being prepared) in flight for this conversation?"""
+
+        async with self._lock:
+            return conversation_id in self._runs or conversation_id in self._reserved
+
+    @asynccontextmanager
+    async def exclusive(
+        self,
+        conversation_id: str,
+    ) -> AsyncIterator[None]:
+        """Hold the registry lock while the caller changes conversation state.
+
+        ``reserve()`` and ``register()`` take the same lock, so a workspace
+        swap cannot land between a run's preflight checks and its
+        registration. Callers must not await anything that itself needs this
+        lock while inside.
+        """
+
+        async with self._lock:
+            if conversation_id in self._runs or conversation_id in self._reserved:
+                raise RunAlreadyActive(
+                    "A run is already active for this conversation"
+                )
+            yield

@@ -14,8 +14,11 @@ from server.src.tools.personal.documents import VirtualPathResolver
 
 
 class ComputerManager:
-    def __init__(self, settings: Settings) -> None:
-        self._paths = VirtualPathResolver(settings.tools.workspace_root, settings.chat.uploads_path)
+    def __init__(self, settings: Settings, workspace_root: str | None = None) -> None:
+        self._paths = VirtualPathResolver(
+            workspace_root or settings.tools.workspace_root,
+            settings.chat.uploads_path,
+        )
 
     @staticmethod
     def _gui() -> Any:

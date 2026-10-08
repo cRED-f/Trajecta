@@ -57,6 +57,13 @@ class MemoryProvider:
         self.backend: CompositeBackend | None = None
         self.sandbox: DockerSandboxBackend | None = None
 
+        # Host folders pinned per conversation. Backends and sandbox
+        # containers are derived from these instead of mutating settings,
+        # so two conversations can point at different projects at once.
+        self._default_workspace_root: str | None = None
+        self._uploads_root: Path | None = None
+        self._sandboxes: dict[str, DockerSandboxBackend] = {}
+
         self.db_path = cfg.db_path
         self.langgraph_db_path = cfg.langgraph_db_path
         self.memory_files = cfg.memory_files
@@ -107,52 +114,14 @@ class MemoryProvider:
 
         uploads_root = Path(self._settings.chat.uploads_path).resolve()
         uploads_root.mkdir(parents=True, exist_ok=True)
+        self._uploads_root = uploads_root
 
         workspace_root = Path(self._settings.tools.workspace_root).resolve()
         workspace_root.mkdir(parents=True, exist_ok=True)
+        self._default_workspace_root = str(workspace_root)
 
-        default_backend: Any = StateBackend()
-        if self._settings.sandbox.enabled:
-            try:
-                self.sandbox = DockerSandboxBackend(
-                    image=self._settings.sandbox.image,
-                    workspace_root=str(workspace_root),
-                    uploads_root=str(uploads_root),
-                    timeout_seconds=self._settings.sandbox.timeout_seconds,
-                    memory_limit=self._settings.sandbox.memory_limit,
-                    cpu_limit=self._settings.sandbox.cpu_limit,
-                    network_enabled=self._settings.sandbox.network_enabled,
-                    auto_remove=self._settings.sandbox.auto_remove,
-                )
-                default_backend = self.sandbox
-            except Exception:
-                # Chat must remain usable when Docker is unavailable or the
-                # sandbox image has not been built yet. In that case Deep
-                # Agents simply omits its built-in `execute` tool.
-                logger.exception("Docker sandbox unavailable; using StateBackend")
-                self.sandbox = None
-
-        self.backend = CompositeBackend(
-            default=default_backend,
-            routes={
-                "/memories/": StoreBackend(
-                    namespace=lambda _rt: ns_local,
-                    store=self.store,
-                ),
-                "/skills/": StoreBackend(
-                    namespace=lambda _rt: ns_local + ("skills",),
-                    store=self.store,
-                ),
-                "/workspace/": FilesystemBackend(
-                    root_dir=str(workspace_root),
-                    virtual_mode=True,
-                ),
-                "/uploads/": FilesystemBackend(
-                    root_dir=str(uploads_root),
-                    virtual_mode=True,
-                ),
-            },
-        )
+        self.sandbox = self._sandbox_for(str(workspace_root))
+        self.backend = self._build_backend(str(workspace_root), allow_execute=True)
 
         # Trajecta's own stores: SQLite + FTS always on (even with Qdrant off);
         # Qdrant is embedded and resilient (no-op if unavailable).
@@ -351,9 +320,12 @@ class MemoryProvider:
 
     async def close(self) -> None:
         self.vector.close()
-        if self.sandbox is not None:
-            self.sandbox.close()
-            self.sandbox = None
+        # Every conversation's sandbox, not just the default folder's: a
+        # workspace-specific container outlives its run until shutdown.
+        for sandbox in list(self._sandboxes.values()):
+            sandbox.close()
+        self._sandboxes.clear()
+        self.sandbox = None
         if self.fts is not None:
             self.fts = None
         if self.sqlite is not None:
@@ -373,23 +345,33 @@ class MemoryProvider:
 
     # -- agent runtime interface ------------------------------------------
 
-    def agent_kwargs(self, *, allow_execute: bool = True) -> dict[str, Any]:
+    def agent_kwargs(
+        self,
+        *,
+        allow_execute: bool = True,
+        workspace_root: str | None = None,
+    ) -> dict[str, Any]:
         """Keyword arguments for `create_deep_agent(model, **agent_kwargs())`.
 
         With ``allow_execute=False`` (Terminal permission = DENY) the runtime
         backend is replaced by a StateBackend that has no ``execute`` tool, so
         Deep Agents does not surface local process execution to the model.
+
+        ``workspace_root`` rebinds ``/workspace/`` for one conversation's run.
+        Omitting it keeps the configured default, which is what every
+        conversation without a pinned folder gets.
         """
         if (
             self.checkpointer is None
             or self.store is None
             or self.backend is None
+            or self._default_workspace_root is None
         ):
             raise RuntimeError(
                 "MemoryProvider is not open — call await provider.open() first"
             )
 
-        backend = self.backend if allow_execute else self._backend_without_execute()
+        backend = self._backend_for(workspace_root, allow_execute=allow_execute)
 
         return {
             "checkpointer": self.checkpointer,
@@ -399,28 +381,93 @@ class MemoryProvider:
             "skills": [self.skills_path],
         }
 
-    def _backend_without_execute(self) -> CompositeBackend:
-        """Runtime backend used when Terminal permission is DENY.
+    def _backend_for(
+        self,
+        workspace_root: str | None,
+        *,
+        allow_execute: bool,
+    ) -> CompositeBackend:
+        """Backend whose ``/workspace/`` route points at ``workspace_root``."""
 
-        StateBackend has no ``execute`` capability, so Deep Agents does not
-        create the built-in ``execute`` tool. The route backends mirror ``open()``
-        but never include the Docker sandbox default.
-        """
         if (
-            self.store is None
-            or self.checkpointer is None
+            self._default_workspace_root is None
+            or self._uploads_root is None
+            or self.store is None
         ):
             raise RuntimeError(
                 "MemoryProvider is not open — call await provider.open() first"
             )
 
-        ns_local = ("trajecta-local",)
+        root = str(Path(workspace_root).resolve()) if workspace_root else self._default_workspace_root
 
-        uploads_root = Path(self._settings.chat.uploads_path).resolve()
-        workspace_root = Path(self._settings.tools.workspace_root).resolve()
+        # The default folder's backend is built once at startup and reused so
+        # the common case allocates nothing per run.
+        if allow_execute and root == self._default_workspace_root and self.backend is not None:
+            return self.backend
+
+        return self._build_backend(root, allow_execute=allow_execute)
+
+    def _sandbox_for(self, workspace_root: str) -> DockerSandboxBackend | None:
+        """Container mounted for this host folder, starting one if needed.
+
+        Containers are keyed by their mount: a sandbox created for Project A
+        must never execute Project B's commands, so reuse only ever happens
+        when the mounted folder matches. Failure leaves the chat usable
+        without a built-in ``execute`` tool instead of failing the run.
+        """
+        if not self._settings.sandbox.enabled:
+            return None
+
+        existing = self._sandboxes.get(workspace_root)
+        if existing is not None:
+            return existing
+
+        uploads_root = self._uploads_root
+        if uploads_root is None:
+            return None
+
+        try:
+            sandbox = DockerSandboxBackend(
+                image=self._settings.sandbox.image,
+                workspace_root=workspace_root,
+                uploads_root=str(uploads_root),
+                timeout_seconds=self._settings.sandbox.timeout_seconds,
+                memory_limit=self._settings.sandbox.memory_limit,
+                cpu_limit=self._settings.sandbox.cpu_limit,
+                network_enabled=self._settings.sandbox.network_enabled,
+                auto_remove=self._settings.sandbox.auto_remove,
+            )
+        except Exception:
+            # Chat must remain usable when Docker is unavailable or the
+            # sandbox image has not been built yet. In that case Deep
+            # Agents simply omits its built-in `execute` tool.
+            logger.exception("Docker sandbox unavailable; using StateBackend")
+            return None
+
+        self._sandboxes[workspace_root] = sandbox
+        return sandbox
+
+    def _build_backend(self, workspace_root: str, *, allow_execute: bool) -> CompositeBackend:
+        """Compose the route backends around one conversation's workspace."""
+
+        if self.store is None or self._uploads_root is None:
+            raise RuntimeError(
+                "MemoryProvider is not open — call await provider.open() first"
+            )
+
+        ns_local = ("trajecta-local",)
+        workspace_root = str(Path(workspace_root).resolve())
+
+        # StateBackend has no ``execute`` capability, so Deep Agents does not
+        # create the built-in ``execute`` tool when Terminal is DENY.
+        default_backend: Any = StateBackend()
+        if allow_execute:
+            sandbox = self._sandbox_for(workspace_root)
+            if sandbox is not None:
+                default_backend = sandbox
 
         return CompositeBackend(
-            default=StateBackend(),
+            default=default_backend,
             routes={
                 "/memories/": StoreBackend(
                     namespace=lambda _rt: ns_local,
@@ -431,11 +478,11 @@ class MemoryProvider:
                     store=self.store,
                 ),
                 "/workspace/": FilesystemBackend(
-                    root_dir=str(workspace_root),
+                    root_dir=workspace_root,
                     virtual_mode=True,
                 ),
                 "/uploads/": FilesystemBackend(
-                    root_dir=str(uploads_root),
+                    root_dir=str(self._uploads_root),
                     virtual_mode=True,
                 ),
             },

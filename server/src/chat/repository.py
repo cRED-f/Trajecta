@@ -127,6 +127,16 @@ class ChatRepository:
             (model, _now(), conversation_id),
         )
 
+    async def update_metadata(
+        self,
+        conversation_id: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        await self._db.execute(
+            "UPDATE conversations SET metadata = ?, updated_at = ? WHERE id = ?",
+            (_dump(metadata), _now(), conversation_id),
+        )
+
     async def delete_conversation(self, conversation_id: str) -> None:
         await self._db.execute(
             "DELETE FROM conversations WHERE id = ?",

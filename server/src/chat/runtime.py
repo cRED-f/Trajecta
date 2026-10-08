@@ -18,6 +18,7 @@ from server.src.chat.mcp import MCPToolProvider
 from server.src.chat.model import BifrostModelFactory
 from server.src.chat.models import Attachment, ChatEvent, Conversation
 from server.src.chat.rag import AttachmentRAGIndex
+from server.src.chat.workspace import conversation_workspace
 from server.src.config import Settings
 from server.src.guardrails.content import (
     ContentGuardrailService,
@@ -251,8 +252,15 @@ class DeepAgentRuntime:
             raise RuntimeError("No permission policy store wired into the runtime")
         policy = await self._permission_policy.snapshot()
 
-        native_tools = self._personal_tools.filter_tools(
-            self._personal_tools.get_tools(),
+        # Every tool in the run must agree on which host folder `/workspace/`
+        # means, so resolve it once here: the Deep Agents route backends, the
+        # sandbox mount, and Trajecta's own document/process tools are all
+        # bound from this value.
+        workspace_root = conversation_workspace(conversation, self._settings)
+        personal_tools = self._personal_tools.for_workspace(workspace_root)
+
+        native_tools = personal_tools.filter_tools(
+            personal_tools.get_tools(),
             policy,
         )
 
@@ -292,7 +300,7 @@ class DeepAgentRuntime:
                     f"Checkpoint {base_checkpoint_id!r} does not exist for this conversation"
                 )
 
-        interrupt_policy = self._personal_tools.interrupt_on(policy)
+        interrupt_policy = personal_tools.interrupt_on(policy)
 
         if self._verification is not None:
             interrupt_policy = interrupt_policy or {}
@@ -320,7 +328,13 @@ class DeepAgentRuntime:
             await self._experiences.context(task_text)
             if self._experiences is not None and automatic_memory else ""
         )
-        system_prompt = SYSTEM_PROMPT + experiment_prompt + experience_prompt
+        system_prompt = (
+            SYSTEM_PROMPT
+            + f"\nThis conversation's workspace folder is {workspace_root}. "
+            "Your file tools see it as /workspace/; prefer it for project work.\n"
+            + experiment_prompt
+            + experience_prompt
+        )
 
         guardrail_middleware = GuardrailsModelMiddleware(
             self._content_guardrails,
@@ -346,10 +360,11 @@ class DeepAgentRuntime:
             ],
             # IMPORTANT:
             # This remains the tool-authority layer.
-            permissions=self._personal_tools.permissions(policy),
+            permissions=personal_tools.permissions(policy),
             interrupt_on=interrupt_policy or None,
             **self._memory.agent_kwargs(
                 allow_execute=policy.mode("terminal") != "deny",
+                workspace_root=workspace_root,
             ),
         )
         return PreparedAgentRun(

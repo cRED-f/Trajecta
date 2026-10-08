@@ -4,6 +4,7 @@ import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -31,7 +32,8 @@ from server.src.chat.models import (
 from server.src.chat.rag import AttachmentRAGIndex
 from server.src.chat.repository import ChatRepository
 from server.src.chat.runtime import DeepAgentRuntime, PreparedAgentRun
-from server.src.chat.runs import ChatRunRegistry
+from server.src.chat.runs import ChatRunRegistry, RunAlreadyActive
+from server.src.chat.workspace import METADATA_KEY, validate_workspace_path
 from server.src.config import Settings
 from server.src.guardrails.content import (
     ContentGuardrailService,
@@ -68,6 +70,14 @@ class InvalidAttachment(RuntimeError):
 
 class InvalidMessageOperation(RuntimeError):
     pass
+
+
+class WorkspaceBusy(InvalidMessageOperation):
+    """The conversation is running or awaiting approval, so it cannot switch folders.
+
+    Reported as 409 rather than 400: the request itself is well-formed, the
+    conversation is simply in a state that makes it untimely.
+    """
 
 
 @dataclass(slots=True)
@@ -155,10 +165,21 @@ class ChatService:
             runtime = await self._llm_settings.get()
             model = runtime["default_model"]
 
+        metadata = dict(request.metadata)
+
+        # A workspace path is only ever accepted through a validated field.
+        # Anything smuggled in via `metadata` gets the same check rather than
+        # being believed, and an empty value is dropped instead of stored.
+        raw_workspace = request.workspace_path or metadata.get(METADATA_KEY)
+        if raw_workspace is None or not str(raw_workspace).strip():
+            metadata.pop(METADATA_KEY, None)
+        else:
+            metadata[METADATA_KEY] = validate_workspace_path(str(raw_workspace))
+
         return await self._repository.create_conversation(
             title=request.title,
             model=self._models.canonical_model_name(model),
-            metadata=request.metadata,
+            metadata=metadata,
         )
 
     async def list_conversations(self) -> list[Conversation]:
@@ -196,6 +217,42 @@ class ChatService:
         await self._require_conversation(conversation_id)
         canonical = await self._models.resolve_or_default(model)
         await self._repository.update_model(conversation_id, canonical)
+        result = await self._repository.get_conversation(conversation_id)
+        assert result is not None
+        return result
+
+    async def select_workspace(
+        self,
+        conversation_id: str,
+        workspace_path: str,
+    ) -> Conversation:
+        """Pin a conversation to a host folder.
+
+        Validated before it is stored and re-checked on every run, so a bad
+        path never reaches Deep Agents. The run registry's lock covers the
+        whole check-and-write: a run cannot register between the idle check
+        and the metadata commit, which is the window that would otherwise let
+        a run start against the folder that was just replaced.
+        """
+
+        conversation = await self._require_conversation(conversation_id)
+        resolved = validate_workspace_path(workspace_path)
+
+        try:
+            async with self._runs.exclusive(conversation_id):
+                if await self._repository.get_pending_approval(conversation_id):
+                    raise WorkspaceBusy(
+                        "Resolve the pending approval before changing workspace."
+                    )
+
+                metadata = dict(conversation.metadata)
+                metadata[METADATA_KEY] = resolved
+                await self._repository.update_metadata(conversation_id, metadata)
+        except RunAlreadyActive as exc:
+            raise WorkspaceBusy(
+                "Cannot change workspace while the agent is running."
+            ) from exc
+
         result = await self._repository.get_conversation(conversation_id)
         assert result is not None
         return result
@@ -300,39 +357,40 @@ class ChatService:
         conversation_id: str,
         request: SendMessageRequest,
     ) -> PreparedTurn:
-        await self._ensure_no_pending_approval(conversation_id)
-        conversation = await self._require_conversation(conversation_id)
-        branch = await self._require_active_branch(conversation_id)
-        attachments = await self._validate_attachments(
-            conversation_id,
-            request.attachment_ids,
-        )
-        self._validate_message_content(request.content, attachments)
+        async with self._reserved_run(conversation_id):
+            await self._ensure_no_pending_approval(conversation_id)
+            conversation = await self._require_conversation(conversation_id)
+            branch = await self._require_active_branch(conversation_id)
+            attachments = await self._validate_attachments(
+                conversation_id,
+                request.attachment_ids,
+            )
+            self._validate_message_content(request.content, attachments)
 
-        guardrail_findings = await self._content_guardrails.inspect_user_prompt(
-            request.content or ""
-        )
+            guardrail_findings = await self._content_guardrails.inspect_user_prompt(
+                request.content or ""
+            )
 
-        base_checkpoint_id = await self._resolve_branch_head(conversation, branch)
-        runtime = await self._runtime.prepare(
-            conversation=conversation,
-            thread_id=branch.thread_id,
-            model_name=request.model,
-            base_checkpoint_id=base_checkpoint_id,
-            task_text=request.content or "",
-        )
-        return await self._persist_prepared_turn(
-            conversation=conversation,
-            branch=branch,
-            content=request.content,
-            attachments=attachments,
-            runtime=runtime,
-            base_checkpoint_id=base_checkpoint_id,
-            model_name=request.model,
-            revision_of=None,
-            operation="send",
-            guardrail_findings=guardrail_findings,
-        )
+            base_checkpoint_id = await self._resolve_branch_head(conversation, branch)
+            runtime = await self._runtime.prepare(
+                conversation=conversation,
+                thread_id=branch.thread_id,
+                model_name=request.model,
+                base_checkpoint_id=base_checkpoint_id,
+                task_text=request.content or "",
+            )
+            return await self._persist_prepared_turn(
+                conversation=conversation,
+                branch=branch,
+                content=request.content,
+                attachments=attachments,
+                runtime=runtime,
+                base_checkpoint_id=base_checkpoint_id,
+                model_name=request.model,
+                revision_of=None,
+                operation="send",
+                guardrail_findings=guardrail_findings,
+            )
 
     async def prepare_edit(
         self,
@@ -340,23 +398,24 @@ class ChatService:
         message_id: str,
         request: EditMessageRequest,
     ) -> PreparedTurn:
-        await self._ensure_no_pending_approval(conversation_id)
-        original = await self._require_user_message(conversation_id, message_id)
-        attachments = (
-            await self._validate_attachments(conversation_id, request.attachment_ids)
-            if request.attachment_ids is not None
-            else await self._repository.get_message_attachments(original.id)
-        )
-        self._validate_message_content(request.content, attachments)
-        return await self._prepare_fork_from_user(
-            conversation_id=conversation_id,
-            original=original,
-            content=request.content,
-            attachments=attachments,
-            model_name=request.model,
-            operation="edit",
-            revision_of=original.id,
-        )
+        async with self._reserved_run(conversation_id):
+            await self._ensure_no_pending_approval(conversation_id)
+            original = await self._require_user_message(conversation_id, message_id)
+            attachments = (
+                await self._validate_attachments(conversation_id, request.attachment_ids)
+                if request.attachment_ids is not None
+                else await self._repository.get_message_attachments(original.id)
+            )
+            self._validate_message_content(request.content, attachments)
+            return await self._prepare_fork_from_user(
+                conversation_id=conversation_id,
+                original=original,
+                content=request.content,
+                attachments=attachments,
+                model_name=request.model,
+                operation="edit",
+                revision_of=original.id,
+            )
 
     async def prepare_resend(
         self,
@@ -364,18 +423,19 @@ class ChatService:
         message_id: str,
         request: ResendMessageRequest,
     ) -> PreparedTurn:
-        await self._ensure_no_pending_approval(conversation_id)
-        original = await self._require_user_message(conversation_id, message_id)
-        attachments = await self._repository.get_message_attachments(original.id)
-        return await self._prepare_fork_from_user(
-            conversation_id=conversation_id,
-            original=original,
-            content=original.content,
-            attachments=attachments,
-            model_name=request.model,
-            operation="resend",
-            revision_of=original.id,
-        )
+        async with self._reserved_run(conversation_id):
+            await self._ensure_no_pending_approval(conversation_id)
+            original = await self._require_user_message(conversation_id, message_id)
+            attachments = await self._repository.get_message_attachments(original.id)
+            return await self._prepare_fork_from_user(
+                conversation_id=conversation_id,
+                original=original,
+                content=original.content,
+                attachments=attachments,
+                model_name=request.model,
+                operation="resend",
+                revision_of=original.id,
+            )
 
     async def prepare_regenerate(
         self,
@@ -383,27 +443,28 @@ class ChatService:
         assistant_message_id: str,
         request: RegenerateMessageRequest,
     ) -> PreparedTurn:
-        await self._ensure_no_pending_approval(conversation_id)
-        assistant = await self._require_message(conversation_id, assistant_message_id)
-        if assistant.role != MessageRole.ASSISTANT or not assistant.parent_message_id:
-            raise InvalidMessageOperation(
-                "Regenerate requires an assistant message with a parent user message"
+        async with self._reserved_run(conversation_id):
+            await self._ensure_no_pending_approval(conversation_id)
+            assistant = await self._require_message(conversation_id, assistant_message_id)
+            if assistant.role != MessageRole.ASSISTANT or not assistant.parent_message_id:
+                raise InvalidMessageOperation(
+                    "Regenerate requires an assistant message with a parent user message"
+                )
+            user = await self._require_user_message(
+                conversation_id,
+                assistant.parent_message_id,
             )
-        user = await self._require_user_message(
-            conversation_id,
-            assistant.parent_message_id,
-        )
-        attachments = await self._repository.get_message_attachments(user.id)
-        return await self._prepare_fork_from_user(
-            conversation_id=conversation_id,
-            original=user,
-            content=user.content,
-            attachments=attachments,
-            model_name=request.model,
-            operation="regenerate",
-            revision_of=user.id,
-            extra_metadata={"regenerate_of": assistant.id},
-        )
+            attachments = await self._repository.get_message_attachments(user.id)
+            return await self._prepare_fork_from_user(
+                conversation_id=conversation_id,
+                original=user,
+                content=user.content,
+                attachments=attachments,
+                model_name=request.model,
+                operation="regenerate",
+                revision_of=user.id,
+                extra_metadata={"regenerate_of": assistant.id},
+            )
 
     async def _prepare_fork_from_user(
         self,
@@ -1103,6 +1164,22 @@ class ChatService:
     # Helpers
     # ------------------------------------------------------------------
 
+    @asynccontextmanager
+    async def _reserved_run(self, conversation_id: str):
+        """Hold a conversation's run slot for the duration of preflight.
+
+        The slot is claimed before the conversation is read, so its workspace
+        cannot be swapped underneath a run that has already started resolving
+        it. Registering the real run inside this window releases the
+        reservation; failing preflight releases it on the way out.
+        """
+        await self._runs.reserve(conversation_id)
+        try:
+            yield
+        except BaseException:
+            await self._runs.release(conversation_id)
+            raise
+
     async def _ensure_no_pending_approval(self, conversation_id: str) -> None:
         pending = await self._repository.get_pending_approval(conversation_id)
         if pending is not None:
@@ -1120,64 +1197,71 @@ class ChatService:
         conversation_id: str,
         decisions: list[dict],
     ) -> PreparedResume:
-        conversation = await self._require_conversation(conversation_id)
-        pending = await self._repository.get_pending_approval(conversation_id)
-        if pending is None:
-            raise InvalidMessageOperation("No sensitive action is waiting for approval")
-        branch = await self._repository.get_branch(str(pending["branch_id"]))
-        if branch is None:
-            raise InvalidMessageOperation("Approval branch no longer exists")
-        user_message = await self._require_user_message(
-            conversation_id, str(pending["user_message_id"])
-        )
-        interrupt = pending.get("interrupt_data") or {}
-        actions = interrupt.get("action_requests") or []
-        reviews = interrupt.get("review_configs") or []
-        expected = len(actions)
-        if expected and len(decisions) != expected:
-            raise InvalidMessageOperation(
-                f"Expected {expected} approval decision(s), received {len(decisions)}"
+        async with self._reserved_run(conversation_id):
+            conversation = await self._require_conversation(conversation_id)
+            pending = await self._repository.get_pending_approval(conversation_id)
+            if pending is None:
+                raise InvalidMessageOperation("No sensitive action is waiting for approval")
+            branch = await self._repository.get_branch(str(pending["branch_id"]))
+            if branch is None:
+                raise InvalidMessageOperation("Approval branch no longer exists")
+            user_message = await self._require_user_message(
+                conversation_id, str(pending["user_message_id"])
             )
-        allowed_by_action = {
-            str(item.get("action_name")): set(item.get("allowed_decisions") or [])
-            for item in reviews
-            if isinstance(item, dict)
-        }
-        known_types = {"approve", "edit", "reject", "respond"}
-        for index, decision in enumerate(decisions):
-            decision_type = str(decision.get("type") or "")
-            if decision_type not in known_types:
-                raise InvalidMessageOperation(f"Invalid approval decision type: {decision_type}")
-            if index < len(actions) and isinstance(actions[index], dict):
-                action_name = str(actions[index].get("name") or "")
-                allowed = allowed_by_action.get(action_name)
-                if allowed and decision_type not in allowed:
+            interrupt = pending.get("interrupt_data") or {}
+            actions = interrupt.get("action_requests") or []
+            reviews = interrupt.get("review_configs") or []
+            expected = len(actions)
+            if expected and len(decisions) != expected:
+                raise InvalidMessageOperation(
+                    f"Expected {expected} approval decision(s), received {len(decisions)}"
+                )
+            allowed_by_action = {
+                str(item.get("action_name")): set(item.get("allowed_decisions") or [])
+                for item in reviews
+                if isinstance(item, dict)
+            }
+            known_types = {"approve", "edit", "reject", "respond"}
+            for index, decision in enumerate(decisions):
+                decision_type = str(decision.get("type") or "")
+                if decision_type not in known_types:
                     raise InvalidMessageOperation(
-                        f"Decision {decision_type!r} is not allowed for {action_name!r}"
+                        f"Invalid approval decision type: {decision_type}"
                     )
-            if decision_type == "edit" and not isinstance(decision.get("edited_action"), dict):
-                raise InvalidMessageOperation("edit decisions require edited_action")
-            if decision_type in {"reject", "respond"} and not str(decision.get("message") or "").strip():
-                raise InvalidMessageOperation(f"{decision_type} decisions require a message")
-        runtime = await self._runtime.prepare(
-            conversation=conversation,
-            thread_id=str(pending["thread_id"]),
-            model_name=str(pending["model_name"]),
-            base_checkpoint_id=str(pending["checkpoint_id"]),
-            task_text=str(user_message.content or ""),
-        )
-        run_id = uuid.uuid4().hex
-        cancel_event = await self._runs.register(conversation_id, run_id)
-        return PreparedResume(
-            run_id=run_id,
-            conversation=conversation,
-            branch=branch,
-            user_message=user_message,
-            runtime=runtime,
-            cancel_event=cancel_event,
-            decisions=decisions,
-            partial_text=str(pending.get("partial_text") or ""),
-        )
+                if index < len(actions) and isinstance(actions[index], dict):
+                    action_name = str(actions[index].get("name") or "")
+                    allowed = allowed_by_action.get(action_name)
+                    if allowed and decision_type not in allowed:
+                        raise InvalidMessageOperation(
+                            f"Decision {decision_type!r} is not allowed for {action_name!r}"
+                        )
+                if decision_type == "edit" and not isinstance(
+                    decision.get("edited_action"), dict
+                ):
+                    raise InvalidMessageOperation("edit decisions require edited_action")
+                if decision_type in {"reject", "respond"} and not str(
+                    decision.get("message") or ""
+                ).strip():
+                    raise InvalidMessageOperation(f"{decision_type} decisions require a message")
+            runtime = await self._runtime.prepare(
+                conversation=conversation,
+                thread_id=str(pending["thread_id"]),
+                model_name=str(pending["model_name"]),
+                base_checkpoint_id=str(pending["checkpoint_id"]),
+                task_text=str(user_message.content or ""),
+            )
+            run_id = uuid.uuid4().hex
+            cancel_event = await self._runs.register(conversation_id, run_id)
+            return PreparedResume(
+                run_id=run_id,
+                conversation=conversation,
+                branch=branch,
+                user_message=user_message,
+                runtime=runtime,
+                cancel_event=cancel_event,
+                decisions=decisions,
+                partial_text=str(pending.get("partial_text") or ""),
+            )
 
     async def _require_conversation(self, conversation_id: str) -> Conversation:
         result = await self._repository.get_conversation(conversation_id)

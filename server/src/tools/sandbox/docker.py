@@ -50,6 +50,7 @@ class DockerSandboxBackend(BaseSandbox):
         self._auto_remove = auto_remove
         self._lock = threading.RLock()
         self._id = f"docker-{uuid.uuid4().hex[:12]}"
+        self._workspace_root = str(workspace_root)
 
         volumes: dict[str, dict[str, str]] = {
             str(workspace_root): {"bind": "/workspace", "mode": "rw"},
@@ -76,6 +77,15 @@ class DockerSandboxBackend(BaseSandbox):
     @property
     def id(self) -> str:
         return self._id
+
+    @property
+    def workspace_root(self) -> str:
+        """Host directory mounted read-write at ``/workspace``.
+
+        Caches are keyed on this so a container built for one project is
+        never handed to another conversation that mounts a different folder.
+        """
+        return self._workspace_root
 
     @staticmethod
     def _normalize_path(path: str) -> str:

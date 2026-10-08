@@ -19,6 +19,7 @@ from server.src.chat.models import (
     RegenerateMessageRequest,
     ResendMessageRequest,
     SelectModelRequest,
+    SelectWorkspaceRequest,
     SendMessageRequest,
 )
 from server.src.chat.runtime import InvalidCheckpoint
@@ -31,6 +32,7 @@ from server.src.chat.service import (
     MessageNotFound,
     PreparedResume,
     PreparedTurn,
+    WorkspaceBusy,
 )
 from server.src.chat.streaming import sse_stream
 from server.src.guardrails.content import (
@@ -50,6 +52,8 @@ def _raise_preflight(exc: Exception) -> None:
     if isinstance(exc, MessageNotFound):
         raise HTTPException(status_code=404, detail="Message not found") from exc
     if isinstance(exc, RunAlreadyActive):
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if isinstance(exc, WorkspaceBusy):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if isinstance(exc, GuardrailBlocked):
         raise HTTPException(
@@ -186,6 +190,25 @@ async def select_conversation_model(
 ) -> Conversation:
     try:
         return await _service(request).select_model(conversation_id, body.model)
+    except Exception as exc:
+        _raise_preflight(exc)
+        raise AssertionError("unreachable")
+
+
+@router.put(
+    "/conversations/{conversation_id}/workspace",
+    response_model=Conversation,
+)
+async def select_conversation_workspace(
+    conversation_id: str,
+    body: SelectWorkspaceRequest,
+    request: Request,
+) -> Conversation:
+    try:
+        return await _service(request).select_workspace(
+            conversation_id,
+            body.workspace_path,
+        )
     except Exception as exc:
         _raise_preflight(exc)
         raise AssertionError("unreachable")

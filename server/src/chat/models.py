@@ -40,7 +40,12 @@ class AttachmentStatus(StrEnum):
 class ConversationCreate(BaseModel):
     title: str | None = None
     model: str | None = None
+    workspace_path: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SelectWorkspaceRequest(BaseModel):
+    workspace_path: str
 
 
 class Conversation(BaseModel):

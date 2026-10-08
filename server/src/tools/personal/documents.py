@@ -78,8 +78,13 @@ class VirtualPathResolver:
 
 
 class DocumentTools:
-    def __init__(self, settings: Settings) -> None:
-        self.paths = VirtualPathResolver(settings)
+    def __init__(self, settings: Settings, workspace_root: str | None = None) -> None:
+        # `workspace_root` rebinds /workspace/ to one conversation's folder
+        # without touching the shared settings object.
+        if workspace_root is None:
+            self.paths = VirtualPathResolver(settings)
+        else:
+            self.paths = VirtualPathResolver(workspace_root, settings.chat.uploads_path)
 
     @staticmethod
     def _bounded(text: str, max_chars: int) -> str:
