@@ -1,638 +1,257 @@
 # Trajecta
 
-**A desktop agent that learns reusable skills from successful task trajectories and only keeps what it can verify.**
+**A local-first, chat-first desktop agent that learns from real experience.**
 
-Trajecta is a production-oriented AI agent system built with **LangChain Deep Agents, LangGraph, FastAPI, Tauri, React, SQLite, Qdrant, Guardrails AI, Docker, MCP, and Bifrost**.
+Trajecta combines **LangChain Deep Agents and LangGraph** with persistent memory, local and hosted LLMs, practical tools, and human-controlled permissions. It is built to become more useful over time by remembering explicit preferences, incorporating feedback, and reusing evidence-linked procedures—without running an expensive benchmark every time a conversation ends.
 
-It is designed around a simple engineering question:
+> **Project status:** Active development. The repository implements the core desktop/chat, tools, memory, and experience-learning paths described below. Some advanced evaluation infrastructure remains accessible through backend APIs; full OpenTelemetry/Grafana observability and release-grade end-to-end validation are still in progress.
 
-> **Can an autonomous agent become measurably better at repeated tasks without blindly trusting what it learned from previous runs?**
+## At a glance
 
-Most agent applications stop after planning, tool use, and a final answer. Trajecta adds a second lifecycle around the agent itself: it records successful executions, identifies repeated procedures, synthesizes candidate skills, replays them in isolated evaluation environments, compares them against baseline behavior, runs controlled experiments for upgrades, monitors regressions, and promotes or rolls back skill versions based on evidence.
+- **Desktop-first:** Tauri 2, React 19, TypeScript, streaming chat, conversations, and model selection.
+- **Agentic execution:** Deep Agents + LangGraph with tools, subagents, checkpoints, cancellation, and durable human-in-the-loop resume.
+- **Your workspace:** Select a different local project folder for each conversation.
+- **Experience-first learning:** Learn explicit preferences, capture corrections, and reuse user-confirmed procedures; review uncertain or sensitive discoveries.
+- **Persistent retrieval:** SQLite + FTS5 for structured/exact search, and embedded Qdrant for semantic search.
+- **Model choice:** Bifrost connects the agent to OpenAI, Anthropic, Ollama, 9Router, and other OpenAI-compatible providers.
+- **Controlled tool use:** MCP tools, local utilities, optional Docker sandboxing, content guardrails, and deterministic `allow / ask / deny` permissions.
+- **Personal automation:** One-time and recurring scheduled agent tasks, with approvals retained for sensitive actions.
 
-The result is a chat-first desktop agent with **persistent memory, configurable model providers, MCP integrations, deterministic permissions, human approvals, sandboxed execution, document RAG, scheduled autonomous tasks, and verified procedural learning**.
+## Why Trajecta exists
 
----
+A conventional agent can answer questions and operate tools. Trajecta also maintains the context needed to make the **next** interaction more effective: user preferences, past attempts, corrections, task outcomes, and reusable procedures.
 
-## Why this project matters
+The design separates three responsibilities:
 
-Trajecta is intentionally broader than a chatbot demo. It exercises the engineering layers that make agent systems difficult to ship reliably:
+1. **Execution:** Solve the current task quickly using the chosen model, tools, memory, and workspace.
+2. **Learning:** Retain useful evidence from actual interactions and incorporate user corrections without automatically re-running entire tasks.
+3. **Control:** Keep model decisions inside deterministic tool permissions, review workflows, and independent action verification.
 
-- **Stateful agent orchestration** with Deep Agents + LangGraph checkpoints.
-- **Durable conversation branching** for edit, resend, regenerate, and HITL resume.
-- **Multi-provider LLM infrastructure** through Bifrost rather than provider-specific application code.
-- **Hybrid memory and document retrieval** using SQLite FTS5 + embedded Qdrant.
-- **Guardrails at multiple boundaries** for prompt injection, secrets, PII, system-prompt leakage, and structured outputs.
-- **Deterministic tool permissions** where denied tools disappear from the model's runtime surface.
-- **MCP integrations with independent read-back verification** for mutating connector actions.
-- **Sandboxed tool execution** with Docker resource and network controls.
-- **Offline skill learning** driven by captured trajectories instead of unverified self-editing.
-- **Held-out baseline-vs-candidate evaluation** before a learned skill can enter procedural memory.
-- **Frequentist + Bayesian skill experiments**, automatic stopping, promotion, regression monitoring, and rollback.
-- **Local-first desktop delivery** with a Tauri 2 + React 19 control surface.
+Learning is not the same as proving that a model has improved on a benchmark. Trajecta treats routine experience capture as a low-cost operation, and reserves replay-based evaluation for explicit diagnostics or higher-risk skill changes.
 
-For a recruiter or engineer reviewing the project, the main signal is not a single framework choice. It is the end-to-end system design: model routing, agent state, retrieval, permissions, safety, evaluation, experimentation, persistence, and desktop UX are all wired into one coherent runtime.
+## What you can do
 
----
+### Chat and work in local folders
 
-## Core idea: Verified Skill Learning
+The desktop client supports:
 
-Trajecta treats successful agent runs as **evidence**, not automatically trusted knowledge.
+- Persistent conversations and **SSE token streaming**.
+- Tool and subagent activity with expandable inputs/results.
+- An optional reasoning/activity view for **reasoning text actually provided by the selected model or gateway**. Trajecta does not reconstruct private model reasoning if the provider does not expose it.
+- Message editing, resend, regeneration, and switching between LangGraph-backed conversation branches.
+- File uploads, extracted-text companions, previews, and large-document retrieval.
+- Per-conversation provider/model selection, stopping an active run, and resuming interrupted operations.
+- A **folder selector** that binds `/workspace/` to the selected host directory for that conversation. The backend validates the directory and does not silently substitute a different folder if a selected path becomes inaccessible.
+- **Human questions** (for missing information or choices) distinguished from **permission requests** (for sensitive tool actions).
 
-```text
-User Task
-   ↓
-Agent Execution
-   ↓
-Trajectory + Replay Fixture Capture
-   ↓
-Repeated Pattern Mining
-   ↓
-Candidate Skill
-   ↓
-Format + Tool-Semantics Verification
-   ↓
-Baseline vs Candidate Replay
-   ↓
-Safety + Reliability + Generalization + Improvement Gates
-   ↓
-Pass? ─────────────── No ──→ Reject / Keep for Review
-   │
-  Yes
-   ↓
-Initial Skill → Promote + Version
-Upgrade Skill → Controlled Experiment
-   ↓
-Live Metrics + Regression Monitoring
-   ↓
-Promote Winner / Auto-Rollback Regressions
-   ↓
-Procedural Memory
-   ↓
-Future Agent Runs
-```
+### Use practical tools
 
-This is the main architectural differentiator of Trajecta: **the agent is allowed to learn procedures, but learning is separated from promotion**.
+Alongside Deep Agents' file and task primitives, Trajecta contains personal-agent tools for:
 
-### What the learning system currently implements
+- Web search, HTTP extraction, RSS, and browser automation.
+- Document extraction/search, spreadsheets, images/OCR, archives, and media conversion.
+- Sessions and memory, local databases, processes, clipboard/system utilities, and notifications.
+- Scheduled jobs and optional host-computer control.
+- External integrations discovered through the **Model Context Protocol (MCP)**, with user-controlled server/tool availability.
+- Isolated command or code execution where the configured Docker backend is used.
 
-- Successful trajectory capture with task metadata and tool events.
-- Replay-fixture capture of the initial environment needed for evaluation.
-- Deterministic clustering of repeated successful task/tool patterns.
-- Mining/held-out splits before candidate synthesis.
-- Candidate skill bundles with instructions, workflow metadata, evaluation configuration, and source provenance.
-- Structural and tool-semantics verification before evaluation.
-- Isolated baseline-vs-skill replay.
-- Deterministic outcome/tool-effect verification when possible, with LLM-as-judge used as a fallback rather than the first choice.
-- Promotion gates across safety, reliability, generalization, and improvement.
-- Immutable skill versions and rollback support.
-- A/B and multi-version experiment infrastructure.
-- Two-proportion frequentist testing plus a Beta-Binomial Bayesian posterior.
-- Automatic experiment stopping only when the statistical evidence is sufficient.
-- Automatic promotion of winning versions when configured.
-- Runtime attribution of skill usage and execution metrics.
-- Regression detection across success rate, latency, and tool-error behavior.
-- Automatic rollback of regressed versions.
-- Skill dependency graphs with cycle prevention and semantic-version constraints.
+Tool availability depends on local dependencies, platform, configuration, and permission policy. Host-computer control is opt-in; **not every operation is automatically sandboxed**.
 
-The automatic learning worker runs outside the user-facing SSE request path, so mining and evaluation do not block normal chat completion.
+Web-source failures such as HTTP 403, timeouts, or connection errors are surfaced to the agent as recoverable errors for supported web tools. The runtime directs it to search for independent sources rather than repeatedly retrying an inaccessible URL or inventing its contents.
 
----
-
-## Product experience
-
-Trajecta is **chat-first**, not a workflow builder.
-
-The desktop application provides:
-
-- Persistent conversations.
-- Streaming assistant responses over SSE.
-- Tool/subagent activity events.
-- Stop/cancel controls.
-- File attachments and attachment previews.
-- Large-document RAG.
-- Edit, resend, and regenerate.
-- Conversation branch switching.
-- Human-in-the-loop approval dialogs.
-- Per-conversation model selection.
-- Global LLM provider/model configuration.
-- Memory management.
-- Embedding-model configuration.
-- Guardrail settings.
-- Permission settings.
-- Skill lifecycle and analytics views.
-- Skill experiment, version, dependency, regression, and rollback views.
-- Scheduled autonomous task management.
-- MCP server/tool enable-disable controls.
-
-The UI is implemented as a **Tauri 2 desktop shell** with **React 19 + TypeScript**, React Query for server state, and Zustand for local chat/UI state.
-
----
-
-## System architecture
+## How the system fits together
 
 ```mermaid
 flowchart TD
-    UI["Tauri 2 + React 19 Desktop"] -->|HTTP / JSON + SSE| API["FastAPI Sidecar"]
+    UI["Tauri 2 + React Desktop"] -->|"HTTP / SSE"| API["FastAPI"]
+    API --> CHAT["Chat + Conversation State"]
+    API --> SETTINGS["Providers, Tools, Permissions"]
+    API --> LEARN["Experience + Skill Services"]
 
-    API --> CHAT["Chat Service"]
-    API --> SETTINGS["Settings / Control Plane"]
-    API --> SKILLS["Skill Lifecycle APIs"]
-
-    CHAT --> RUNTIME["Deep Agents + LangGraph Runtime"]
-
-    RUNTIME --> POLICY["Deterministic Permission Policy"]
-    RUNTIME --> GUARD["Guardrails AI Middleware"]
-    RUNTIME --> MEMORY["Working / Episodic / Semantic / Procedural Memory"]
-    RUNTIME --> TOOLS["Personal Tools + MCP + Docker Sandbox"]
-    RUNTIME --> LLM["Bifrost LLM Gateway"]
-
-    MEMORY --> SQLITE["SQLite + FTS5"]
-    MEMORY --> QDRANT["Embedded Qdrant"]
-
-    SETTINGS --> BADMIN["Bifrost Management API"]
-    BADMIN --> LLM
-
-    LLM --> OPENAI["OpenAI"]
-    LLM --> ANTHROPIC["Anthropic"]
-    LLM --> OLLAMA["Ollama"]
-    LLM --> ROUTER["9Router / Custom OpenAI-Compatible"]
-
-    RUNTIME --> TRAJ["Trajectory + Replay Fixture Store"]
-    TRAJ --> MINER["Skill Miner"]
-    MINER --> EVAL["Replay Evaluation"]
-    EVAL --> EXP["Experiments / Promotion"]
-    EXP --> REG["Regression Monitor"]
-    REG --> PROC["Versioned Procedural Skills"]
-    PROC --> RUNTIME
+    CHAT --> AGENT["Deep Agents / LangGraph"]
+    AGENT --> GATEWAY["Bifrost LLM Gateway"]
+    GATEWAY --> MODELS["Cloud / Ollama / Compatible APIs"]
+    AGENT --> ACTIONS["Local Tools / MCP / Sandbox"]
+    AGENT --> POLICY["Guardrails + Deterministic Permissions"]
+    AGENT --> MEM["Memory + Document Retrieval"]
+    MEM --> SQLITE["SQLite + FTS5"]
+    MEM --> VECTOR["Embedded Qdrant"]
+    CHAT --> EVENTS["Trajectory Events + Outcome Metrics"]
+    EVENTS --> LEARN
+    LEARN --> EXPERIENCE["Preferences / Corrections / Procedures"]
+    EXPERIENCE --> AGENT
+    LEARN -. "Optional manual replay" .-> EVAL["Skill Evaluation + Versioning"]
 ```
 
-### Three intentionally separate loops
+### Agent runtime and conversation history
 
-Trajecta separates **execution**, **learning**, and **control**.
+Trajecta validates the conversation, attachments, selected workspace, model configuration, enabled MCP tools, permissions, and applicable checkpoint **before opening the response stream**. LangGraph checkpoints support edits, regenerations, and interrupted approval flows without overwriting the original message history.
 
-**Execution** handles live task solving: model calls, memory, tools, MCP, attachments, checkpoints, approvals, and streamed events.
+Streaming sends response text as model chunks arrive. Trajectory capture stores activity in append-only event records rather than repeatedly rewriting the entire event history. Replay-fixture/workspace snapshots are **disabled by default** for ordinary chat, reducing work before the first response.
 
-**Learning** runs asynchronously from successful trajectory evidence: mining, replay, evaluation, experiments, promotion, versioning, regression monitoring, and rollback.
+## Experience-first learning
 
-**Control** is deterministic and user-governed: provider settings, tool permissions, MCP preferences, guardrails, sandbox boundaries, and approval policies.
-
-That separation is important. The model may decide _how_ to solve a task, but it does not get authority to redefine its own capability boundary or promote its own learned behavior without evaluation.
-
----
-
-## Agent runtime and conversation state
-
-Trajecta uses **LangChain Deep Agents** on top of **LangGraph**.
-
-Each live turn is prepared before streaming begins:
-
-1. Validate conversation and attachment state.
-2. Resolve the selected model through Bifrost.
-3. Discover enabled MCP tools.
-4. Read a persistent permission snapshot.
-5. Remove tools whose capability domain is denied.
-6. Build HITL interrupt rules for tools configured as `ask`.
-7. Add conversation-scoped attachment RAG when available.
-8. Apply any active skill-experiment assignment.
-9. Attach Guardrails AI model middleware.
-10. Restore the requested LangGraph checkpoint when branching/resuming.
-11. Only then open the SSE stream.
-
-This **preflight-first streaming design** prevents a known class of chat UX failures where an HTTP 200/SSE stream is opened before validation discovers that the run cannot actually start.
-
-### Checkpoint-backed branching
-
-Messages are immutable. Editing or regenerating does not overwrite history.
-
-Trajecta forks execution from the relevant LangGraph checkpoint, producing a new application branch with its own branch head. That enables:
-
-- Edit a user message and continue from the prior state.
-- Resend without destroying the original path.
-- Regenerate an assistant response from the same checkpoint.
-- Switch back to previous branches.
-- Resume human-approval interruptions from persisted state.
-
-This makes the chat history reproducible enough to support downstream trajectory analysis and skill experiments.
-
----
-
-## LLM gateway: Bifrost as the permanent data plane
-
-Trajecta does not hardcode OpenAI, Anthropic, Ollama, or 9Router into the agent runtime.
-
-All chat model calls follow this path:
+Trajecta's current learning path focuses on **real interactions**, not automatic candidate-versus-baseline tournaments.
 
 ```text
-Deep Agents / LangChain Chat Model
-              ↓
-            Bifrost
-              ↓
-     selected provider/model
+Real conversation / task
+         |
+         v
+Capture message, tool activity, outcome, and feedback
+         |
+         +--> Explicit response preference --> Active learned experience
+         |
+         +--> User correction -----------> Needs review
+         |
+         +--> User-confirmed task --------> Procedure suggestion
+                                           |              |
+                                    Read-only        Risky/unknown
+                                           |              |
+                                         Active       Needs review
+                                           \              /
+                                            v            v
+                                      Relevant future context
+                                               |
+                                      Observe more outcomes
 ```
 
-The agent uses Bifrost's OpenAI-compatible `/v1` surface while Bifrost owns provider routing, credentials, governance, model discovery, and provider-specific translation.
+### What is recorded
 
-### Runtime-configurable providers
+- **Preferences:** Explicit response-style instructions can be stored without an extra evaluation-model call.
+- **Corrections:** Potential corrections are kept for review instead of silently being treated as authoritative facts.
+- **Confirmed procedures:** Helpful feedback on a completed run can produce a short record of the task and tools observed. A record involving unknown or potentially mutating tools requires review.
+- **Revisions:** Learned experiences have version history and rejected entries remain archived rather than being silently reactivated.
+- **Evidence and attribution:** The system retains links to source trajectories and captures model/tool execution metrics.
 
-The desktop **Settings → LLM Providers** page is a control plane for Bifrost. It supports:
+**Completion is not success.** A normal assistant response produces a `completed` trajectory and a metrics record, but its outcome is **unverified** until separate evidence or user feedback establishes success or failure. Unverified completions do not enter verified-success statistics.
 
-- OpenAI.
-- Anthropic.
-- Ollama.
-- 9Router.
-- Custom OpenAI-compatible providers.
+The Skills page is organized around **Learned**, **Improved**, **Needs review**, **Rejected**, and **Saved skills**. It surfaces prior candidates for review without automatically running their old evaluation workflow.
 
-The FastAPI backend uses a dedicated `BifrostAdminClient` to create/update/remove providers, list provider models, test connectivity, and ensure Trajecta's virtual key is allowed to use newly configured providers.
+### What remains optional
 
-Provider credentials are forwarded to Bifrost and are **not stored in Trajecta's `agent_settings` table**.
+Trajecta retains backend modules for skill mining, replay fixtures, baseline-versus-candidate evaluation, versioning, dependency checks, statistical experiments, regression analysis, and rollback. These are **advanced/manual or configuration-gated capabilities**, not the default path for everyday experience learning.
 
-Trajecta persists only the user's runtime preference:
+In `config/default.yaml`, the default settings include:
 
-```json
-{
-  "gateway": { "type": "bifrost" },
-  "default_provider": "anthropic",
-  "default_model": "anthropic/claude-..."
-}
+```yaml
+skills:
+  learning:
+    enabled: false
+    auto_evaluate: false
+    auto_promote_initial: false
+    auto_experiment_upgrades: false
+  experiments:
+    enabled: false
+  fixtures:
+    enabled: false
+    capture_workspace: false
 ```
 
-The global default applies to **new conversations**. Existing conversations retain the model they started with, which keeps branches and evaluations reproducible.
+The legacy automatic mining/evaluation worker is not started at application startup. An explicitly requested manual evaluation can still use model tokens and replay infrastructure. Experience records **do not** grant tool permissions or automatically rewrite an active executable skill.
 
----
+## Memory, RAG, and embeddings
 
-## Memory and retrieval
+Trajecta distinguishes four memory roles:
 
-Trajecta does not treat all memory as one vector collection.
+- **Working memory:** The active task and LangGraph execution state.
+- **Episodic memory:** Previous interactions, trajectories, and task history.
+- **Semantic memory:** Reusable factual context and preferences.
+- **Procedural memory:** Saved skills and reusable procedures.
 
-It separates four memory roles:
+The storage layers have different jobs:
 
-- **Working memory** — in-run task/context state.
-- **Episodic memory** — previous conversations and execution history.
-- **Semantic memory** — durable user/project facts.
-- **Procedural memory** — promoted, versioned skills.
+- **SQLite:** Durable application records, chat history, settings, skill metadata, feedback, jobs, audit trails, and schema migrations.
+- **SQLite FTS5:** Lexical search for names, exact strings, and document content.
+- **Embedded Qdrant:** Vector-based semantic retrieval. A separate Qdrant container is available for development but is not required by the default embedded configuration.
 
-### Hybrid semantic retrieval
+The desktop can discover supported **Ollama embedding models**, select one, and reindex memory and attachment chunks. Without a configured real embedding model, the built-in fallback does **not** provide equivalent semantic quality.
 
-Semantic retrieval combines:
+For large text-based uploads, Trajecta extracts text, chunks it, indexes it in FTS5 and Qdrant, and exposes a conversation-scoped `search_attachments` tool. The original attachment remains the source of truth. Scanned PDFs and visual layouts require OCR or suitable visual inspection; text extraction alone is not visual verification.
 
-- **SQLite FTS5** for exact lexical matches.
-- **Embedded Qdrant** for vector similarity.
+## Models and Bifrost
 
-This matters for agent memory because exact identifiers and semantic paraphrases need different retrieval behavior.
-
-### Local embedding configuration
-
-The desktop can discover embedding-capable models installed in **Ollama**, probe a selected model, determine vector dimensions, switch the active embedder, and re-index stored memories/attachment chunks.
-
-If no Ollama embedding model is enabled, the application falls back to its built-in placeholder embedder rather than silently pretending high-quality semantic retrieval is available.
-
----
-
-## Large-document RAG and attachments
-
-Uploaded files remain the canonical source. RAG is a retrieval optimization, not a replacement for file inspection.
-
-For large extracted documents:
+The normal model path is:
 
 ```text
-Upload
-  ↓
-Extract text companion
-  ↓
-Chunk with overlap
-  ↓
-SQLite attachment_chunks
-  ↓
-FTS5 lexical index + Qdrant vector index
-  ↓
-Conversation-scoped search_attachments tool
-  ↓
-Deep Agent retrieves only relevant passages
+Deep Agents / LangChain
+          |
+          v
+   Bifrost gateway
+          |
+          +-- OpenAI
+          +-- Anthropic
+          +-- Ollama
+          +-- 9Router
+          +-- Custom OpenAI-compatible endpoint
 ```
 
-Supported document/media tooling includes PDF, DOCX, XLSX, PPTX, CSV, HTML, OCR/image operations, archives, local media conversion, transcription, and speech utilities. Scanned/image-only PDFs still require OCR or multimodal inspection; Trajecta does not claim extracted text when none exists.
+**Settings → LLM Providers** manages configured providers, connections, available models, and defaults via Bifrost's management API. Provider credentials are managed by Bifrost instead of being written into Trajecta's ordinary settings records.
 
----
+A global default applies to **new** conversations. Existing conversations retain their own selected model unless changed explicitly. Ollama can provide local inference, while cloud provider requests may transmit prompts or context externally.
 
-## Guardrails and deterministic permissions
+## Safety, approvals, and verification
 
-Trajecta intentionally separates **content safety** from **tool authority**.
+Trajecta separates **content inspection** from **authority to act**:
 
-### Guardrails AI
+- **Content guardrails** inspect applicable user, tool, retrieved-document, or cloud-bound model context for configured risks such as prompt injection, secrets, and PII. Structured internal responses have separate validation utilities.
+- **Deterministic permissions** use `allow`, `ask`, and `deny`. Denied personal tools are filtered out before the agent receives them; `ask` actions interrupt for explicit user approval.
+- **Human questions** use an `ask_user` flow independent of approving an action.
+- **MCP settings** enable or disable servers and individual tools. Some mutating connector actions can be checked with an independent read-back receipt instead of trusting a tool's success message alone.
+- **Docker sandboxing** is available for supported execution paths, with configurable time, CPU, memory, filesystem, and network restrictions.
 
-The current runtime wires Guardrails AI checks into chat boundaries, including configurable support for:
+There is no blanket claim of output-side LLM filtering: the current `GuardrailsModelMiddleware` operates **before** model calls. A guardrail warning is not permission to perform a blocked operation.
 
-- Prompt-injection detection.
-- Jailbreak detection.
-- Secret detection.
-- PII detection.
-- System-prompt leakage detection.
-- Structured JSON validation for internal model outputs.
+## Scheduled tasks
 
-User prompts and untrusted retrieved/tool content can be handled differently. For example, a suspicious user prompt may generate a warning while injected instructions inside retrieved content can be blocked.
+Trajecta persists one-time, interval, and cron schedules. Scheduled tasks reuse the normal chat/agent runtime and its model selection, tools, memory, and permission policy. If a scheduled operation needs approval, it pauses rather than bypassing the user's settings.
 
-### Deterministic capability policy
-
-Sensitive actions are governed separately by a persisted `allow / ask / deny` policy.
-
-Capability domains include filesystem writes, terminal execution, browser actions, computer control, external communication, and network mutations.
-
-The enforcement model is deliberately stronger than a prompt instruction:
-
-- **deny** — matching tools are removed before the model sees the runtime tool surface.
-- **ask** — the tool remains available but Deep Agents interrupts before execution and waits for a human decision.
-- **allow** — the tool may execute without that approval gate.
-
-Deep Agents filesystem permissions are also projected from the same policy, and `/uploads/**` plus `/skills/**` remain protected against direct writes.
-
-The language model is never the authority that decides whether it may bypass this boundary.
-
----
-
-## MCP and independent action verification
-
-Trajecta supports MCP through LangChain's MCP adapter.
-
-The user can enable/disable entire MCP servers or individual tools from Settings. Discovery failures are isolated so one broken server does not invalidate every configured integration.
-
-For mutating connector actions, Trajecta adds a separate verification layer: a connector's success response is **not automatically treated as proof that the external state changed**. Where a verification rule exists, the system performs an independent read-back and stores a receipt.
-
-This design reduces false-positive “done” responses from external tools and creates a better audit trail for autonomous actions.
-
----
-
-## Built-in agent capabilities
-
-Trajecta includes dozens of local/personal-agent tools in addition to Deep Agents' built-in filesystem/task primitives.
-
-Capability areas include:
-
-- Semantic memory search/read/write/delete.
-- Session search and previous-conversation retrieval.
-- Skill discovery and candidate management.
-- Trajectory search.
-- Persistent personal tasks.
-- One-time, interval, and cron schedules.
-- In-app notifications.
-- Web search, HTTP, extraction, and RSS.
-- Browser automation.
-- Optional host-computer control.
-- Document reading/search/extraction.
-- OCR and image transforms.
-- Archive create/extract.
-- SQLite querying/mutation.
-- Local process management.
-- Media conversion.
-- Local speech/transcription utilities.
-- Clipboard/system utilities.
-- MCP-provided external tools.
-- Docker-sandboxed code/command execution.
-
-Host computer control is opt-in. Sandboxed execution can run with restricted filesystem access, resource limits, and networking disabled.
-
----
-
-## Autonomous scheduling
-
-Trajecta includes a persistent scheduler for one-time, interval, and cron jobs.
-
-Scheduled jobs execute through the **same chat/agent runtime** used for interactive requests. They therefore inherit the same model routing, memory, tools, guardrails, permissions, trajectory capture, and skill-attribution logic.
-
-If a scheduled run reaches a sensitive operation that requires approval, the run pauses instead of bypassing the user's policy.
-
----
-
-## Skill experiments and regression control
-
-A verified initial skill can be promoted after evaluation. Upgrades can instead enter an online experiment.
-
-Experiment infrastructure includes:
-
-- Sticky assignment by unit/conversation thread.
-- Control and treatment arms.
-- Multi-version arm support.
-- Configurable treatment traffic.
-- Minimum and maximum sample sizes.
-- Minimum effect thresholds.
-- Frequentist two-proportion evidence.
-- Bayesian Beta-Binomial posterior probabilities.
-- Deterministic Monte Carlo seeding for stable/reproducible analyses.
-- Automatic stopping.
-- Automatic winner promotion.
-
-Automatic decisions are intentionally conservative: success-rate promotion/regression logic can require the frequentist and Bayesian readings to agree instead of promoting a version based on one lucky streak.
-
-After promotion, the regression monitor can compare the live version with its stable predecessor. It monitors success-rate degradation as well as operational regressions such as latency blow-ups or increased tool-error rates, writes the detection before attempting rollback, and can automatically restore a stable version.
-
----
-
-## Persistence model
-
-Trajecta keeps application state local by default.
-
-The main SQLite store uses WAL mode and sequential schema migrations. The current implementation includes **14 schema versions**, covering:
-
-- Task/trajectory/skill/memory metadata.
-- Production chat persistence.
-- Conversation branches and attachment RAG.
-- Per-branch LangGraph thread IDs.
-- Personal tasks, schedules, notifications, and audit state.
-- Durable HITL approvals.
-- Skill versions and evaluations.
-- Replay fixtures.
-- Action receipts and connector verification.
-- MCP preferences.
-- Permission and agent settings.
-- Skill-learning coordinator state.
-- Experiment metrics and regression records.
-- Experiment arms/assignments and skill dependency graphs.
-
-LangGraph checkpoint/state storage is kept separate from Trajecta's application database so each system owns its own persistence contract.
-
----
-
-## API surface
-
-The FastAPI sidecar exposes versioned routes under `/api/v1`.
-
-Major API groups include:
-
-- `/chat` — conversations, streaming turns, attachments, cancel, branch operations, edit/resend/regenerate, model changes, approval resume.
-- `/models` — Bifrost-backed model catalog.
-- `/llm` — gateway state, provider configuration, provider models, connection tests, global defaults.
-- `/memory` — semantic/episodic memory, automatic-memory settings, embedding configuration.
-- `/permissions` — deterministic capability modes.
-- `/guardrails` — content/privacy guardrail configuration.
-- `/tools` — built-in tools, MCP preferences, connector verification receipts.
-- `/tasks` — scheduled autonomous jobs.
-- `/skills` — candidates, evaluation, promotion, versions, experiments, analytics, dependencies, regression checks, rollback, and learning status.
-- `/health` — backend health.
-
-The `/traces` route is reserved for the observability layer described in the status section below.
-
----
-
-## Repository structure
-
-```text
-Trajecta/
-├── apps/
-│   └── desktop/
-│       ├── src/
-│       │   ├── components/
-│       │   │   ├── settings/       # LLM, embeddings, guardrails, permissions, memory, skills, MCP, schedules
-│       │   │   └── skills/         # experiments, analytics, dependencies, versions, rollback
-│       │   ├── hooks/
-│       │   ├── lib/
-│       │   ├── stores/
-│       │   ├── styles/
-│       │   └── types/
-│       └── src-tauri/              # Tauri 2 desktop shell
-│
-├── server/
-│   ├── src/
-│   │   ├── api/                    # FastAPI app + versioned routes
-│   │   ├── agent/                  # agent/runtime support modules
-│   │   ├── chat/                   # chat service, branching, RAG, streaming, model runtime, MCP
-│   │   ├── config/                 # typed configuration
-│   │   ├── guardrails/             # Guardrails AI + deterministic permission policy
-│   │   ├── llm_gateway/            # Bifrost control plane + provider/default settings
-│   │   ├── memory/                 # working/episodic/semantic/procedural stores
-│   │   ├── observability/          # observability design/handoff
-│   │   ├── skills/                 # mining, replay, eval, experiments, analytics, versioning, rollback
-│   │   └── tools/                  # personal, MCP, sandbox, built-in, verification
-│   └── tests/                      # pytest coverage for critical subsystems
-│
-├── config/
-│   ├── bifrost/                    # Bifrost seed/config store
-│   ├── default.yaml                # Trajecta runtime configuration
-│   └── guardrail-rules.yaml
-│
-├── evals/                          # evaluation requirements/results location
-├── infra-docker/                   # sandbox + infrastructure definitions
-├── docker-compose.yaml             # Bifrost + Qdrant development services
-├── Trajecta_Project_Spec.md
-└── pyproject.toml
-```
-
----
-
-## Technology stack
-
-**Desktop**
-
-- Tauri 2
-- React 19
-- TypeScript
-- Vite
-- TanStack React Query
-- Zustand
-
-**Agent runtime**
-
-- LangChain Deep Agents
-- LangGraph
-- LangGraph SDK
-- LangChain MCP
-
-**Backend**
-
-- Python 3.11+
-- FastAPI
-- Uvicorn
-- Pydantic v2
-- asyncio / SSE
-
-**LLM infrastructure**
-
-- Bifrost gateway
-- OpenAI
-- Anthropic
-- Ollama
-- 9Router
-- Generic OpenAI-compatible providers
-
-**Memory and retrieval**
-
-- SQLite
-- FTS5
-- Qdrant
-- Ollama local embeddings
-
-**Safety and execution**
-
-- Guardrails AI
-- Deep Agents permissions / HITL
-- Custom deterministic permission policy
-- Docker sandbox
-- MCP connector verification
-
-**Evaluation and learning**
-
-- Replay fixtures
-- Baseline-vs-candidate evaluation
-- Deterministic outcome/tool-effect verification
-- LLM-as-judge fallback
-- Frequentist two-proportion testing
-- Bayesian Beta-Binomial analysis
-- Skill versioning, dependency graphs, regression detection, rollback
-
----
-
-## Getting started
+## Get started
 
 ### Prerequisites
 
-- Python 3.11+
-- `uv`
-- Node.js 18+
-- `pnpm`
-- Docker / Docker Compose
-- Optional: Ollama for local inference and local embeddings
+- **Python 3.11+** and [`uv`](https://docs.astral.sh/uv/).
+- **Node.js**, **pnpm**, and the **Rust/Tauri development prerequisites** for your operating system.
+- **Docker + Docker Compose** for the supplied Bifrost stack and optional sandbox services.
+- Optional: **Ollama** for locally hosted models and embeddings.
 
-### 1. Clone and configure environment
+Some personal tools require extra host dependencies (for example, browser automation, OCR, audio, or GUI utilities). Their installation and behavior vary by platform.
+
+### 1. Configure the project
+
+Use the current Trajecta source checkout (or the extracted project archive). If cloning from a remote repository, first make sure that branch contains this implementation; an older published branch may not yet include the changes described here.
+
+From the project root:
 
 ```bash
-git clone <your-repository-url>
-cd Trajecta
-
 cp .env.example .env
 ```
 
-At minimum, ensure the Bifrost virtual key used by the Python application matches the key configured for Trajecta in Bifrost:
+On Windows PowerShell, use `Copy-Item .env.example .env` in place of `cp` if necessary.
 
-```env
-BIFROST_URL=http://127.0.0.1:8080
-BIFROST_VIRTUAL_KEY=sk-bf-trajecta
-```
+Review `.env` and `config/bifrost/` before starting. Ensure the application's `BIFROST_VIRTUAL_KEY` matches the virtual key configured in Bifrost. If you use a 9Router provider, supply its real credential through your local configuration; never commit secrets.
 
-The repository seeds a `9router` provider for local development. If you use that seed, also configure its credential in `.env`. Otherwise, providers can be added from the desktop **LLM Providers** settings page after Bifrost starts.
-
-### 2. Start Bifrost
+### 2. Start the LLM gateway
 
 ```bash
 docker compose up -d bifrost
 ```
 
-Bifrost listens on `http://127.0.0.1:8080` by default.
+By default, Bifrost is served at `http://127.0.0.1:8080`. The root compose file also defines a standalone Qdrant service; Trajecta's default vector store is embedded and does not require that service.
 
-The root Docker Compose file also includes a standalone Qdrant service for development, although Trajecta's default memory configuration uses embedded Qdrant locally.
+### 3. Start the Python backend
 
-### 3. Install and run the backend
+From the repository root:
 
 ```bash
 uv sync
-uv run python -m uvicorn server.src.api.app:app --host 127.0.0.1 --port 8420
+uv run python -m server.src.main
 ```
 
-The API is available at:
+The configured default API origin is `http://127.0.0.1:8420`, with routes under `/api/v1`. The `server.src.main` entry point includes a Windows UTF-8 startup safeguard.
 
-```text
-http://127.0.0.1:8420/api/v1
-```
+### 4. Start the desktop app
 
-### 4. Run the desktop application
+In another terminal:
 
 ```bash
 cd apps/desktop
@@ -640,196 +259,93 @@ pnpm install
 pnpm tauri dev
 ```
 
-For browser-only frontend development:
+For browser-only UI development, run `pnpm dev` instead. Native folder selection requires the Tauri desktop app.
+
+In the app, open **Settings → LLM Providers**, confirm gateway connectivity, configure an available provider/model, and choose a default. For better local retrieval, select a compatible model under **Settings → Embedding**.
+
+### Common development commands
 
 ```bash
-pnpm dev
-```
+# Run all backend tests (repository root)
+uv run python -m pytest server/tests -q
 
-For a production desktop build:
+# Frontend unit tests
+cd apps/desktop
+pnpm test
 
-```bash
+# Frontend TypeScript check + Vite build
+pnpm build
+
+# Desktop production build (requires Tauri platform prerequisites)
 pnpm tauri build
 ```
 
-### 5. Configure model providers from the UI
+These commands are provided from the repository configuration; **they are not a claim that the full test or packaging suite has passed on every platform**.
 
-Open:
+## Configuration and project layout
 
-```text
-Settings → LLM Providers
-```
-
-From there you can:
-
-- Verify Bifrost connectivity.
-- Configure OpenAI, Anthropic, Ollama, 9Router, or a custom OpenAI-compatible endpoint.
-- Test an individual provider.
-- Discover provider models.
-- Choose the default provider/model for new conversations.
-
-Bifrost remains the gateway regardless of which provider is selected.
-
-### 6. Optional: configure a local embedding model
-
-Open:
+The default configuration is `config/default.yaml`, with local overrides supported through `.trajecta/config.yaml` and environment variables as implemented by the settings loader. The desktop stores user-controlled runtime preferences in local application storage.
 
 ```text
-Settings → Embedding
+Trajecta/
+├── apps/desktop/
+│   ├── src/                 # React UI, streaming chat, learning and settings
+│   └── src-tauri/           # Tauri 2 shell
+├── server/
+│   ├── src/
+│   │   ├── api/             # Versioned FastAPI routes
+│   │   ├── chat/            # Runtime, persistence, SSE, workspace, branching, RAG
+│   │   ├── agent/           # Agent support and HITL primitives
+│   │   ├── memory/          # SQLite, FTS5, Qdrant, memory and embeddings
+│   │   ├── skills/          # Experience learning, metrics and optional evaluation
+│   │   ├── tools/           # Personal tools, MCP, sandbox, connector verification
+│   │   ├── guardrails/      # Content inspection and deterministic policy
+│   │   └── llm_gateway/     # Bifrost integration and provider settings
+│   └── tests/              # Backend regression tests
+├── config/                 # Default config, Bifrost, guardrail rules
+├── infra-docker/           # Infrastructure and sandbox definitions
+├── docker-compose.yaml     # Bifrost + optional standalone Qdrant
+├── pyproject.toml          # Python dependencies and tools
+└── README.md
 ```
 
-Trajecta discovers embedding-capable models installed in local Ollama, validates the selected model, and can re-index stored semantic memory and attachment chunks.
+### Key API groups
 
----
+The FastAPI backend serves endpoints under `/api/v1`:
 
-## Configuration
+- `/chat` — conversations, SSE streaming, attachments, branch operations, workspace selection, model selection, and approval resume.
+- `/models` and `/llm` — available models and Bifrost provider settings.
+- `/memory` — memory records and embeddings.
+- `/learning` — feedback, learned experiences, reviews, and consolidated Skills overview.
+- `/skills` — saved skills plus legacy/manual evaluations, experiments, analytics, and versions.
+- `/permissions`, `/guardrails`, `/tools` — capability policy, content settings, MCP, and action verification receipts.
+- `/tasks` — persisted personal tasks and schedules.
+- `/health` — service health.
 
-Primary configuration lives in `config/default.yaml`.
+## Current scope and limitations
 
-Important sections:
+**Implemented in the uploaded source:** Chat streaming, checkpoint-backed branches, local workspaces, attachments/RAG, provider configuration, memory, permissions/HITL, personal and MCP tools, scheduler paths, feedback-driven experience storage, skill versioning, and execution metrics.
 
-- `server` — FastAPI host/port.
-- `llm` — Bifrost bootstrap configuration.
-- `memory` — SQLite, LangGraph, Qdrant, memory paths, and vector-store settings.
-- `skills.learning` — automatic learning thresholds and mining behavior.
-- `skills.experiments` — traffic allocation, statistical thresholds, sample limits, auto-stop/promotion.
-- `skills.regression` — live regression thresholds and auto-rollback.
-- `skills.fixtures` — replay-fixture capture limits and exclusions.
-- `guardrails` — content validators and HITL behavior.
-- `sandbox` — Docker image, time, CPU, memory, and networking limits.
-- `chat` — uploads, bootstrap model, heartbeat, RAG chunking and retrieval limits.
-- `tools` — browser/computer/scheduler/MCP settings and connector verification.
-- `observability` — reserved OTLP/service configuration for the remaining observability integration.
+**Retained but not the default workflow:** Legacy candidate mining, replay evaluation, online experiments, and regression/rollback code. Their APIs and modules exist, but normal conversations do not automatically run an evaluation campaign.
 
-User-selected defaults and UI-controlled runtime settings are persisted in SQLite, so normal settings changes do not require editing YAML by hand.
+**Not yet a complete production observability stack:** OpenTelemetry dependencies and observability documentation exist, but end-to-end instrumented traces/exporters and the Grafana/Tempo/Loki/Prometheus integration are not wired into the runtime. The `/traces` router is currently a placeholder.
 
----
+**Still needs release hardening:** Desktop/backend packaging, platform-specific tool installation, full end-to-end validation, performance profiling under realistic workloads, and thorough integration testing across Bifrost, Ollama, sandboxed actions, and external MCP servers.
 
-## Testing
+Trajecta is **local-first**, not guaranteed offline or inherently safe for unrestricted host execution. Actual privacy and security depend on the chosen provider, enabled tools, sandbox setup, and permission configuration.
 
-The repository currently contains **17 pytest modules** covering critical backend behavior, including:
+## Further documentation
 
-- Attachment ingestion and RAG-related behavior.
-- Conversation persistence and branching.
-- Default-model persistence.
-- Guardrail content and structured-output handling.
-- Bifrost administration and LLM settings routes.
-- Embedding model switching.
-- Skill learning lifecycle.
-- Skill attribution and analytics.
-- Experiment service behavior and statistical calculations.
-- Runtime encoding regression coverage.
-
-Run backend tests with:
-
-```bash
-uv run python -m pytest server/tests -q
-```
-
-Build/type-check the frontend with:
-
-```bash
-cd apps/desktop
-pnpm build
-```
-
-The frontend build runs TypeScript checking before Vite compilation.
-
----
-
-## Current project status
-
-The **core product loop is implemented**:
-
-- Desktop chat UI.
-- Persistent conversations and streaming.
-- Checkpoint-backed branching.
-- Attachments and large-document RAG.
-- Deep Agents / LangGraph runtime.
-- Bifrost-only model gateway with runtime-configurable providers.
-- Local Ollama embedding selection.
-- Working, episodic, semantic, and procedural memory.
-- MCP discovery/preferences and connector verification.
-- Deterministic permissions and HITL approvals.
-- Guardrails AI content checks.
-- Docker sandbox integration.
-- Personal-agent tool runtime.
-- Scheduled autonomous jobs.
-- Trajectory/replay-fixture capture.
-- Automatic skill mining and held-out evaluation.
-- Skill promotion/versioning.
-- Online skill experiments.
-- Frequentist + Bayesian experiment analysis.
-- Skill analytics and attribution.
-- Dependency management.
-- Regression monitoring and automatic rollback.
-
-### Remaining production-hardening work
-
-The largest intentionally unfinished infrastructure slice is **full OpenTelemetry runtime instrumentation and the Grafana/Tempo/Loki/Prometheus pipeline**.
-
-The project already declares the OpenTelemetry dependencies and configuration intent, but the repository does not yet contain the runtime tracer/exporter wiring. The `/traces` API is also currently a placeholder. This is deliberately documented as remaining work rather than presented as implemented functionality.
-
-Additional release hardening that would be appropriate before calling the application generally available includes automated release/CI packaging and broader end-to-end testing across desktop, Bifrost, sandbox, Ollama, and external MCP providers.
-
----
-
-## Engineering principles used in Trajecta
-
-**Evidence before autonomy.** A successful model/tool response is not automatically a verified state change or a verified skill.
-
-**The LLM is not the permission system.** User policy determines the tool surface; the model operates inside that boundary.
-
-**Learning is offline and gated.** Trajecta does not rewrite its production behavior directly from one live run.
-
-**State should be reproducible.** Checkpoints, immutable message history, branches, replay fixtures, model persistence, and versioned skills all support repeatability.
-
-**Local-first should be architectural, not cosmetic.** Conversations, memory, skills, schedules, settings, evaluation metadata, and most retrieval state are stored locally.
-
-**Provider choice should not leak into application logic.** Bifrost is the stable gateway contract; provider configuration is a control-plane concern.
-
-**Safety and quality are different problems.** Guardrails validate content; deterministic policy governs authority; evaluation measures whether learned behavior is actually better.
-
----
-
-## Documentation
-
-Detailed subsystem handoffs are included in the repository:
-
-- `Trajecta_Project_Spec.md` — product architecture and engineering thesis.
-- `server/REQUIREMENTS.md` — backend requirements.
-- `apps/desktop/REQUIREMENTS.md` — desktop requirements.
-- `server/src/memory/REQUIREMENTS.md` — memory architecture.
-- `server/src/skills/REQUIREMENTS.md` — verified skill-learning architecture.
-- `server/src/guardrails/REQUIREMENTS.md` — safety/guardrail design.
-- `server/src/llm_gateway/REQUIREMENTS.md` — gateway architecture.
-- `server/src/observability/REQUIREMENTS.md` — planned observability layer.
-- `server/src/tools/REQUIREMENTS.md` — tool runtime and MCP design.
-- `evals/REQUIREMENTS.md` — evaluation requirements.
-- `infra-docker/REQUIREMENTS.md` — sandbox/infrastructure requirements.
-
----
-
-## Project thesis
-
-Trajecta is ultimately an experiment in **controlled agent improvement**.
-
-A capable autonomous system should be able to benefit from experience, but production software should not accept self-generated procedures simply because an LLM says they are useful. Trajecta therefore turns experience into a measurable software lifecycle:
-
-```text
-experience
-  → candidate procedure
-  → isolated verification
-  → comparative evaluation
-  → controlled rollout
-  → live measurement
-  → promotion or rollback
-```
-
-That is the core of the project: **an autonomous agent that can learn, while keeping evidence, versioning, permissions, and rollback between experience and production behavior.**
-
----
+- [Desktop requirements](apps/desktop/REQUIREMENTS.md)
+- [Backend requirements](server/REQUIREMENTS.md)
+- [Memory architecture](server/src/memory/REQUIREMENTS.md)
+- [Skills and learning](server/src/skills/REQUIREMENTS.md) — includes older evaluation-first design details; use the current implementation and this README for active defaults.
+- [Guardrails and permissions](server/src/guardrails/REQUIREMENTS.md)
+- [LLM gateway](server/src/llm_gateway/REQUIREMENTS.md)
+- [Tool runtime](server/src/tools/REQUIREMENTS.md)
+- [Observability plan](server/src/observability/REQUIREMENTS.md)
+- [Infrastructure requirements](infra-docker/REQUIREMENTS.md)
 
 ## License
 
-MIT License. See [`LICENSE`](LICENSE).
+[MIT License](LICENSE).
