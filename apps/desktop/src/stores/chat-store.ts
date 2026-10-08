@@ -236,6 +236,49 @@ function updateTool(
   return tools;
 }
 
+/** Restore the activity timeline saved with a completed assistant message. */
+export function restoreActivityEvents(value: unknown): StreamState | null {
+  if (!Array.isArray(value)) return null;
+
+  let snapshot: StreamState = {
+    ...EMPTY_STREAM,
+    tools: [],
+    steps: [],
+  };
+
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+
+    const record = item as Record<string, unknown>;
+    if (!record.data || typeof record.data !== "object") continue;
+
+    const event: ChatStreamEvent = {
+      type: String(record.type ?? ""),
+      conversation_id: "",
+      run_id: "",
+      data: record.data as Record<string, unknown>,
+    };
+
+    if (event.type === "tool.call.delta" || event.type === "tool.result") {
+      snapshot = {
+        ...snapshot,
+        tools: updateTool(snapshot.tools, event),
+      };
+    } else if (event.type === "agent.step") {
+      const node = event.data.node;
+
+      if (typeof node === "string") {
+        snapshot = {
+          ...snapshot,
+          steps: [...snapshot.steps, node].slice(-8),
+        };
+      }
+    }
+  }
+
+  return snapshot;
+}
+
 export const useChatStore = create<ChatStore>()(
   persist(
     (set) => ({

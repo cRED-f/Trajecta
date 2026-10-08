@@ -1,5 +1,7 @@
 import {
+  Brain,
   Check,
+  ChevronDown,
   Copy,
   Pencil,
   RefreshCcw,
@@ -18,6 +20,10 @@ import remarkGfm from "remark-gfm";
 import {
   AttachmentChip,
 } from "./AttachmentChip";
+
+import { StreamActivity } from "./StreamActivity";
+
+import { restoreActivityEvents } from "../stores/chat-store";
 
 import { chatApi } from "../lib/api";
 
@@ -177,6 +183,11 @@ export function MessageItem({
   const user =
     message.role === "user";
 
+  const savedActivity = useMemo(
+    () => restoreActivityEvents(message.metadata?.activity_events),
+    [message.metadata?.activity_events],
+  );
+
   const attachmentUrls =
     useMemo(
       () =>
@@ -237,6 +248,31 @@ export function MessageItem({
       </div>
 
       <div className="message__content">
+        {!user && savedActivity && (
+          <details className="thinking-disclosure">
+            <summary className="thinking-disclosure__trigger">
+              <Brain size={14} aria-hidden="true" />
+              <span>Thinking</span>
+              <ChevronDown
+                size={14}
+                className="thinking-disclosure__chevron"
+                aria-hidden="true"
+              />
+            </summary>
+
+            <div className="thinking-disclosure__body">
+              {savedActivity.steps.length === 0 &&
+              savedActivity.tools.length === 0 ? (
+                <p className="thinking-disclosure__empty">
+                  No additional activity details recorded.
+                </p>
+              ) : (
+                <StreamActivity stream={savedActivity} />
+              )}
+            </div>
+          </details>
+        )}
+
         {attachmentUrls.length >
           0 && (
           <div className="message__attachments">

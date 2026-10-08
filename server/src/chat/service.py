@@ -553,6 +553,8 @@ class ChatService:
 
     async def stream_prepared(self, turn: PreparedTurn) -> AsyncIterator[ChatEvent]:
         assistant_text: list[str] = []
+        # Record public activity, not private model reasoning.
+        activity_events: list[dict[str, Any]] = []
         final_checkpoint_id: str | None = None
         final_run_metrics: dict[str, Any] = {}
         # Declared before begin() so the finally below can never see an
@@ -639,6 +641,9 @@ class ChatService:
                 cancel_event=turn.cancel_event,
             ):
                 event.run_id = turn.run_id
+                if event.type in {"agent.step", "tool.call.delta", "tool.result"}:
+                    if len(activity_events) < 2_000:
+                        activity_events.append({"type": event.type, "data": event.data})
                 if event.type in {
                     "run.started", "tool.call.delta", "tool.result", "agent.step",
                     "run.finished", "run.interrupted", "run.cancelled", "run.error",
@@ -711,6 +716,7 @@ class ChatService:
                 metadata={
                     "model": turn.runtime.model_name,
                     "run_id": turn.run_id,
+                    "activity_events": activity_events,
                 },
                 branch_id=turn.branch.id,
             )
@@ -920,6 +926,7 @@ class ChatService:
 
     async def stream_resume(self, turn: PreparedResume) -> AsyncIterator[ChatEvent]:
         assistant_text: list[str] = [turn.partial_text]
+        activity_events: list[dict[str, Any]] = []
         final_checkpoint_id: str | None = None
         final_run_metrics: dict[str, Any] = {}
         # Declared before begin() so the finally below can never see an
@@ -948,6 +955,9 @@ class ChatService:
                 cancel_event=turn.cancel_event,
             ):
                 event.run_id = turn.run_id
+                if event.type in {"agent.step", "tool.call.delta", "tool.result"}:
+                    if len(activity_events) < 2_000:
+                        activity_events.append({"type": event.type, "data": event.data})
                 if event.type in {
                     "run.started", "tool.call.delta", "tool.result", "agent.step",
                     "run.finished", "run.interrupted", "run.cancelled", "run.error",
@@ -1012,7 +1022,12 @@ class ChatService:
                 status=MessageStatus.COMPLETE,
                 parent_message_id=turn.user_message.id,
                 checkpoint_id=final_checkpoint_id,
-                metadata={"model": turn.runtime.model_name, "run_id": turn.run_id, "resumed": True},
+                metadata={
+                    "model": turn.runtime.model_name,
+                    "run_id": turn.run_id,
+                    "resumed": True,
+                    "activity_events": activity_events,
+                },
                 branch_id=turn.branch.id,
             )
             await self._repository.update_branch_head(turn.branch.id, final_checkpoint_id)
