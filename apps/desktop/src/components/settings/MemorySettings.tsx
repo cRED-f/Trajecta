@@ -1,35 +1,47 @@
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Brain, FolderOpen, RefreshCw } from "lucide-react";
+import {
+  Activity, AlertCircle, BookOpenText, Check, FolderOpen, History,
+  Lightbulb, ListTodo, Plus, RefreshCw, Search, ShieldCheck, X,
+  type LucideIcon,
+} from "lucide-react";
 import { useMemoryActions, useMemoryCatalog } from "../../hooks/use-settings";
-import { settingsApi } from "../../lib/api";
 import { learningMemoryApi } from "../../lib/learning-memory-api";
+import { FriendlyEmpty } from "../LearningSurface";
 import { EpisodicMemories } from "../memory/EpisodicMemories";
 import { ProceduralMemories } from "../memory/ProceduralMemories";
 import { ReflectionActivity } from "../memory/ReflectionActivity";
 import { MemoryMaintenance } from "../memory/MemoryMaintenance";
+import { ExperiencePanel } from "../skills/ExperiencePanel";
 
-type Tab = "semantic" | "episodic" | "procedural" | "activity" | "maintenance";
-const tabs: { key: Tab; label: string }[] = [
-  { key: "semantic", label: "Semantic" },
-  { key: "episodic", label: "Episodic" },
-  { key: "procedural", label: "Procedural" },
-  { key: "activity", label: "Learning activity" },
-  { key: "maintenance", label: "Maintenance" },
+type View = "semantic" | "learned" | "episodic" | "procedural" | "activity" | "maintenance";
+const SECTIONS: { key: View; label: string; icon: LucideIcon }[] = [
+  { key: "semantic", label: "Saved facts", icon: BookOpenText },
+  { key: "learned", label: "Learnings", icon: Lightbulb },
+  { key: "episodic", label: "Past tasks", icon: History },
+  { key: "procedural", label: "Workflows", icon: ListTodo },
 ];
 
-export function MemorySettings({ enabled, backendOnline }: { enabled: boolean; backendOnline: boolean }) {
-  const [tab, setTab] = useState<Tab>("semantic");
+/** A reusable slice of the Knowledge page; nondefault views serve Review and Diagnostics. */
+export function MemorySettings({ enabled, backendOnline, view, reviewOnly = false }: {
+  enabled: boolean; backendOnline: boolean; view?: View; reviewOnly?: boolean;
+}) {
+  const [localView, setLocalView] = useState<View>("semantic");
   const [search, setSearch] = useState("");
   const [workspacePath, setWorkspacePath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [key, setKey] = useState("");
+  const [content, setContent] = useState("");
+  const tab = view ?? localView;
   const canFetch = enabled && backendOnline;
   const client = useQueryClient();
-  const semantic = useMemoryCatalog(search, canFetch && tab === "semantic");
-  const semanticActions = useMemoryActions();
+  const actions = useMemoryActions();
+  const semantic = useMemoryCatalog(tab === "semantic" ? search : "", canFetch && tab === "semantic");
   const episodes = useQuery({
     queryKey: ["memory-center", "episodes", workspacePath],
     queryFn: () => learningMemoryApi.episodes(workspacePath),
@@ -40,15 +52,10 @@ export function MemorySettings({ enabled, backendOnline }: { enabled: boolean; b
     queryFn: () => learningMemoryApi.procedures(workspacePath),
     enabled: canFetch && tab === "procedural",
   });
-  const skillCatalog = useQuery({
-    queryKey: ["memory-center", "active-skills"],
-    queryFn: settingsApi.skills,
-    enabled: canFetch && tab === "procedural" && !workspacePath,
-  });
   const archived = useQuery({
     queryKey: ["memory-center", "archived", workspacePath],
     queryFn: () => learningMemoryApi.procedures(workspacePath, "archived"),
-    enabled: canFetch && tab === "procedural",
+    enabled: canFetch && tab === "procedural" && !reviewOnly,
   });
   const reflection = useQuery({
     queryKey: ["memory-center", "reflection"],
@@ -61,88 +68,103 @@ export function MemorySettings({ enabled, backendOnline }: { enabled: boolean; b
     queryFn: () => learningMemoryApi.findings(workspacePath),
     enabled: canFetch && tab === "maintenance",
   });
-  // The current conflict API is global; do not display it on a workspace-specific view.
   const conflicts = useQuery({
     queryKey: ["memory-center", "conflicts"],
     queryFn: learningMemoryApi.conflicts,
     enabled: canFetch && tab === "maintenance" && !workspacePath,
   });
+  const currentQuery = tab === "semantic" ? semantic : tab === "episodic" ? episodes
+    : tab === "procedural" ? procedures : tab === "activity" ? reflection : findings;
+  const loading = tab !== "learned" && (currentQuery.isLoading || (tab === "maintenance" && !workspacePath && conflicts.isLoading));
+  const queryError = tab === "learned" ? null : currentQuery.error ?? (tab === "maintenance" ? conflicts.error : null);
 
   async function perform(action: () => Promise<unknown>) {
     if (busy) return;
-    setBusy(true);
-    setError(null);
+    setBusy(true); setError(null);
     try {
       await action();
       await Promise.all([
         client.invalidateQueries({ queryKey: ["memory-center"] }),
         client.invalidateQueries({ queryKey: ["settings", "memory"] }),
       ]);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Request failed");
-    } finally {
-      setBusy(false);
-    }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not save changes."); }
+    finally { setBusy(false); }
   }
-  async function selectFolder() {
+  async function chooseFolder() {
     try {
       if (!isTauri()) throw new Error("Folder selection requires the desktop app.");
-      const path = await open({ directory: true, multiple: false, title: "Browse memory for a workspace" });
-      if (typeof path === "string") setWorkspacePath(path);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not select folder");
-    }
+      const picked = await open({ directory: true, multiple: false, title: "Browse knowledge for a workspace" });
+      if (typeof picked === "string") setWorkspacePath(picked);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not choose folder."); }
   }
-  const loading = {
-    semantic: semantic.isLoading, episodic: episodes.isLoading,
-    procedural: procedures.isLoading || archived.isLoading,
-    activity: reflection.isLoading, maintenance: findings.isLoading || (!workspacePath && conflicts.isLoading),
-  }[tab];
-  const queryError = {
-    semantic: semantic.error, episodic: episodes.error, procedural: procedures.error ?? archived.error,
-    activity: reflection.error, maintenance: findings.error ?? (!workspacePath ? conflicts.error : null),
-  }[tab];
+  function resetEditor() { setEditing(null); setEditorOpen(false); setKey(""); setContent(""); }
+  function editFact(memory: {key: string; content: string}) {
+    setEditing(memory.key); setEditorOpen(true); setKey(memory.key); setContent(memory.content);
+  }
+  async function saveFact(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!key.trim() || !content.trim()) { setError("Both a name and content are required."); return; }
+    // Keep the editor open on failure, so a failed save never discards input.
+    if (busy) return;
+    setBusy(true); setError(null);
+    try {
+      await actions.addMemory({ key: key.trim(), content: content.trim() });
+      await client.invalidateQueries({ queryKey: ["settings", "memory"] });
+      resetEditor();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not save fact."); }
+    finally { setBusy(false); }
+  }
 
-  return (
-    <section className="memory-center">
-      {!backendOnline ? <div className="settings-empty-state"><AlertCircle size={22} /><strong>Backend disconnected</strong><span>Connect to Trajecta to browse saved knowledge.</span></div> : <>
-        <div className="memory-center__intro">
-          <div><h3>Memory & learning</h3><p>Review facts, previous task experiences, and procedures. Saved knowledge is not automatically a verified skill.</p></div>
-          <button type="button" className="memory-center__button" disabled={loading} onClick={() => void Promise.all([
-            client.invalidateQueries({ queryKey: ["memory-center"] }),
-            client.invalidateQueries({ queryKey: ["settings", "memory"] }),
-          ])}><RefreshCw size={15} /> Refresh</button>
-        </div>
-        <nav className="memory-center__tabs" aria-label="Memory categories">
-          {tabs.map((item) => <button type="button" key={item.key} aria-current={tab === item.key ? "page" : undefined}
-            className={tab === item.key ? "is-active" : ""} onClick={() => { setTab(item.key); setSearch(""); setError(null); }}>{item.label}</button>)}
-        </nav>
-        {tab !== "semantic" && tab !== "activity" && <div className="memory-center__scope">
-          <label>Memory scope</label>
-          <strong title={workspacePath ?? "General (no workspace)"}>{workspacePath ?? "General memory"}</strong>
-          <button type="button" className="memory-center__button" onClick={() => void selectFolder()}><FolderOpen size={14} /> Choose folder</button>
-          {workspacePath && <button type="button" className="memory-center__button" onClick={() => setWorkspacePath(null)}>General memory</button>}
-        </div>}
-        {(tab === "semantic" || tab === "episodic" || tab === "procedural") && <label className="memory-center__search">
-          <span>Search {tab} memory</span>
-          <input aria-label={`Search ${tab} memory`} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filter saved records…" />
-        </label>}
-        {error && <div role="alert" className="settings-error-card"><AlertCircle size={17} /> {error}</div>}
-        {queryError && <div role="alert" className="settings-error-card"><AlertCircle size={17} /> {queryError instanceof Error ? queryError.message : "Could not load memory"}</div>}
-        {loading ? <div className="settings-loading"><RefreshCw className="settings-spin" size={17} /> Loading…</div> : null}
-        {!loading && !queryError && tab === "semantic" && <div className="memory-center__records">
-          <p className="memory-center__note">Saved preferences and facts. {semantic.data?.counts.semantic ?? 0} matching entries.</p>
-          {semantic.data?.items.length === 0 && <div className="settings-empty-state settings-empty-state--small"><Brain size={20} /><strong>No semantic memories</strong><span>Facts saved by the agent will appear here.</span></div>}
-          {semantic.data?.items.map((memory) => <article className="memory-center__record" key={memory.id}>
-            <div className="memory-center__head"><strong>{memory.key}</strong><button disabled={busy || semanticActions.deletingMemory} type="button" className="memory-center__button" onClick={() => {
-              if (window.confirm(`Forget semantic memory “${memory.key}”?`)) void perform(() => semanticActions.deleteMemory(memory.key));
-            }}>Forget</button></div><p>{memory.content}</p></article>)}
-        </div>}
-        {!loading && !queryError && tab === "episodic" && <EpisodicMemories items={episodes.data ?? []} search={search} busy={busy} workspacePath={workspacePath} perform={perform} />}
-        {!loading && !queryError && tab === "procedural" && <ProceduralMemories items={procedures.data?.items ?? []} archived={archived.data?.items ?? []} activeSkills={workspacePath ? [] : skillCatalog.data?.skills.filter((s) => s.status === "active") ?? []} search={search} busy={busy} workspacePath={workspacePath} perform={perform} />}
-        {!loading && !queryError && tab === "activity" && <ReflectionActivity status={reflection.data} busy={busy} perform={perform} />}
-        {!loading && !queryError && tab === "maintenance" && <MemoryMaintenance findings={findings.data?.items ?? []} conflicts={workspacePath ? [] : conflicts.data?.items ?? []} workspacePath={workspacePath} busy={busy} perform={perform} />}
-      </>}
-    </section>
-  );
+  if (!backendOnline) return <FriendlyEmpty icon={AlertCircle} title="Knowledge is unavailable" description="Reconnect to Trajecta to browse and manage knowledge." />;
+  return <section className="knowledge-embedded memory-center" aria-label={reviewOnly ? "Workflow suggestions" : "Memories"}>
+    {!view && <nav className="knowledge-subnav" aria-label="Types of memory">
+      {SECTIONS.map(({ key: section, label, icon: Icon }) => <button key={section} type="button"
+        className={tab === section ? "knowledge-subnav__item is-active" : "knowledge-subnav__item"}
+        aria-current={tab === section ? "page" : undefined}
+        onClick={() => { setLocalView(section); setSearch(""); setError(null); }}>
+        <Icon size={16} strokeWidth={1.85} /> {label}
+      </button>)}
+    </nav>}
+
+    {(tab === "episodic" || tab === "procedural" || tab === "maintenance") && !reviewOnly && <div className="knowledge-scope">
+      <div className="knowledge-scope__description"><FolderOpen size={18} /><div>
+        <strong>{workspacePath ? "Workspace" : "All workspaces"}</strong>
+        <span title={workspacePath ?? undefined}>{workspacePath ?? "Showing general memory"}</span>
+      </div></div><div className="knowledge-scope__actions">
+        {workspacePath && <button type="button" className="knowledge-button" onClick={() => setWorkspacePath(null)}>Clear</button>}
+        <button type="button" className="knowledge-button" onClick={() => void chooseFolder()}><FolderOpen size={15} /> Choose folder</button>
+      </div>
+    </div>}
+
+    {tab === "semantic" && <div className="knowledge-content__heading"><div><h4>Saved facts</h4><p>Preferences and information Trajecta can recall in future conversations.</p></div>
+      <button type="button" className="knowledge-button knowledge-button--primary" onClick={() => { resetEditor(); setEditorOpen(true); }}><Plus size={16} /> Add fact</button>
+    </div>}
+    {tab === "semantic" && editorOpen && <form className="knowledge-editor" onSubmit={(event) => void saveFact(event)}>
+      <div className="knowledge-content__heading"><strong>{editing ? "Edit fact" : "New fact"}</strong><button type="button" className="knowledge-icon-button" onClick={resetEditor} aria-label="Close editor"><X size={16}/></button></div>
+      <label>Name<input value={key} onChange={(event) => setKey(event.target.value)} disabled={busy || Boolean(editing)} maxLength={160} required placeholder="Example: preferred-language" /></label>
+      <label>What should Trajecta remember?<textarea value={content} onChange={(event) => setContent(event.target.value)} disabled={busy} rows={3} required /></label>
+      <div className="knowledge-editor__actions"><button type="button" className="knowledge-button" onClick={resetEditor}>Cancel</button>
+        <button type="submit" className="knowledge-button knowledge-button--primary" disabled={busy || !key.trim() || !content.trim()}>{busy ? <RefreshCw size={15} className="settings-spin"/> : <Check size={15}/>} Save fact</button></div>
+    </form>}
+    {(tab === "semantic" || tab === "episodic" || tab === "procedural") && <label className="knowledge-search knowledge-search--full"><Search size={17} />
+      <input aria-label="Search memories" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search records…" /></label>}
+    {error && <div role="alert" className="settings-error-card"><AlertCircle size={17} /> {error}</div>}
+    {queryError && <div role="alert" className="settings-error-card"><AlertCircle size={17} /> {queryError instanceof Error ? queryError.message : "Could not load memory."}</div>}
+    {loading && <div className="knowledge-loading"><RefreshCw size={17} className="settings-spin" /> Loading records…</div>}
+    {!loading && !queryError && tab === "semantic" && <div className="memory-center__records">
+      {semantic.data?.items.length === 0 && <FriendlyEmpty icon={BookOpenText} title={search ? "No matching facts" : "No saved facts yet"} description="You can add a fact here or let Trajecta learn from conversations." />}
+      {semantic.data?.items.map((memory) => <article className="memory-center__record" key={memory.id}>
+        <div className="memory-center__head"><strong>{memory.key}</strong><div className="memory-center__actions">
+          <button type="button" disabled={busy} className="memory-center__button" onClick={() => editFact(memory)}>Edit</button>
+          <button type="button" disabled={busy} className="memory-center__button" onClick={() => {
+            if (window.confirm(`Forget saved fact “${memory.key}”?`)) void perform(() => actions.deleteMemory(memory.key));
+          }}>Forget</button></div></div><p>{memory.content}</p>
+      </article>)}
+    </div>}
+    {tab === "learned" && <ExperiencePanel enabled={canFetch} view="learned" compact />}
+    {!loading && !queryError && tab === "episodic" && <EpisodicMemories items={episodes.data ?? []} search={search} busy={busy} workspacePath={workspacePath} perform={perform} />}
+    {!loading && !queryError && tab === "procedural" && <ProceduralMemories items={procedures.data?.items ?? []} archived={archived.data?.items ?? []} search={search} busy={busy} workspacePath={workspacePath} perform={perform} reviewOnly={reviewOnly} />}
+    {!loading && !queryError && tab === "activity" && <><div className="knowledge-diagnostic-heading"><Activity size={18}/><strong>Background learning</strong></div><ReflectionActivity status={reflection.data} busy={busy} perform={perform} /></>}
+    {!loading && !queryError && tab === "maintenance" && <><div className="knowledge-diagnostic-heading"><ShieldCheck size={18}/><strong>Memory health</strong></div><MemoryMaintenance findings={findings.data?.items ?? []} conflicts={workspacePath ? [] : conflicts.data?.items ?? []} workspacePath={workspacePath} busy={busy} perform={perform} /></>}
+  </section>;
 }

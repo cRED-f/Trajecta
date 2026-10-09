@@ -1,12 +1,10 @@
 import {
-  BookMarked,
-  Brain,
-  CalendarClock,
-  ExternalLink,
+  CalendarDays,
+  ChartNoAxesCombined,
+  LibraryBig,
   Search,
-  Settings,
-  Sparkles,
-  SquarePen,
+  Settings2,
+  MessageSquarePlus,
   Trash2,
 } from "lucide-react";
 
@@ -48,8 +46,6 @@ interface Props {
 
   onNavigate(page: TopLevelPage): void;
 
-  onOpenMemory(): void;
-
   onOpenSettings(): void;
 }
 
@@ -61,7 +57,6 @@ export function Sidebar({
   onSelect,
   onDelete,
   onNavigate,
-  onOpenMemory,
   onOpenSettings,
 }: Props) {
   const [search, setSearch] =
@@ -107,17 +102,13 @@ export function Sidebar({
           type="button"
           onClick={onNew}
         >
-          <SquarePen
-            size={16}
-          />
+          <MessageSquarePlus size={18} strokeWidth={1.8} />
 
           <span>New chat</span>
         </button>
 
         <div className="sidebar-search">
-          <Search
-            size={15}
-          />
+          <Search size={17} strokeWidth={1.8} />
 
           <input
             type="search"
@@ -139,11 +130,18 @@ export function Sidebar({
       <nav className="conversation-list">
         {filtered.map(
           (conversation) => (
-            <button
-              key={
-                conversation.id
-              }
-              type="button"
+            <div
+              key={conversation.id}
+              role="button"
+              tabIndex={0}
+              aria-label={`Open conversation: ${conversation.title ?? "New conversation"}`}
+              onKeyDown={(event) => {
+                if (event.target !== event.currentTarget) return;
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onSelect(conversation.id);
+                }
+              }}
               className={`conversation-card ${
                 conversation.id ===
                 activeId
@@ -164,11 +162,10 @@ export function Sidebar({
               <button
                 className="conversation-card__delete"
                 type="button"
-                onClick={() =>
-                  onDelete(
-                    conversation.id,
-                  )
-                }
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDelete(conversation.id);
+                }}
                 aria-label="Delete conversation"
                 title="Delete"
               >
@@ -180,7 +177,7 @@ export function Sidebar({
                   conversation.updated_at,
                 )}
               </span>
-            </button>
+            </div>
           ),
         )}
 
@@ -197,24 +194,14 @@ export function Sidebar({
 
         <button
           className={`sidebar-item sidebar-item--action ${
-            activePage === "memory" ? "sidebar-item--active" : ""
+            activePage === "knowledge" || activePage === "memory" || activePage === "skills" ? "sidebar-item--active" : ""
           }`}
           type="button"
-          onClick={() => onNavigate("memory")}
+          aria-current={["knowledge", "memory", "skills"].includes(activePage ?? "") ? "page" : undefined}
+          onClick={() => onNavigate("knowledge")}
         >
-          <Brain size={16} />
-          <span>Memory</span>
-        </button>
-
-        <button
-          className={`sidebar-item sidebar-item--action ${
-            activePage === "skills" ? "sidebar-item--active" : ""
-          }`}
-          type="button"
-          onClick={() => onNavigate("skills")}
-        >
-          <Sparkles size={16} />
-          <span>Skills</span>
+          <span className="sidebar-nav-icon"><LibraryBig size={18} strokeWidth={1.8} /></span>
+          <span>Knowledge</span>
         </button>
 
         <button
@@ -224,17 +211,8 @@ export function Sidebar({
           type="button"
           onClick={() => onNavigate("scheduled-tasks")}
         >
-          <CalendarClock size={16} />
+          <span className="sidebar-nav-icon"><CalendarDays size={18} strokeWidth={1.8} /></span>
           <span>Scheduled Tasks</span>
-        </button>
-
-        <button
-          className="sidebar-item sidebar-item--action"
-          type="button"
-          onClick={onOpenMemory}
-        >
-          <BookMarked size={16} />
-          <span>Saved memory</span>
         </button>
 
         <button
@@ -246,7 +224,7 @@ export function Sidebar({
             )
           }
         >
-          <ExternalLink size={16} />
+          <span className="sidebar-nav-icon"><ChartNoAxesCombined size={18} strokeWidth={1.8} /></span>
           <span>Bifrost Dashboard</span>
         </button>
 
@@ -255,7 +233,7 @@ export function Sidebar({
           type="button"
           onClick={onOpenSettings}
         >
-          <Settings size={16} />
+          <span className="sidebar-nav-icon"><Settings2 size={18} strokeWidth={1.8} /></span>
           <span>
             Settings
           </span>

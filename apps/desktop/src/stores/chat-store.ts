@@ -20,6 +20,7 @@ type ComposeMode =
   | EditState;
 
 export type TopLevelPage =
+  | "knowledge"
   | "memory"
   | "skills"
   | "scheduled-tasks";
@@ -46,8 +47,6 @@ interface ChatStore {
 
   showsSettings: boolean;
 
-  memoryPanelOpen: boolean;
-
   streams: Record<string, StreamState>;
 
   setActiveConversation(id: string | null): void;
@@ -61,8 +60,6 @@ interface ChatStore {
   setTheme(theme: "light" | "dark" | "system"): void;
 
   setShowsSettings(value: boolean): void;
-
-  setMemoryPanelOpen(value: boolean): void;
 
   setDraft(value: string): void;
 
@@ -309,8 +306,6 @@ export const useChatStore = create<ChatStore>()(
 
       showsSettings: false,
 
-      memoryPanelOpen: false,
-
       streams: {},
 
       setActiveConversation(id) {
@@ -434,10 +429,6 @@ export const useChatStore = create<ChatStore>()(
 
       setShowsSettings(value) {
         set({ showsSettings: value });
-      },
-
-      setMemoryPanelOpen(value) {
-        set({ memoryPanelOpen: value });
       },
 
       beginStream(

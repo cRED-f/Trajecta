@@ -1,11 +1,6 @@
 import { X } from "lucide-react";
-
-import {
-  MemorySettings,
-  ScheduledTasksSettings,
-  SkillsSettings,
-} from "./settings";
-
+import { KnowledgeCenter } from "./KnowledgeCenter";
+import { ScheduledTasksSettings } from "./settings";
 import type { TopLevelPage } from "../stores/chat-store";
 
 interface Props {
@@ -15,49 +10,15 @@ interface Props {
 }
 
 export function TopLevelPages({ page, backendOnline, onClose }: Props) {
-  return (
-    <main className="top-page">
-      <header className="top-page__header">
-        <div>
-          <h2>
-            {page === "memory"
-              ? "Memory"
-              : page === "skills"
-                ? "Skills"
-                : "Scheduled Tasks"}
-          </h2>
-          <p>
-            {page === "memory"
-              ? "Browse durable memories and the memory types behind them."
-              : page === "skills"
-                ? "Knowledge and reusable skills learned from real conversations."
-                : "Recurring and one-shot autonomous agent jobs."}
-          </p>
-        </div>
-
-        <button
-          type="button"
-          className="settings-close"
-          onClick={onClose}
-          aria-label="Close"
-        >
-          <X size={17} />
-        </button>
-      </header>
-
-      <div className="top-page__body">
-        {page === "memory" && (
-          <MemorySettings enabled backendOnline={backendOnline} />
-        )}
-
-        {page === "skills" && (
-          <SkillsSettings enabled backendOnline={backendOnline} />
-        )}
-
-        {page === "scheduled-tasks" && (
-          <ScheduledTasksSettings enabled backendOnline={backendOnline} />
-        )}
-      </div>
-    </main>
-  );
+  // Legacy destinations continue to open the unified Knowledge center.
+  const knowledge = page !== "scheduled-tasks";
+  return <main className="top-page">
+    <button type="button" className="top-page__close" onClick={onClose} aria-label="Close page" title="Back to chat">
+      <X size={18} strokeWidth={1.8}/>
+    </button>
+    <div className="top-page__body">
+      {knowledge ? <KnowledgeCenter backendOnline={backendOnline} initialSection={page === "memory" ? "memories" : page === "skills" ? "skills" : "overview"}/>
+        : <ScheduledTasksSettings enabled backendOnline={backendOnline} />}
+    </div>
+  </main>;
 }

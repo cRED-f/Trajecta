@@ -90,12 +90,6 @@ export default function App() {
         state.setPage,
     );
 
-  const setMemoryPanelOpen =
-    useChatStore(
-      (state) =>
-        state.setMemoryPanelOpen,
-    );
-
   const conversations =
     useConversationList();
 
@@ -216,9 +210,6 @@ export default function App() {
           actions.deleteConversation
         }
         onNavigate={setPage}
-        onOpenMemory={() =>
-          setMemoryPanelOpen(true)
-        }
         onOpenSettings={() =>
           setShowsSettings(true)
         }

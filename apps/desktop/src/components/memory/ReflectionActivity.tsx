@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { Clock3 } from "lucide-react";
+import { FriendlyEmpty, StatusPill } from "../LearningSurface";
 import { useQuery } from "@tanstack/react-query";
 import { learningMemoryApi, type ReflectionSettings, type ReflectionStatus } from "../../lib/learning-memory-api";
 import { settingsApi } from "../../lib/api";
@@ -24,7 +26,7 @@ function ReflectionConfiguration({ busy, perform }: { busy: boolean; perform: (a
   const validModel = !model || /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._:/-]+$/.test(model);
   if (settings.isLoading) return <p className="memory-center__note">Loading reflection configuration…</p>;
   if (settings.error) return <p role="alert" className="memory-center__warning">Could not load reflection configuration.</p>;
-  return <section className="memory-center__configuration" aria-label="Reflection model and budget">
+  return <details className="memory-center__advanced"><summary>Background learning settings <span>Model, daily budget, timeout</span></summary><section className="memory-center__configuration" aria-label="Reflection model and budget">
     <h4>Reflection model & budget</h4>
     <p className="memory-center__note">Reflections run through Bifrost after the chat response. Use a configured provider/model or follow the global default.</p>
     <div className="memory-center__field-grid">
@@ -38,7 +40,7 @@ function ReflectionConfiguration({ busy, perform }: { busy: boolean; perform: (a
     </div>
     {!validModel && <p className="memory-center__warning">Enter a qualified model, such as provider/model, or leave blank for the default.</p>}
     <button type="button" className="memory-center__button memory-center__button--primary" disabled={busy || !validModel || !Number.isInteger(daily) || daily < 0 || daily > 1000 || !Number.isInteger(tokens) || tokens < 100 || tokens > 2000 || timeout < 5 || timeout > 180} onClick={() => void perform(() => learningMemoryApi.setReflectionSettings({ enabled, model: model.trim() || null, max_daily_reviews: daily, max_output_tokens: tokens, timeout_seconds: timeout } satisfies Partial<ReflectionSettings>))}>Save learning settings</button>
-  </section>;
+  </section></details>;
 }
 
 export function ReflectionActivity({ status, busy, perform }: {
@@ -50,15 +52,15 @@ export function ReflectionActivity({ status, busy, perform }: {
     <h4>Recent reviews</h4>
     <p className="memory-center__note">Review jobs are recorded after meaningful interactions. No evaluation or skill activation happens here.</p>
     <div className="memory-center__counts">{Object.entries(status?.counts ?? {}).map(([key, value]) => <span key={key}>{key.replaceAll("_", " ")}: <strong>{value}</strong></span>)}</div>
-    {!status?.jobs.length && <div className="settings-empty-state settings-empty-state--small"><strong>No reflection activity yet</strong><span>Meaningful completed tasks will enter the review queue.</span></div>}
+    {!status?.jobs.length && <FriendlyEmpty icon={Clock3} title="No background learning yet" description="Meaningful completed tasks can enter the review queue after the chat response." />}
     {status?.jobs.map((job) => <article className="memory-center__record" key={job.id}>
-      <div className="memory-center__head"><strong>{job.reason === "feedback" ? "Feedback review" : "Experience review"}</strong><span className="memory-center__status">{job.status}</span></div>
+      <div className="memory-center__head"><strong>{job.reason === "feedback" ? "Feedback review" : "Experience review"}</strong><StatusPill status={job.status} /></div>
       <p className="memory-center__note">{new Date(job.updated_at).toLocaleString()} · Attempts: {job.attempts}{job.result?.model ? ` · ${job.result.model}` : ""}</p>
       {job.result?.summary && <p className="memory-center__preserve">{job.result.summary}</p>}
       {job.last_error && <p role="alert" className="memory-center__warning">Review error: {job.last_error}</p>}
       {job.result?.insights?.length ? <details><summary>Extracted observations ({job.result.insights.length})</summary><ul>{job.result.insights.map((insight, index) => <li key={index}>{insight.content} — {insight.kind}, evidence events {insight.evidence_event_seqs.join(", ")}</li>)}</ul></details> : null}
       {job.result?.procedure_draft_id && <p className="memory-center__note">Created reviewable procedure: {job.result.procedure_draft_id}</p>}
-      <p className="memory-center__note">Source trajectory: <code>{job.trajectory_id}</code></p>
+      <details><summary>Technical details</summary><p className="memory-center__note">Source trajectory: <code>{job.trajectory_id}</code></p></details>
     </article>)}
   </div>;
 }

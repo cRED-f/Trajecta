@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { Clock3, History } from "lucide-react";
+import { FriendlyEmpty, StatusPill } from "../LearningSurface";
 import { learningMemoryApi, type Episode } from "../../lib/learning-memory-api";
 
 export function EpisodicMemories({ items, search, busy, workspacePath, perform }: {
@@ -9,11 +11,12 @@ export function EpisodicMemories({ items, search, busy, workspacePath, perform }
   const [note, setNote] = useState("");
   const displayed = items.filter((item) => `${item.goal} ${item.summary} ${item.tool_names.join(" ")}`.toLowerCase().includes(search.toLowerCase()));
   return <div className="memory-center__records">
-    <p className="memory-center__note">Episodes are observed history, not proof of task success. User feedback updates the original trajectory.</p>
-    {displayed.length === 0 && <div className="settings-empty-state settings-empty-state--small"><strong>No episodes in this scope</strong><span>Substantial completed tasks will appear here after consolidation.</span></div>}
+    <p className="memory-center__note">A task record describes what happened, not necessarily whether it succeeded. Give feedback to improve future learning.</p>
+    {displayed.length === 0 && <FriendlyEmpty icon={History} title={search ? "No matching past tasks" : "No past tasks in this scope"} description={search ? "Try another search term." : "Substantial completed tasks will appear here after consolidation."} />}
     {displayed.map((episode) => <article className="memory-center__record" key={episode.id}>
-      <div className="memory-center__head"><strong>{episode.goal}</strong><span className="memory-center__status">{episode.outcome_verified ? "Outcome verified" : "Unverified outcome"}</span></div>
-      <p className="memory-center__note">{episode.created_at ? new Date(episode.created_at).toLocaleString() : ""} · {episode.outcome} · {episode.tool_names.length} tool(s)</p>
+      <div className="memory-center__head"><div className="knowledge-record-heading"><History size={18} /><strong>{episode.goal}</strong></div><StatusPill status={episode.outcome_verified ? "active" : "neutral"}>{episode.outcome_verified ? "Outcome verified" : "Not verified"}</StatusPill></div>
+      <div className="knowledge-record-subtitle"><span><Clock3 size={14} />{episode.created_at ? new Date(episode.created_at).toLocaleString() : "Date unavailable"}</span><span>{episode.outcome}</span><span>{episode.tool_names.length} tools used</span></div>
+      {episode.tool_names.length > 0 && <div className="knowledge-record-tags">{episode.tool_names.slice(0, 4).map((tool) => <span key={tool}>{tool}</span>)}{episode.tool_names.length > 4 && <span>+{episode.tool_names.length - 4} more</span>}</div>}
       <details><summary>Read experience and evidence</summary><p className="memory-center__preserve">{episode.summary}</p>
         <p className="memory-center__note">Trajectory: <code>{episode.source_trajectory_id}</code></p>
         <p className="memory-center__note">Evidence events: {episode.evidence.source_event_seqs?.join(", ") || "None recorded"}</p>

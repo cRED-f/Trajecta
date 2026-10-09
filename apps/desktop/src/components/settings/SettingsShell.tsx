@@ -1,8 +1,8 @@
 import {
-  Brain,
-  PlugZap,
-  Server,
-  Settings,
+  DatabaseZap,
+  Blocks,
+  ServerCog,
+  Settings2,
   ShieldAlert,
   ShieldCheck,
   X,
@@ -72,7 +72,7 @@ export function SettingsShell({
         <SettingsNavItem
           page="general"
           current={page}
-          icon={<Settings size={16} />}
+          icon={<Settings2 size={17} strokeWidth={1.8} />}
           label="General"
           onSelect={onPageChange}
         />
@@ -84,7 +84,7 @@ export function SettingsShell({
         <SettingsNavItem
           page="llm-providers"
           current={page}
-          icon={<Server size={16} />}
+          icon={<ServerCog size={17} strokeWidth={1.8} />}
           label="LLM Providers"
           onSelect={onPageChange}
         />
@@ -92,15 +92,15 @@ export function SettingsShell({
         <SettingsNavItem
           page="memory"
           current={page}
-          icon={<Brain size={16} />}
-          label="Embedding & Learning"
+          icon={<DatabaseZap size={17} strokeWidth={1.8} />}
+          label="Embeddings"
           onSelect={onPageChange}
         />
 
         <SettingsNavItem
           page="guardrails"
           current={page}
-          icon={<ShieldAlert size={16} />}
+          icon={<ShieldAlert size={17} strokeWidth={1.8} />}
           label="Guardrails"
           onSelect={onPageChange}
         />
@@ -108,7 +108,7 @@ export function SettingsShell({
         <SettingsNavItem
           page="permissions"
           current={page}
-          icon={<ShieldCheck size={16} />}
+          icon={<ShieldCheck size={17} strokeWidth={1.8} />}
           label="Permissions"
           onSelect={onPageChange}
         />
@@ -120,7 +120,7 @@ export function SettingsShell({
         <SettingsNavItem
           page="mcp-tools"
           current={page}
-          icon={<PlugZap size={16} />}
+          icon={<Blocks size={17} strokeWidth={1.8} />}
           label="MCP Tools"
           count={mcpEnabledCount}
           onSelect={onPageChange}
