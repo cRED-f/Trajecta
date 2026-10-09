@@ -42,6 +42,7 @@ class OfflineDB:
         db = SQLiteDatabase(Path(":memory:"))
         db._conn = self._conn
         await db._migrate_v15()
+        await db._migrate_v17()
 
     async def execute(self, sql: str, params=()):
         cur = self._conn.raw.execute(sql, params)

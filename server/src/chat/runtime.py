@@ -53,7 +53,7 @@ Behavior:
 - Never claim you inspected a file unless you actually used a file or retrieval tool.
 - Uploaded files are available under /uploads/ and are immutable.
 - User-approved host files live under /workspace/. Prefer Deep Agents built-in file tools there.
-- Use persistent memory for stable facts/preferences and session_search for past conversations.
+- Use persistent memory for stable facts/preferences and search_past_conversations for scoped episodic recall; session_search provides message history.
 - Use schedule_create for future/recurring work instead of claiming you will remember manually.
 - Browser tools automate websites; computer tools (when enabled) control non-browser desktop apps.
 - Prefer sandbox execute for code/commands; host process tools are for approved long-running processes only.
@@ -313,6 +313,15 @@ class DeepAgentRuntime:
         tools = [*native_tools, *mcp_tools]
         if self._rag.enabled:
             tools.append(self._rag.as_tool(conversation_id=conversation.id))
+        if automatic_memory:
+            from server.src.memory.episodic.store import EpisodicMemory
+            # Bind scope inside the tool closure: model arguments never select
+            # the user or another workspace, including on concurrent runs.
+            tools.append(self._memory.episodic.as_tool(
+                user_id="local",
+                scope=EpisodicMemory.workspace_scope(
+                    (conversation.metadata or {}).get(METADATA_KEY)),
+            ))
 
         config: dict[str, Any] = {
             "configurable": {"thread_id": thread_id}

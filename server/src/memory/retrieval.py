@@ -263,11 +263,15 @@ class UnifiedMemoryRetriever:
             for item in kept:
                 try:
                     await self.db.execute(
-                        """INSERT OR IGNORE INTO memory_usage
-                           (tier, item_id, version, user_id, scope, thread_id, retrieved_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        """INSERT INTO memory_usage
+                           (tier, item_id, version, user_id, scope, thread_id,
+                            retrieved_at, first_retrieved_at, last_retrieved_at, retrieval_count)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                           ON CONFLICT(tier, item_id, version, thread_id)
+                           DO UPDATE SET last_retrieved_at=excluded.last_retrieved_at,
+                                         retrieval_count=memory_usage.retrieval_count+1""",
                         (item["tier"], item["id"], item.get("version") or "", user_id,
-                         item.get("scope") or "local", thread_id, now),
+                         item.get("scope") or "local", thread_id, now, now, now),
                     )
                 except Exception:
                     logger.debug("Memory usage write failed", exc_info=True)

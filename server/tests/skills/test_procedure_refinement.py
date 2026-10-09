@@ -47,6 +47,9 @@ class Connection:
     async def commit(self):
         self.raw.commit()
 
+    async def rollback(self):
+        self.raw.rollback()
+
     async def close(self):
         self.raw.close()
 
@@ -293,3 +296,67 @@ async def test_api_workspace_scope_and_review(env):
     result = await routes.review_procedure(draft["id"], routes.ProcedureReviewRequest(decision="reject"),
                                     req, workspace_path="/my/work")
     assert result["status"] == "rejected"
+
+@pytest.mark.asyncio
+async def test_procedure_candidate_atomic_double_click_and_reusable_steps(env):
+    import asyncio
+    tid = await trace(env, goal="Investigate website extraction issues")
+    await env.trajectories.finish(tid, outcome="success", metadata={"user_feedback": "success"})
+    draft = await env.service.propose(tid, trigger="feedback")
+    await env.service.review(draft["id"], decision="approve")
+    first, second = await asyncio.gather(
+        env.service.create_candidate(draft["id"], name="website-issue-resolution"),
+        env.service.create_candidate(draft["id"], name="website-issue-resolution"),
+    )
+    assert first["id"] == second["id"]
+    assert (await env.db.fetchone("SELECT count(*) AS n FROM skill_candidates"))["n"] == 1
+    assert (await env.service.get(draft["id"]))["candidate_id"] == first["id"]
+    assert (await env.service.create_candidate(draft["id"], name="website-issue-resolution"))["id"] == first["id"]
+    skill = await env.repository.get_candidate_skill(first["id"])
+    assert "Investigate website extraction issues" in skill.workflow.steps[0].instruction
+    assert "source event" in skill.workflow.steps[0].instruction
+    assert "source event" in skill.workflow.steps[0].success_signal
+    assert "independently" in skill.instructions
+    assert "secretsecret" not in skill.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_transaction_rolls_back_candidate_if_draft_changed(env):
+    tid = await trace(env)
+    await env.trajectories.finish(tid, outcome="success", metadata={"user_feedback": "success"})
+    draft = await env.service.propose(tid, trigger="feedback")
+    await env.service.review(draft["id"], decision="approve")
+    with pytest.raises(ValueError, match="changed"):
+        await env.db.insert_procedure_candidate(
+            draft_id=draft["id"], draft_version=999, candidate_id="invalid",
+            name="bad", description="bad", content="bad", source_ids="[]",
+            metadata="{}", now="2026-10-09T00:00:00+00:00",
+        )
+    assert (await env.db.fetchone("SELECT count(*) AS n FROM skill_candidates"))["n"] == 0
+    assert (await env.service.get(draft["id"]))["status"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_reflection_guidance_is_attached_only_to_cited_steps(env):
+    tid = await trace(env)
+    data = await env.trajectories.get_with_task(tid)
+    proposal = await env.service.propose(tid, trigger="reflection", insights=insight(data))
+    assert len(proposal["steps"][0]["observed_guidance"]) == 1
+    assert "observed_guidance" not in proposal["steps"][1]
+    assert "secretsecret" not in json.dumps(proposal)
+
+@pytest.mark.asyncio
+async def test_positive_feedback_inherits_grounded_reflection_guidance(env):
+    tid = await trace(env)
+    original = await env.trajectories.get_with_task(tid)
+    first = await env.service.propose(tid, trigger="reflection", insights=insight(original))
+    assert first and first["steps"][0]["observed_guidance"]
+    await env.trajectories.finish(tid, outcome="success", metadata={"user_feedback": "success"})
+    approved_draft = await env.service.propose(tid, trigger="feedback")
+    assert approved_draft["parent_id"] == first["id"]
+    assert approved_draft["steps"][0]["observed_guidance"] == first["steps"][0]["observed_guidance"]
+    await env.service.review(approved_draft["id"], decision="approve")
+    candidate = await env.service.create_candidate(approved_draft["id"], name="source-recovery")
+    bundle = await env.repository.get_candidate_skill(candidate["id"])
+    assert "Look for another source" in bundle.workflow.steps[0].instruction
+    assert not await env.repository.list_active()

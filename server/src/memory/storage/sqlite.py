@@ -236,7 +236,44 @@ class SQLiteDatabase:
             await self._conn.execute("INSERT INTO schema_version(version) VALUES (20)")
             version = 20
 
+        if version < 21:
+            await self._migrate_v21()
+            await self._conn.execute("INSERT INTO schema_version(version) VALUES (21)")
+            version = 21
+
         await self._conn.commit()
+
+    async def _migrate_v21(self) -> None:
+        """Preserve original retrieval timestamps and count actual review claims."""
+        assert self._conn is not None
+        cursor = await self._conn.execute("PRAGMA table_info(memory_usage)")
+        fields = {str(row[1]) for row in await cursor.fetchall()}
+        if "first_retrieved_at" not in fields:
+            await self._conn.execute("ALTER TABLE memory_usage ADD COLUMN first_retrieved_at TEXT")
+        if "last_retrieved_at" not in fields:
+            await self._conn.execute("ALTER TABLE memory_usage ADD COLUMN last_retrieved_at TEXT")
+        if "retrieval_count" not in fields:
+            await self._conn.execute(
+                "ALTER TABLE memory_usage ADD COLUMN retrieval_count INTEGER NOT NULL DEFAULT 1"
+            )
+        await self._conn.execute(
+            """UPDATE memory_usage SET first_retrieved_at=COALESCE(first_retrieved_at,retrieved_at),
+                last_retrieved_at=COALESCE(last_retrieved_at,retrieved_at)"""
+        )
+        await self._conn.executescript("""
+            CREATE INDEX IF NOT EXISTS idx_memory_usage_recent_v21
+                ON memory_usage(tier, item_id, last_retrieved_at DESC);
+            CREATE TABLE IF NOT EXISTS reflection_attempts (
+                job_id TEXT NOT NULL REFERENCES reflection_jobs(id) ON DELETE CASCADE,
+                attempt_no INTEGER NOT NULL,
+                started_at TEXT NOT NULL,
+                PRIMARY KEY(job_id, attempt_no)
+            );
+            CREATE INDEX IF NOT EXISTS idx_reflection_attempts_day
+                ON reflection_attempts(started_at);
+        """)
+        # Historical attempts have no reliable timestamps. Do not charge them
+        # to today's budget or invent an attempt-time history.
 
     async def _migrate_v20(self) -> None:
         """Non-destructive retrieval attribution, conflicts, and curator findings."""
@@ -1369,6 +1406,93 @@ class SQLiteDatabase:
             cur = await self._conn.execute(sql, params)
             await self._conn.commit()
             return cur
+
+    async def insert_procedure_candidate(
+        self, *, draft_id: str, draft_version: int, candidate_id: str,
+        name: str, description: str, content: str, source_ids: str,
+        metadata: str, now: str,
+    ) -> str:
+        """Claim approved draft and create its candidate in one SQLite transaction.
+
+        BEGIN IMMEDIATE serializes competing desktop/API processes. Returning the
+        saved id makes HTTP retries idempotent, even after a committed response
+        was lost. The transaction rolls back both writes on any failure.
+        """
+        assert self._conn is not None
+        async with self._write_lock:
+            await self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                cur = await self._conn.execute(
+                    "SELECT * FROM procedure_drafts WHERE id=?", (draft_id,)
+                )
+                row = await cur.fetchone()
+                if row is None:
+                    raise ValueError("procedure not found")
+                if row["status"] == "candidate_created" and row["candidate_id"]:
+                    result = str(row["candidate_id"])
+                else:
+                    if (row["status"] != "approved" or row["archived_at"] is not None
+                            or not row["user_confirmed"] or row["user_id"] != "local"
+                            or row["scope"] != "local" or row["version"] != draft_version):
+                        raise ValueError("approved procedure has changed; review again")
+                    await self._conn.execute(
+                        """INSERT INTO skill_candidates
+                           (id,name,description,content,status,source_trajectory_ids,
+                            created_at,updated_at,metadata)
+                           VALUES (?,?,?,?,'candidate',?,?,?,?)""",
+                        (candidate_id,name,description,content,source_ids,now,now,metadata),
+                    )
+                    cur = await self._conn.execute(
+                        """UPDATE procedure_drafts SET status='candidate_created',
+                           candidate_id=?,updated_at=? WHERE id=? AND status='approved'
+                           AND archived_at IS NULL AND version=?""",
+                        (candidate_id,now,draft_id,draft_version),
+                    )
+                    if cur.rowcount != 1:
+                        raise ValueError("approved procedure changed during candidate creation")
+                    result = candidate_id
+                await self._conn.commit()
+                return result
+            except BaseException:
+                await self._conn.rollback()
+                raise
+
+    async def claim_reflection_job(
+        self, *, now: str, midnight: str, max_daily: int,
+        max_attempts: int, lease_until: str,
+    ) -> dict[str, Any] | None:
+        """Atomically reserve one daily review attempt and claim a queued job."""
+        assert self._conn is not None
+        async with self._write_lock:
+            await self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                cur = await self._conn.execute(
+                    "SELECT COUNT(*) FROM reflection_attempts WHERE started_at >= ?", (midnight,)
+                )
+                used = (await cur.fetchone())[0]
+                if used >= max_daily:
+                    await self._conn.commit()
+                    return None
+                cur = await self._conn.execute(
+                    """UPDATE reflection_jobs SET status='processing', attempts=attempts+1,
+                          lease_until=?, updated_at=?
+                       WHERE id = (SELECT id FROM reflection_jobs
+                         WHERE status='pending' AND attempts < ? AND next_attempt_at<=?
+                         ORDER BY created_at ASC LIMIT 1)
+                       RETURNING *""",
+                    (lease_until, now, max_attempts, now),
+                )
+                row = await cur.fetchone()
+                if row is not None:
+                    await self._conn.execute(
+                        "INSERT INTO reflection_attempts (job_id,attempt_no,started_at) VALUES (?,?,?)",
+                        (row["id"], row["attempts"], now),
+                    )
+                await self._conn.commit()
+                return dict(row) if row else None
+            except BaseException:
+                await self._conn.rollback()
+                raise
 
     async def executescript(self, sql: str) -> None:
         """Run a multi-statement SQL script (DDL with several statements)."""

@@ -123,7 +123,12 @@ class EpisodicMemory:
         goal = self._text(trajectory.get("goal"), 800) or "Task with attachments"
         result = self._text(trajectory.get("task_result"), 750)
         outcome = str(trajectory["outcome"])
-        # Neither 'completed' nor legacy 'success' is independent verification.
+        trace_metadata = trajectory.get("metadata") or {}
+        explicit_rating = (trace_metadata.get("user_feedback")
+                           if isinstance(trace_metadata, dict) else None)
+        if explicit_rating not in {"success", "failure"}:
+            explicit_rating = None
+        # Neither completion nor positive user rating is independent verification.
         verified = False
         summary_parts = [f"Task: {goal}"]
         if tools:
@@ -132,7 +137,10 @@ class EpisodicMemory:
             summary_parts.append(f"Reported tool errors: {', '.join(dict.fromkeys(errors))}")
         if result:
             summary_parts.append(f"Observed final response: {result}")
-        summary_parts.append(f"Recorded outcome: {outcome}; not independently verified")
+        if explicit_rating:
+            summary_parts.append(f"Recorded outcome: {outcome} (explicit user feedback); not independently verified")
+        else:
+            summary_parts.append(f"Recorded outcome: {outcome}; not independently verified")
         summary = "\n".join(summary_parts)[:2200]
         task_meta = trajectory.get("task_metadata") or {}
         if not isinstance(task_meta, dict):
@@ -154,6 +162,7 @@ class EpisodicMemory:
                 and event.get("type") in {"tool.call.delta", "tool.result", "run.error"}
             ][:100],
             "verification": "unverified",
+            "user_feedback": explicit_rating,
         }
         await db.execute(
             """INSERT OR IGNORE INTO episodes
@@ -282,14 +291,48 @@ class EpisodicMemory:
         await asyncio.to_thread(self._provider.vector.delete, "episodes", episode_id)
         return True
 
-    def as_tool(self, name: str = "search_past_conversations") -> Any:
+    async def sync_feedback(self, trajectory_id: str, rating: str) -> dict[str, Any] | None:
+        """Sync explicit user rating without asserting independent verification."""
+        if rating not in {"success", "failure"}:
+            raise ValueError("invalid feedback")
+        db = self._provider.sqlite
+        if db is None:
+            raise RuntimeError("MemoryProvider is not open")
+        row = await db.fetchone("SELECT * FROM episodes WHERE source_trajectory_id=?", (trajectory_id,))
+        if row is None:
+            return None
+        evidence = json.loads(row.get("evidence") or "{}")
+        evidence["user_feedback"] = rating
+        # Retain the original observed response; change only outcome annotation.
+        summary = re.sub(r"\nRecorded outcome: [^\n]*$", "", row["summary"])
+        summary += (f"\nRecorded outcome: {rating} (explicit user feedback); "
+                    "not independently verified")
+        now = datetime.now(UTC).isoformat()
+        await db.execute(
+            """UPDATE episodes SET outcome=?, summary=?, evidence=?, updated_at=?
+               WHERE id=?""",
+            (rating, summary, json.dumps(evidence), now, row["id"]),
+        )
+        try:
+            await asyncio.to_thread(
+                self._provider.vector.upsert, "episodes", row["id"], summary,
+                payload={"user_id": row["user_id"], "scope": row["scope"]},
+            )
+        except Exception:
+            logger.warning("Episode vector refresh failed for %s", row["id"], exc_info=True)
+        return await self.get(row["id"], user_id=row["user_id"], scope=row["scope"])
+
+    def as_tool(
+        self, name: str = "search_past_conversations", *,
+        user_id: str = "local", scope: str = "local",
+    ) -> Any:
         """Expose evidence-linked episode summaries to the model when enabled."""
         from langchain_core.tools import tool
 
         @tool(name)
         async def search_past_conversations(query: str, limit: int = 5) -> str:
             """Search previous tasks for relevant experiences and outcomes."""
-            hits = await self.search(query, limit)
+            hits = await self.search(query, max(1, min(limit, 10)), user_id=user_id, scope=scope)
             return "\n\n".join(
                 f"[{hit['id']}] outcome={hit['outcome']} "
                 f"verified={hit['outcome_verified']} {hit['summary']}"

@@ -52,6 +52,9 @@ class AsyncConn:
     async def commit(self):
         self.raw.commit()
 
+    async def rollback(self):
+        self.raw.rollback()
+
     async def close(self):
         self.raw.close()
 
@@ -85,13 +88,13 @@ async def env(tmp_path):
 
 @pytest.mark.asyncio
 async def test_schema_migration_survives_reopen(env):
-    assert (await env.db.fetchone("SELECT MAX(version) AS version FROM schema_version"))["version"] == 20
+    assert (await env.db.fetchone("SELECT MAX(version) AS version FROM schema_version"))["version"] == 21
     for table in ("memory_usage", "memory_conflicts", "memory_curator_findings"):
         assert await env.db.fetchone("SELECT name FROM sqlite_master WHERE name=?", (table,))
     await env.db.close()
     env.db._conn = AsyncConn(env.db.path)
     await env.db._migrate()
-    assert (await env.db.fetchone("SELECT MAX(version) AS version FROM schema_version"))["version"] == 20
+    assert (await env.db.fetchone("SELECT MAX(version) AS version FROM schema_version"))["version"] == 21
 
 
 @pytest.mark.asyncio
@@ -236,3 +239,33 @@ async def test_unified_api_lists_scoped_results_and_requires_valid_resolution(en
         assert client.get("/api/v1/memory/unified/conflicts").status_code == 200
         assert client.post("/api/v1/memory/unified/conflicts/987/resolve",
                            json={"preferred_ref": "experience:nonexistent"}).status_code == 404
+
+@pytest.mark.asyncio
+async def test_retrieval_updates_last_seen_and_count_same_thread(env):
+    await env.fts.add(env.provider.semantic._memory_id("review-guidance"), "semantic", "memories",
+                      "review-guidance", "Verify independent sources for website research")
+    await env.retrieval.context("independent sources website research", thread_id="long-running-thread")
+    before = await env.db.fetchone("SELECT * FROM memory_usage LIMIT 1")
+    assert before and before["retrieval_count"] == 1
+    await env.db.execute(
+        "UPDATE memory_usage SET retrieved_at='2000-01-01T00:00:00+00:00', "
+        "last_retrieved_at='2000-01-01T00:00:00+00:00'"
+    )
+    await env.retrieval.context("independent sources website research", thread_id="long-running-thread")
+    after = await env.db.fetchone("SELECT * FROM memory_usage LIMIT 1")
+    assert after["retrieval_count"] == 2
+    assert after["first_retrieved_at"] == before["first_retrieved_at"]
+    assert after["last_retrieved_at"] > "2000-01-01"
+    assert after["retrieved_at"] == "2000-01-01T00:00:00+00:00"
+
+@pytest.mark.asyncio
+async def test_v21_partial_migration_is_safe_to_retry(env):
+    # Simulate a crash after ALTER TABLE/index creation but before recording
+    # the new schema_version row. The next startup must not fail.
+    await env.db.execute("DELETE FROM schema_version WHERE version=21")
+    await env.db._migrate()
+    assert (await env.db.fetchone("SELECT MAX(version) AS v FROM schema_version"))["v"] == 21
+    columns = await env.db.fetch("PRAGMA table_info(memory_usage)")
+    assert {row["name"] for row in columns} >= {
+        "first_retrieved_at", "last_retrieved_at", "retrieval_count"
+    }

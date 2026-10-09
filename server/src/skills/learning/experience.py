@@ -170,6 +170,24 @@ class ExperienceLearningService:
             result=trace.get("task_result"),
             metadata={"user_feedback": rating, "user_feedback_note": note},
         )
+        # Keep the authoritative episode in sync even when feedback is sent
+        # directly to this service instead of through HTTP. The API also
+        # refreshes the optional vector index after this durable update.
+        episode = await self._db.fetchone(
+            "SELECT id, summary, evidence FROM episodes WHERE source_trajectory_id=?",
+            (trajectory_id,),
+        )
+        if episode:
+            previous = re.sub(r"\nRecorded outcome: [^\n]*$", "", episode["summary"])
+            summary = (previous + f"\nRecorded outcome: {rating} (explicit user feedback); "
+                       "not independently verified")
+            evidence = json.loads(episode["evidence"] or "{}")
+            evidence["user_feedback"] = rating
+            await self._db.execute(
+                """UPDATE episodes SET outcome=?, summary=?, evidence=?, updated_at=?
+                   WHERE id=?""",
+                (rating, summary, json.dumps(evidence), _now(), episode["id"]),
+            )
         goal = str(trace.get("goal") or "").strip()
         names: list[str] = []
         for step in trace.get("steps") or []:

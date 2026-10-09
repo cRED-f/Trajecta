@@ -140,6 +140,7 @@ class ProcedureRefinementService:
         event_ids = {e.get("seq") for e in (trace.get("steps") or [])
                      if isinstance(e, dict) and isinstance(e.get("seq"), int)}
         lessons = []
+        lessons_with_seqs: list[tuple[str, set[int]]] = []
         references: set[int] = set()
         for insight in (insights or [])[:3]:
             if not isinstance(insight, dict) or insight.get("kind") not in {"procedure", "lesson", "correction"}:
@@ -153,6 +154,7 @@ class ProcedureRefinementService:
             if len(text) < 16:
                 continue
             lessons.append(text)
+            lessons_with_seqs.append((text, set(seqs)))
             references.update(seqs)
         if trigger == "reflection" and not lessons:
             return None
@@ -176,9 +178,39 @@ class ProcedureRefinementService:
         parent = None
         if trigger == "feedback":
             previous = await self._db.fetchone(
-                "SELECT id FROM procedure_drafts WHERE source_trajectory_id=? AND trigger='reflection'",
+                "SELECT * FROM procedure_drafts WHERE source_trajectory_id=? AND trigger='reflection'",
                 (trajectory_id,))
             parent = previous["id"] if previous else None
+            # A user's positive rating can enrich an existing evidence-linked
+            # proposal, but never resurrect rejected/archived advice or treat
+            # the reviewer's text as independently verified facts.
+            if (rating == "success" and previous is not None
+                    and previous["status"] in {"needs_review", "approved"}
+                    and previous.get("archived_at") is None):
+                for old_step in json.loads(previous["steps_json"] or "[]"):
+                    if not isinstance(old_step, dict):
+                        continue
+                    guidance = old_step.get("observed_guidance") or []
+                    if not isinstance(guidance, list):
+                        continue
+                    for step in steps:
+                        if (step["event_seq"] == old_step.get("event_seq")
+                                and step["tool"] == old_step.get("tool")
+                                and step["result_seq"] == old_step.get("result_seq")):
+                            for observation in guidance[:2]:
+                                text = _safe(observation, 450)
+                                if len(text) >= 16:
+                                    step.setdefault("observed_guidance", []).append(text)
+                rationale += "\nPrior evidence-linked reviewer finding (unverified): " + _safe(
+                    previous["rationale"], 450)
+        # Associate fresh reviewer's guidance only with steps that carry the
+        # cited event IDs. Never infer an uncited action from model text.
+        for step in steps:
+            linked = [text for text, seqs in lessons_with_seqs
+                      if step["event_seq"] in seqs or step["result_seq"] in seqs]
+            if linked:
+                step["observed_guidance"] = list(dict.fromkeys(
+                    [*(step.get("observed_guidance") or []), *linked]))[:2]
         payload = {"goal": goal, "steps": steps, "rationale": rationale,
                    "rating": rating if trigger == "feedback" else None,
                    "references": sorted(references)}
@@ -276,6 +308,10 @@ class ProcedureRefinementService:
         )
 
         draft = await self.get(draft_id)
+        if draft and draft["status"] == "candidate_created" and draft.get("candidate_id"):
+            existing = await self._repository.get_candidate(draft["candidate_id"])
+            if existing is not None:
+                return existing  # Idempotent HTTP retry, no new candidate.
         if not draft or draft["status"] != "approved" or draft.get("archived_at") is not None:
             raise ValueError("approve the proposal before creating a candidate")
         if draft["user_id"] != "local" or draft["scope"] != "local":
@@ -298,7 +334,10 @@ class ProcedureRefinementService:
                 raise ValueError("active skill bundle could not be loaded")
             skill = original.model_copy(deep=True)
             observed = "\n".join(
-                f"{i}. {step['tool']} — {step['outcome']} (event {step['event_seq']})"
+                f"{i}. {step['tool']} (call event {step['event_seq']}, "
+                f"result event {step['result_seq']}): "
+                + ("; ".join(step.get("observed_guidance") or []) or
+                   "Tool returned a non-error result; purpose and correctness need review")
                 for i, step in enumerate(draft["steps"], 1)
             )
             skill.instructions += ("\n\n## Proposed change (requires evaluation)\n"
@@ -309,24 +348,49 @@ class ProcedureRefinementService:
         else:
             if name is None:
                 raise ValueError("new skills require an explicit name")
+            # Only encode what the trajectory demonstrates. Reviewer insights
+            # can clarify the reason for a step only if linked to its event.
             workflow = SkillWorkflow(
                 trigger=draft["title"],
-                steps=[WorkflowStep(instruction=f"Use {step['tool']} after checking current permissions and inputs.",
-                                    tool_names=[step["tool"]],
-                                    success_signal="Verify the tool result independently")
-                       for step in draft["steps"]],
-                success_criteria=["Verify the requested outcome independently"],
+                steps=[WorkflowStep(
+                    instruction=(
+                        f"For the task '{draft['title']}', perform observed step {index} "
+                        f"with {step['tool']} (source event {step['event_seq']}). "
+                        + ("Evidence-linked guidance: " + "; ".join(step["observed_guidance"])
+                           if step.get("observed_guidance") else
+                           "The source records tool order only; confirm the intended "
+                           "inputs with the user and current environment before execution.")
+                    ),
+                    tool_names=[step["tool"]],
+                    success_signal=(f"Inspect the output corresponding to source event "
+                                    f"{step['result_seq']}; the historic result is not independent proof."),
+                ) for index, step in enumerate(draft["steps"], 1)],
+                success_criteria=[
+                    f"Verify the user's requested outcome: {draft['title']}",
+                    "On a tool error, stop that step and reassess rather than repeat blindly",
+                    "Confirm the current permissions, environment, and output before claiming success",
+                ],
+            )
+            observed = "\n".join(
+                f"{i}. {step['tool']} (call event {step['event_seq']}, "
+                f"result event {step['result_seq']})"
+                for i, step in enumerate(draft["steps"], 1)
             )
             skill = Skill(name=name, description=draft["title"][:250],
-                          instructions=("Observed tool sequence (not a verified solution):\n" +
-                                        "\n".join(f"- {s['tool']}" for s in draft["steps"]) +
-                                        "\n\nReview notes:\n" + draft["rationale"]),
+                          instructions=("Task and trigger: " + draft["title"] +
+                                        "\n\nObserved sequence (requires adaptation):\n" + observed +
+                                        "\n\nEvidence-linked review notes:\n" + draft["rationale"] +
+                                        "\n\nPreconditions: obtain appropriate inputs and "
+                                        "tool permissions for the current task.\n"
+                                        "Failure handling: inspect errors and use a verified alternative.\n"
+                                        "Validation: inspect outcomes independently; user feedback "
+                                        "is not proof of correctness."),
                           workflow=workflow,
                           metadata=SkillMetadata(source_trajectory_ids=[draft["source_trajectory_id"]], risk=risk))
         skill.metadata.notes = {**skill.metadata.notes, "procedure_draft_id": draft_id,
                                 "requires_manual_evaluation": True}
-        candidate = await self._repository.create_candidate(skill)
-        await self._db.execute(
-            "UPDATE procedure_drafts SET status='candidate_created', candidate_id=?, updated_at=? WHERE id=? AND status='approved'",
-            (candidate["id"], _now(), draft_id))
-        return candidate
+        # One committed transaction protects against double-clicks, concurrent
+        # requests and application crashes between the two writes.
+        return await self._repository.create_procedure_candidate(
+            skill, draft_id=draft_id, draft_version=int(draft["version"])
+        )

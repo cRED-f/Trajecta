@@ -58,6 +58,9 @@ class AsyncSQLite:
     async def commit(self):
         self.raw.commit()
 
+    async def rollback(self):
+        self.raw.rollback()
+
     async def close(self):
         self.raw.close()
 
@@ -266,3 +269,24 @@ async def test_review_configuration_persists_and_respects_disable(engine):
     with pytest.raises(ValueError):
         await fresh.update_config({"max_daily_reviews": -1})
     assert await fresh.get_config() == updated
+
+@pytest.mark.asyncio
+async def test_daily_budget_counts_timestamped_attempts_not_lifetime_job_total(engine):
+    first = await trace(engine)
+    second = await trace(engine)
+    engine.config.memory.reflection.max_daily_reviews = 1
+    assert await engine.worker.enqueue(first)
+    assert await engine.worker.enqueue(second)
+    assert await engine.worker.run_once()
+    assert not await engine.worker.run_once()
+    attempt = await engine.db.fetchone("SELECT * FROM reflection_attempts")
+    assert attempt and attempt["attempt_no"] == 1
+    await engine.db.execute(
+        "UPDATE reflection_jobs SET attempts=9, updated_at='2000-01-01T00:00:00+00:00' "
+        "WHERE status='completed'"
+    )
+    # A review attempt from a previous day is not incorrectly re-charged
+    # merely because the job was updated or its lifetime attempt count changed.
+    await engine.db.execute("UPDATE reflection_attempts SET started_at='2000-01-01T00:00:00+00:00'")
+    assert await engine.worker.run_once()
+    assert (await engine.db.fetchone("SELECT COUNT(*) AS n FROM reflection_attempts"))["n"] == 2

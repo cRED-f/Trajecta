@@ -65,6 +65,26 @@ class SkillRepository:
 
         return await self.get_candidate(candidate_id) or {}
 
+    async def create_procedure_candidate(
+        self, skill: Skill, *, draft_id: str, draft_version: int,
+    ) -> dict[str, Any]:
+        """Create at most one candidate per approved procedure across processes."""
+        candidate_id = uuid.uuid4().hex
+        now = _now()
+        skill = skill.model_copy(update={"status": SkillStatus.CANDIDATE})
+        metadata = {
+            "skill_bundle": skill.model_dump(mode="json"),
+            "content_hash": skill.content_hash(),
+        }
+        committed_id = await self._db.insert_procedure_candidate(
+            draft_id=draft_id, draft_version=draft_version,
+            candidate_id=candidate_id, name=skill.name,
+            description=skill.description, content=skill.instructions,
+            source_ids=json.dumps(skill.metadata.source_trajectory_ids, ensure_ascii=False),
+            metadata=json.dumps(metadata, ensure_ascii=False), now=now,
+        )
+        return await self.get_candidate(committed_id) or {}
+
     async def get_candidate(self, candidate_id: str) -> dict[str, Any] | None:
         row = await self._db.fetchone(
             "SELECT * FROM skill_candidates WHERE id = ?", (candidate_id,)

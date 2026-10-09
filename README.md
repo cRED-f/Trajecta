@@ -89,6 +89,14 @@ Trajecta validates the conversation, attachments, selected workspace, model conf
 
 Streaming sends response text as model chunks arrive. Trajectory capture stores activity in append-only event records rather than repeatedly rewriting the entire event history. Replay-fixture/workspace snapshots are **disabled by default** for ordinary chat, reducing work before the first response.
 
+## Memory consistency and reliability (schema v21)
+
+- Explicit success/failure feedback updates stored episode outcomes and FTS/vector summaries without changing independent verification status.
+- Procedural candidates include source event references, observed sequence, and evidence-linked guidance. Candidate creation is atomic and idempotent; activation still requires manual evaluation.
+- Retrieval usage records first/last access and counts; the curator uses last access.
+- Daily background review quotas count individually timestamped, atomically claimed attempts, not lifetime job attempts. Prior undated attempts are not retroactively attributed to today.
+- A `search_past_conversations` tool is bound to the current user/workspace and exposed only when automatic memory is enabled.
+
 ## Experience-first learning
 
 Trajecta's learning path focuses on **real interactions**, not automatic candidate-versus-baseline tournaments. A separate, bounded reflection worker reviews qualifying completed trajectories and explicit feedback through Bifrost without delaying streamed chat. Reviewer-generated insights always require human review before becoming active experience context.

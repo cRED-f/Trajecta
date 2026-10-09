@@ -45,6 +45,9 @@ class AsyncSQLite:
     async def commit(self):
         self.conn.commit()
 
+    async def rollback(self):
+        self.conn.rollback()
+
     async def close(self):
         self.conn.close()
 
@@ -206,3 +209,62 @@ async def test_episode_redacts_credentials(memory):
     assert "topsecret123" not in episode["summary"]
     assert "abcdefghijklmno" not in episode["summary"]
     assert "abcdefghijklmnopqrstuvwxyz0000" not in episode["summary"]
+
+@pytest.mark.asyncio
+async def test_explicit_feedback_synchronizes_episode_fts_and_vector(memory):
+    from server.src.skills.learning.experience import ExperienceLearningService
+
+    db, vector, ep = memory
+    tid = await completed_run(db)
+    original = await ep.consolidate(tid)
+    assert original and original["outcome"] == "completed"
+    learning = ExperienceLearningService(db, TrajectoryStore(db))
+    await learning.feedback(trajectory_id=tid, rating="failure", note="Wrong source was used")
+    # Direct callers still update canonical SQLite even without an API or vector.
+    changed = await ep.get(original["id"])
+    assert changed["outcome"] == "failure"
+    assert changed["evidence"]["user_feedback"] == "failure"
+    assert not changed["outcome_verified"]
+    assert "explicit user feedback" in changed["summary"]
+    await ep.sync_feedback(tid, "failure")
+    assert "explicit user feedback" in vector.data[("episodes", original["id"])]["text"]
+    assert not await db.fetch("SELECT rowid FROM episodes_fts WHERE episodes_fts MATCH ?", ("wrong",))  # The note is not indexed.
+    assert any(item["id"] == original["id"] for item in await ep.search("failure"))
+    assert (await ep.get(original["id"]))["summary"].count("Recorded outcome:") == 1
+
+
+@pytest.mark.asyncio
+async def test_late_episode_consolidation_marks_existing_feedback(memory):
+    from server.src.skills.learning.experience import ExperienceLearningService
+    db, _, ep = memory
+    tid = await completed_run(db)
+    await ExperienceLearningService(db, TrajectoryStore(db)).feedback(
+        trajectory_id=tid, rating="success",
+    )
+    episode = await ep.consolidate(tid)
+    assert episode and episode["outcome"] == "success"
+    assert episode["evidence"]["user_feedback"] == "success"
+    assert "explicit user feedback" in episode["summary"]
+    assert not episode["outcome_verified"]
+
+
+@pytest.mark.asyncio
+async def test_episodic_search_tool_uses_fixed_scope_and_clamps_limit(memory, monkeypatch):
+    import sys
+    from types import ModuleType
+    db, _, episodic = memory
+    own = await completed_run(db, workspace="/work/A")
+    other = await completed_run(db, workspace="/work/B")
+    own_ep = await episodic.consolidate(own)
+    await episodic.consolidate(other)
+    langchain = ModuleType("langchain_core")
+    langchain.__path__ = []
+    tools = ModuleType("langchain_core.tools")
+    tools.tool = lambda _name: (lambda func: func)
+    monkeypatch.setitem(sys.modules, "langchain_core", langchain)
+    monkeypatch.setitem(sys.modules, "langchain_core.tools", tools)
+    selected = episodic.as_tool(user_id="local", scope=episodic.workspace_scope("/work/A"))
+    result = await selected("Investigate", limit=100000)
+    assert own_ep["id"] in result
+    assert "Task: Investigate" in result
+    assert len(result.split("[")) <= 3

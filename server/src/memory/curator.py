@@ -57,7 +57,7 @@ class MemoryCurator:
                 """SELECT s.name FROM skills s WHERE s.status='active'
                    AND s.created_at < ? AND NOT EXISTS (
                        SELECT 1 FROM memory_usage u WHERE u.tier='skill'
-                         AND u.item_id=s.name AND u.retrieved_at >= ?)
+                         AND u.item_id=s.name AND u.version=s.version AND u.user_id='local' AND u.scope='local' AND u.last_retrieved_at >= ?)
                    ORDER BY s.name LIMIT ?""",
                 (cutoff, cutoff, min(max(limit, 1), 200)),
             )

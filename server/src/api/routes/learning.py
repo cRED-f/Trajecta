@@ -31,6 +31,14 @@ def _learner(request: Request):
 async def feedback(body: FeedbackRequest, request: Request):
     try:
         response = await _learner(request).feedback(**body.model_dump())
+        # The feedback rating belongs to the original trajectory and episode;
+        # preserve independent-verification status and update the vector index.
+        provider = getattr(request.app.state, "memory_provider", None)
+        if provider is not None:
+            try:
+                await provider.episodic.sync_feedback(body.trajectory_id, body.rating)
+            except Exception:
+                logger.warning("episode feedback synchronization failed", exc_info=True)
         # Feedback is committed before any analytics or model work.
         # Queueing must not depend on downstream skill metrics succeeding.
         worker = getattr(request.app.state, "reflection_worker", None)

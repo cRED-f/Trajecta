@@ -256,12 +256,6 @@ class ReflectionWorker:
             return False
         now = datetime.now(UTC)
         midnight = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-        used = await self._db.fetchone(
-            """SELECT COALESCE(SUM(attempts), 0) AS used FROM reflection_jobs
-               WHERE updated_at >= ?""", (midnight,)
-        )
-        if int((used or {}).get("used") or 0) >= self._cfg.max_daily_reviews:
-            return False
         # One SQL statement claims the oldest eligible job atomically.
         # Expired leases recover here too, even without a process restart.
         await self._db.execute(
@@ -277,18 +271,13 @@ class ReflectionWorker:
             (now.isoformat(), self._cfg.max_attempts, now.isoformat()),
         )
         lease = (now + timedelta(seconds=self._cfg.lease_seconds)).isoformat()
-        rows = await self._db.execute_returning(
-            """UPDATE reflection_jobs SET status='processing', attempts=attempts+1,
-                  lease_until=?, updated_at=?
-               WHERE id = (SELECT id FROM reflection_jobs
-                  WHERE status='pending' AND attempts < ? AND next_attempt_at<=?
-                  ORDER BY created_at ASC LIMIT 1)
-               RETURNING *""",
-            (lease, now.isoformat(), self._cfg.max_attempts, now.isoformat()),
+        job = await self._db.claim_reflection_job(
+            now=now.isoformat(), midnight=midnight,
+            max_daily=self._cfg.max_daily_reviews,
+            max_attempts=self._cfg.max_attempts, lease_until=lease,
         )
-        if not rows:
+        if job is None:
             return False
-        job = rows[0]
         try:
             await self._process(job)
         except asyncio.CancelledError:
