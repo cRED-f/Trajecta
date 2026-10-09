@@ -78,12 +78,12 @@ class TrajectoryStore:
 
     async def _events_for(self, trajectory_id: str) -> list[dict[str, Any]]:
         rows = await self._db.fetch(
-            """SELECT occurred_at, event_type, source, payload
+            """SELECT seq, occurred_at, event_type, source, payload
                FROM trajectory_events WHERE trajectory_id = ?
                ORDER BY seq DESC LIMIT 5000""", (trajectory_id,)
         )
         rows.reverse()
-        return [{"at": row["occurred_at"], "type": row["event_type"],
+        return [{"seq": row["seq"], "at": row["occurred_at"], "type": row["event_type"],
                  "source": row["source"], "data": _loads(row["payload"], {})}
                 for row in rows]
 

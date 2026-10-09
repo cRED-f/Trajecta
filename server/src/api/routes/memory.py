@@ -5,7 +5,10 @@
 - PATCH /api/v1/memory/settings         Toggle automatic memory
 - GET   /api/v1/memory/embedding        Ollama embedding catalog + active model
 - PATCH /api/v1/memory/embedding        Turn embedding on/off, switch model, re-index
-- GET   /api/v1/memory/{type}           List memory entries by type (semantic/episodic/procedural)
+- GET   /api/v1/memory/episodic/search  Hybrid episode retrieval
+- GET   /api/v1/memory/episodic/{id}    Evidence-linked episode detail
+- DELETE /api/v1/memory/episodic/{id}   Delete an episode and its indexes
+- GET   /api/v1/memory/{type}           List memory entries by type
 - POST  /api/v1/memory/{type}           Upsert a semantic memory entry (key + content)
 - DELETE /api/v1/memory/{type}/{key}    Delete a semantic memory entry
 """
@@ -67,6 +70,9 @@ async def list_memory(
         raise HTTPException(status_code=503, detail="Memory store is not ready")
 
     semantic = await memory.semantic.alist(query=query, limit=limit)
+    episodic_count = await memory.sqlite.fetchone(
+        "SELECT COUNT(*) AS count FROM episodes WHERE user_id = ?", ("local",)
+    )
     procedural_names = await memory.procedural.alist()
 
     automatic_memory = await _policy(request).get_setting("automatic_memory", True)
@@ -75,6 +81,7 @@ async def list_memory(
         "settings": {"automatic_memory": bool(automatic_memory)},
         "counts": {
             "semantic": len(semantic),
+            "episodic": int((episodic_count or {}).get("count") or 0),
             "procedural": len(procedural_names),
         },
         "items": semantic,
@@ -259,6 +266,50 @@ async def get_semantic_memory(
     return {"key": key, "content": content, "tier": "semantic"}
 
 
+@router.get("/episodic/search")
+async def search_episodes(
+    request: Request,
+    query: str = Query(..., min_length=1, max_length=2000),
+    limit: int = Query(default=10, ge=1, le=100),
+    scope: str = Query(default="local", max_length=64),
+) -> list[dict[str, Any]]:
+    """Search episodic memories without exposing other users' records."""
+    memory = _provider(request)
+    if memory is None or memory.sqlite is None:
+        raise HTTPException(status_code=503, detail="Memory store is not ready")
+    return await memory.episodic.search(query, limit, user_id="local", scope=scope)
+
+
+@router.get("/episodic/{episode_id}")
+async def get_episode(
+    episode_id: str,
+    request: Request,
+    scope: str = Query(default="local", max_length=64),
+) -> dict[str, Any]:
+    memory = _provider(request)
+    if memory is None or memory.sqlite is None:
+        raise HTTPException(status_code=503, detail="Memory store is not ready")
+    episode = await memory.episodic.get(episode_id, user_id="local", scope=scope)
+    if episode is None:
+        raise HTTPException(status_code=404, detail="Episode not found")
+    return episode
+
+
+@router.delete("/episodic/{episode_id}")
+async def delete_episode(
+    episode_id: str,
+    request: Request,
+    scope: str = Query(default="local", max_length=64),
+) -> dict[str, bool]:
+    memory = _provider(request)
+    if memory is None or memory.sqlite is None:
+        raise HTTPException(status_code=503, detail="Memory store is not ready")
+    removed = await memory.episodic.delete(episode_id, user_id="local", scope=scope)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Episode not found")
+    return {"ok": True}
+
+
 @router.get("/{memory_type}")
 async def list_memories(
     memory_type: str,
@@ -275,9 +326,14 @@ async def list_memories(
 
     provider = request.app.state.memory_provider
 
-    if provider is None or provider.fts is None:
+    if provider is None or provider.sqlite is None:
         raise HTTPException(status_code=503, detail="Memory store is not ready")
 
+    if memory_type == "episodic":
+        return await provider.episodic.list(limit=limit, user_id="local")
+
+    if provider.fts is None:
+        raise HTTPException(status_code=503, detail="Memory index is not ready")
     rows = await provider.fts._db.fetch(
         """
         SELECT id, tier, namespace, key, content, created_at, updated_at

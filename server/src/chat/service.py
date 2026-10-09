@@ -41,6 +41,7 @@ from server.src.guardrails.content import (
 )
 from server.src.guardrails.policy import PermissionPolicyStore
 from server.src.memory.provider import MemoryProvider
+from server.src.memory.episodic.store import EpisodicMemory
 from server.src.tools.personal import PersonalToolProvider
 from server.src.skills.evaluation.fixtures import ReplayFixtureStore
 from server.src.skills.trajectory_store import TrajectoryStore
@@ -125,6 +126,7 @@ class ChatService:
         llm_settings: "LLMSettingsStore | None" = None,
         experiences: Any | None = None,
         permission_policy: PermissionPolicyStore | None = None,
+        episodic: EpisodicMemory | None = None,
     ) -> None:
         self._settings = settings
         self._models = BifrostModelFactory(settings)
@@ -140,6 +142,7 @@ class ChatService:
         self._llm_settings = llm_settings
         self._experiences = experiences
         self._permission_policy = permission_policy
+        self._episodic = episodic
 
         # One service covers everything; the individual collaborators stay
         # overridable so callers that only have an attributor still work.
@@ -631,6 +634,7 @@ class ChatService:
                 "user_message_id": turn.user_message.id,
                 "model": turn.runtime.model_name,
                 "attachments": [item.id for item in turn.attachments],
+                "workspace_path": turn.conversation.metadata.get(METADATA_KEY),
             },
         )
         await self._bind_skill_assignments(
@@ -776,6 +780,7 @@ class ChatService:
                     await self._complete_runtime_trajectory(
                         trajectory_id, success=False, metrics=final_run_metrics
                     )
+                    await self._consolidate_episode(trajectory_id)
                     yield event
                     return
                 yield event
@@ -818,6 +823,7 @@ class ChatService:
             await self._complete_runtime_trajectory(
                 trajectory_id, success=None, metrics=final_run_metrics,
             )
+            await self._consolidate_episode(trajectory_id)
             # No evaluation or quality scoring without independent evidence.
             yield ChatEvent(
                 type="message.completed",
@@ -837,6 +843,7 @@ class ChatService:
                 await self._complete_runtime_trajectory(
                     trajectory_id, success=False, metrics=final_run_metrics
                 )
+                await self._consolidate_episode(trajectory_id)
             except Exception:
                 pass
             raise
@@ -923,6 +930,19 @@ class ChatService:
                 data={"error": f"{type(exc).__name__}: {exc}"},
                 source="trajecta",
             )
+
+    async def _consolidate_episode(self, trajectory_id: str | None) -> None:
+        """Best effort: memory failures never invalidate a completed chat."""
+        if self._episodic is None or trajectory_id is None:
+            return
+        try:
+            if self._permission_policy is not None and not await self._permission_policy.get_setting(
+                "automatic_memory", True
+            ):
+                return
+            await self._episodic.consolidate(trajectory_id)
+        except Exception:
+            logger.warning("episodic consolidation failed", exc_info=True)
 
     async def _attribute_skill_execution(self, trajectory_id: str | None) -> None:
         """Turn the finished trajectory into skill execution metrics.
@@ -1022,6 +1042,7 @@ class ChatService:
                 "user_message_id": turn.user_message.id,
                 "model": turn.runtime.model_name,
                 "approval_resume": True,
+                "workspace_path": turn.conversation.metadata.get(METADATA_KEY),
                 # A resume is only part of the original task; never learn it
                 # as a standalone procedure.
                 "exclude_from_skill_mining": True,
@@ -1093,6 +1114,7 @@ class ChatService:
                     await self._complete_runtime_trajectory(
                         trajectory_id, success=False, metrics=final_run_metrics
                     )
+                    await self._consolidate_episode(trajectory_id)
                     yield event
                     return
                 yield event
@@ -1129,6 +1151,7 @@ class ChatService:
             await self._complete_runtime_trajectory(
                 trajectory_id, success=None, metrics=final_run_metrics,
             )
+            await self._consolidate_episode(trajectory_id)
             yield ChatEvent(
                 type="message.completed",
                 conversation_id=turn.conversation.id,
@@ -1147,6 +1170,7 @@ class ChatService:
                 await self._complete_runtime_trajectory(
                     trajectory_id, success=False, metrics=final_run_metrics
                 )
+                await self._consolidate_episode(trajectory_id)
             except Exception:
                 pass
             raise
@@ -1437,4 +1461,5 @@ def build_chat_service(
         llm_settings,
         experiences,
         permission_policy,
+        episodic=memory.episodic,
     )

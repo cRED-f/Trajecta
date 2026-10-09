@@ -7,9 +7,12 @@ FTS5 and embedded Qdrant for application records and retrieval. The Trajectory
 Store (in `server/src/skills/trajectory_store/`) is separate: it holds raw
 execution evidence for attribution, experience learning, and optional evaluation.
 
-**Current implementation limitation:** Episodic memory can search existing
-LangGraph threads but does not yet consolidate them into indexed episodes.
-Feedback-backed procedure suggestions live in `learned_experiences` and do
+**Current implementation:** Completed, tool-using task trajectories are
+consolidated into durable, evidence-linked episodes in SQLite, with an FTS5
+index and optional embedded Qdrant retrieval. This is deterministic extraction,
+not an LLM reflection or a guarantee of task success. Simple chats and interrupted
+runs are skipped. Automatic capture respects the `automatic_memory` setting.
+Feedback-backed procedure suggestions remain in `learned_experiences` and do
 not automatically become executable skills in `/skills/`.
 
 ## Memory Architecture
@@ -67,10 +70,10 @@ User Task → Deep Agent → Memory (all 4 tiers)
 
 | Backend | Purpose | Location |
 |---------|---------|----------|
-| LangGraph checkpointer (SQLite) | Short-term/episodic substrate, thread state | `.trajecta/data/langgraph.db` |
+| LangGraph checkpointer (SQLite) | Short-term conversation state and checkpoints | `.trajecta/data/langgraph.db` |
 | LangGraph long-term store (SQLite) | `/memories/` + `/skills/` (Deep Agents memory files) | `.trajecta/data/langgraph.db` |
-| SQLite (Trajecta's own) | `tasks`, `trajectories`, `skills` registry, `memories` mirror | `.trajecta/data/trajecta.db` |
-| SQLite FTS5 | Lexical search over memories (`memories_fts`, manual sync) | `.trajecta/data/trajecta.db` |
+| SQLite (Trajecta's own) | `tasks`, `trajectories`, `episodes`, `skills`, `memories` | `.trajecta/data/trajecta.db` |
+| SQLite FTS5 | `memories_fts` (manual sync), `episodes_fts` (triggers) | `.trajecta/data/trajecta.db` |
 | Qdrant (embedded) | Vector embeddings for memory + episode retrieval | `.trajecta/data/qdrant` |
 
 Two aiosqlite connections to `langgraph.db`: the checkpointer (`AsyncSqliteSaver`) keeps default isolation_level; the store (`AsyncSqliteStore`) uses `isolation_level=None` so LangGraph controls `BEGIN`/`COMMIT` explicitly (matching how LangGraph constructs it internally) — this avoids the "cannot start a transaction within a transaction" failure that `setup()` otherwise triggers.
@@ -79,7 +82,7 @@ Two aiosqlite connections to `langgraph.db`: the checkpointer (`AsyncSqliteSaver
 
 - **Semantic memory** writes durable facts to `/memories/<key>` via the store backend (source of truth for the agent), then **mirrors** each fact into FTS5 + embedded Qdrant for offline retrieval. `adelete` removes all three copies.
 - **FTS5 is kept in sync manually** (not via triggers) because FTS5 requires integer rowids while `memories.id` is TEXT. A deterministic 63-bit rowid is derived from the memory id via SHA-256. `add`/`update`/`remove` each run `memories` + `memories_fts` in a single transaction.
-- **Episodic memory** searches checkpointed threads via `langgraph-sdk` `client.threads.search(metadata={"user_id": ...})` against the local `langgraph dev` server. The SDK client is injectable/fakeable so offline verify works without a live server.
+- **Episodic memory** extracts bounded summaries from meaningful finished trajectories, stores them in the `episodes` table, maintains `episodes_fts` with SQLite triggers, and optionally indexes summaries in the Qdrant `episodes` collection. Search uses FTS5 + vector candidates and checks authorization in SQLite. Every episode references its source trajectory and remains **unverified** until independent evidence is added. Tool outputs/arguments are not copied into the index.
 - **Procedural memory** promotes verified skills to `/skills/<name>/SKILL.md` in the store (the Deep Agents `skills=` path). `alist` reads `LsResult.entries` from `backend.als()`.
 - **Qdrant** runs in embedded mode (`QdrantClient(path=...)`, in-process, no server) and is resilient: if unavailable, memory still works via FTS + SQLite (a class latch `RESILIENT_BROKEN` keeps it a no-op).
 
@@ -115,13 +118,13 @@ server/src/memory/
 python -m server.src.memory.verify
 ```
 
-Runs fully offline: temp dirs, opening the provider, exercising short-term threads (checkpointer), semantic put/get/search/delete (via real StoreBackend + FTS), ephemeral fake episodic search + tool (injected SDK client), procedural promote/list/load/search, and confirming `agent_kwargs()` assembles. All 5 checks pass without a live `langgraph dev` server or network.
+Checks opening the provider, short-term threads, semantic CRUD, trajectory-backed episodic consolidation and retrieval, procedural skills, and `agent_kwargs()` without a separate graph server.
 
 ## Key Interfaces
 
 Each memory wrapper exposes async methods:
 - `ShortTermStore`: `new_thread()`, `save_thread_state(state, thread_id)`, `get_thread_state(thread_id)`, `list_recent(limit)`
 - `SemanticMemory`: `aput(key, content)`, `aget(key)`, `adelete(key)`, `asearch(query, limit)`
-- `EpisodicMemory`: `set_user(user_id)`, `search(query, limit, user_id)`, `get_history(thread_id, limit)`, `as_tool(name)`
+- `EpisodicMemory`: `consolidate(trajectory_id)`, `list(limit, user_id, scope)`, `get(id, user_id, scope)`, `search(query, limit, user_id, scope)`, `delete(id, user_id, scope)`, `as_tool(name)`
 - `ProceduralMemory`: `apromote(name, content)`, `alist()`, `aload(name)`, `asearch(query, limit)`
 - `MemoryProvider`: `open()`/`close()` (async), `agent_kwargs()`, module-level `get_memory_provider()` / `reset_memory_provider()`

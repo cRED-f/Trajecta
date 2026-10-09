@@ -2,8 +2,8 @@
 
 Runs fully offline (no network): temp dirs, open the provider (SQLite checkpointer
 + store split on langgraph.db, FTS, embedded Qdrant), exercise short-term threads,
-semantic put/get/search via the real StoreBackend, fake episodic search via an
-injected SDK client, procedural promote/list, and confirm agent_kwargs assembles.
+semantic put/get/search via the real StoreBackend, durable episodic
+consolidation/search, procedural promote/list, and confirm agent_kwargs assembles.
 
 Usage:  python -m server.src.memory.verify
 """
@@ -17,77 +17,6 @@ from pathlib import Path
 
 from server.src.config import Settings
 from server.src.memory.provider import MemoryProvider
-
-
-# ---------------------------------------------------------------------------
-# Stub SDK client (no live `langgraph dev` server)
-# ---------------------------------------------------------------------------
-
-class FakeThreads:
-    async def search(
-        self,
-        metadata=None,
-        limit=None,
-    ):
-        if (
-            metadata
-            and metadata.get("user_id") == "alice"
-        ):
-            return [
-                {
-                    "thread_id": "abc123",
-                    "metadata": {
-                        "user_id": "alice",
-                        "title": "Billing API incident",
-                    },
-                    "created_at": "2026-01-01",
-                },
-                {
-                    "thread_id": "xyz789",
-                    "metadata": {
-                        "user_id": "alice",
-                        "title": "Vacation planning",
-                    },
-                    "created_at": "2026-01-02",
-                },
-            ]
-
-        return []
-
-    async def get_history(
-        self,
-        thread_id: str,
-        limit=None,
-    ):
-        if thread_id == "abc123":
-            return [
-                {
-                    "type": "human",
-                    "role": "user",
-                    "content": (
-                        "The billing API is returning "
-                        "duplicate invoices."
-                    ),
-                }
-            ]
-
-        if thread_id == "xyz789":
-            return [
-                {
-                    "type": "human",
-                    "role": "user",
-                    "content": (
-                        "Help me plan a vacation."
-                    ),
-                }
-            ]
-
-        return []
-
-
-class FakeClient:
-    def __init__(self) -> None:
-        self.threads = FakeThreads()
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +43,7 @@ async def _open(tmp: Path) -> MemoryProvider:
             }
         }
     )
-    provider = MemoryProvider(settings, sdk_client=FakeClient())
+    provider = MemoryProvider(settings)
     await provider.open()
     return provider
 
@@ -259,48 +188,30 @@ async def check_semantic(p: MemoryProvider) -> None:
         "+ deletion + routing"
     )
 async def check_episodic(p: MemoryProvider) -> None:
-    ep = p.episodic
+    from server.src.skills.trajectory_store import TrajectoryStore
 
-    ep.set_user("alice")
-
-    hits = await ep.search(
-        "billing",
-        limit=5,
-        user_id="alice",
+    assert p.sqlite is not None
+    store = TrajectoryStore(p.sqlite)
+    _, trajectory_id = await store.begin(
+        goal="Investigate billing API duplicate invoices",
+        thread_id="abc123",
+        user_id="local",
     )
-
-    assert hits
-    assert hits[0]["thread_id"] == "abc123"
-
-    # Query must actually influence retrieval.
-    assert not any(
-        hit["thread_id"] == "xyz789"
-        for hit in hits
+    await store.append(
+        trajectory_id, event_type="tool.result",
+        data={"name": "billing_lookup", "status": "success"},
     )
-
-    hist = await ep.get_history(
-        "abc123"
+    await store.finish(
+        trajectory_id, outcome="completed", result="Found duplicate invoice records"
     )
-
-    assert hist
-    assert "billing" in (
-        hist[0]["content"].lower()
-    )
-
-    tool = ep.as_tool()
-
-    result = await tool.ainvoke(
-        {
-            "query": "billing",
-            "limit": 3,
-        }
-    )
-
-    assert "abc123" in result
-
-    print(
-        "  ok  episodic query-sensitive search + tool"
-    )
+    episode = await p.episodic.consolidate(trajectory_id)
+    assert episode is not None
+    assert episode["source_trajectory_id"] == trajectory_id
+    assert episode["outcome_verified"] is False
+    hits = await p.episodic.search("billing invoices", limit=5)
+    assert hits and hits[0]["id"] == episode["id"]
+    assert await p.episodic.get(episode["id"]) is not None
+    print("  ok  durable episodes + hybrid retrieval + provenance")
 
 
 async def check_procedural(p: MemoryProvider) -> None:

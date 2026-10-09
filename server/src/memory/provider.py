@@ -1,7 +1,7 @@
 """MemoryProvider — assembles Deep Agents Memory tiers from Settings.memory.
 
 Owns the shared aiosqlite connection split:
-  - `langgraph.db` → checkpointer (short-term/episodic substrate) + long-term store
+  - `langgraph.db` → checkpointer (conversation state) + long-term store
   - `trajecta.db`  → Trajecta's own SQLite + FTS + embedded Qdrant
 
 `agent_kwargs()` returns the `create_deep_agent(**...)` dict: checkpointer, store,
@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 class MemoryProvider:
     """Unified access point for all Deep Agents Memory tiers."""
 
-    def __init__(self, settings: Settings | None = None, *, sdk_client: Any | None = None) -> None:
+    def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or Settings.load()
         cfg = self._settings.memory
 
@@ -74,7 +74,7 @@ class MemoryProvider:
 
         self.short_term = ShortTermStore(self)
         self.semantic = SemanticMemory(self)
-        self.episodic = EpisodicMemory(self, sdk_client=sdk_client)
+        self.episodic = EpisodicMemory(self)
         self.procedural = ProceduralMemory(self)
         self.vector = VectorStore(
             cfg.vector_store.path,
@@ -265,6 +265,27 @@ class MemoryProvider:
             )
 
         # -------------------------------------------------------------
+        # Re-index durable episodes (collection was reset above)
+        # -------------------------------------------------------------
+        episodes = await self.sqlite.fetch(
+            "SELECT id, summary, user_id, scope FROM episodes ORDER BY created_at ASC"
+        )
+        episode_count = 0
+        for start in range(0, len(episodes), 32):
+            episode_count += await asyncio.to_thread(
+                self.vector.upsert_many,
+                "episodes",
+                [
+                    {
+                        "doc_id": str(item["id"]),
+                        "text": str(item["summary"]),
+                        "payload": {"user_id": item["user_id"], "scope": item["scope"]},
+                    }
+                    for item in episodes[start : start + 32]
+                ],
+            )
+
+        # -------------------------------------------------------------
         # Re-index attachment RAG chunks
         # -------------------------------------------------------------
 
@@ -315,6 +336,7 @@ class MemoryProvider:
 
         return {
             "memories": memory_count,
+            "episodes": episode_count,
             "attachment_chunks": attachment_chunk_count,
         }
 

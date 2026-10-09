@@ -210,7 +210,62 @@ class SQLiteDatabase:
             )
             version = 16
 
+        if version < 17:
+            await self._migrate_v17()
+            await self._conn.execute(
+                "INSERT INTO schema_version(version) VALUES (17)"
+            )
+            version = 17
+
         await self._conn.commit()
+
+    async def _migrate_v17(self) -> None:
+        """Durable episodic records and transactionally maintained FTS5 index."""
+        assert self._conn is not None
+        await self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS episodes (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                id TEXT NOT NULL UNIQUE,
+                source_trajectory_id TEXT NOT NULL UNIQUE
+                    REFERENCES trajectories(id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL,
+                scope TEXT NOT NULL DEFAULT 'local',
+                thread_id TEXT,
+                goal TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                outcome_verified INTEGER NOT NULL DEFAULT 0,
+                tool_names TEXT NOT NULL DEFAULT '[]',
+                evidence TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_episodes_scope_recent
+                ON episodes(user_id, scope, created_at DESC);
+            CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
+                goal, summary, content='episodes', content_rowid='seq',
+                tokenize='porter'
+            );
+            CREATE TRIGGER IF NOT EXISTS episodes_fts_insert AFTER INSERT ON episodes
+            BEGIN
+                INSERT INTO episodes_fts(rowid, goal, summary)
+                VALUES (new.seq, new.goal, new.summary);
+            END;
+            CREATE TRIGGER IF NOT EXISTS episodes_fts_delete AFTER DELETE ON episodes
+            BEGIN
+                INSERT INTO episodes_fts(episodes_fts, rowid, goal, summary)
+                VALUES ('delete', old.seq, old.goal, old.summary);
+            END;
+            CREATE TRIGGER IF NOT EXISTS episodes_fts_update AFTER UPDATE ON episodes
+            BEGIN
+                INSERT INTO episodes_fts(episodes_fts, rowid, goal, summary)
+                VALUES ('delete', old.seq, old.goal, old.summary);
+                INSERT INTO episodes_fts(rowid, goal, summary)
+                VALUES (new.seq, new.goal, new.summary);
+            END;
+            """
+        )
 
     async def _migrate_v16(self) -> None:
         """Separate observed completion metrics from verified task quality."""

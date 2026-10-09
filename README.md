@@ -149,7 +149,7 @@ The legacy automatic mining/evaluation worker and its chat hooks have been remov
 Trajecta distinguishes four memory roles:
 
 - **Working memory:** The active task and LangGraph execution state.
-- **Episodic memory:** Previous interactions, trajectories, and task history.
+- **Episodic memory:** Durable, evidence-linked summaries extracted from meaningful finished tasks, with SQLite FTS5 and optional Qdrant retrieval. Episodes remain unverified unless supported by separate outcome evidence.
 - **Semantic memory:** Reusable factual context and preferences.
 - **Procedural memory:** Saved skills and reusable procedures.
 
@@ -159,7 +159,7 @@ The storage layers have different jobs:
 - **SQLite FTS5:** Lexical search for names, exact strings, and document content.
 - **Embedded Qdrant:** Vector-based semantic retrieval. A separate Qdrant container is available for development but is not required by the default embedded configuration.
 
-The desktop can discover supported **Ollama embedding models**, select one, and reindex memory and attachment chunks. Without a configured real embedding model, the built-in fallback does **not** provide equivalent semantic quality.
+The desktop can discover supported **Ollama embedding models**, select one, and reindex memory, episodes, and attachment chunks. Without a configured real embedding model, the built-in fallback does **not** provide equivalent semantic quality.
 
 For large text-based uploads, Trajecta extracts text, chunks it, indexes it in FTS5 and Qdrant, and exposes a conversation-scoped `search_attachments` tool. The original attachment remains the source of truth. Scanned PDFs and visual layouts require OCR or suitable visual inspection; text extraction alone is not visual verification.
 
