@@ -38,266 +38,105 @@
 
 ## Architecture
 
-**End-to-end system map** — request processing, agent execution, model routing, tool authority, long-term knowledge, and experience-driven skill improvement.
-
 ```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 16, "rankSpacing": 24, "padding": 6}, "themeVariables": {"fontSize": "12px"}}}%%
 flowchart TB
-    %% ───────────────────────────────────────────────────────────────
-    %% 01. Product surface
-    %% ───────────────────────────────────────────────────────────────
+    %% Compact groups retain the full architecture without one box per feature.
     subgraph DESKTOP["01 · DESKTOP EXPERIENCE"]
-        direction LR
-        SHELL["Tauri 2 shell<br/>React 19 · TypeScript"]
-        CHATUI["Chat workspace<br/>SSE · activity timeline · branching"]
-        KNOWUI["Knowledge Center<br/>Memories · Skills · Review"]
-        TASKUI["Scheduled Tasks<br/>One-time · interval · cron"]
-        SETTINGSUI["Settings<br/>Models · tools · permissions"]
+        UI["User"]
     end
 
-    %% ───────────────────────────────────────────────────────────────
-    %% 02. HTTP and application services
-    %% ───────────────────────────────────────────────────────────────
-    subgraph BACKEND["02 · FASTAPI APPLICATION LAYER"]
-        direction LR
-        REST["REST API · /api/v1"]
-        CHAT_SVC["Chat service<br/>Conversations · edits · regeneration"]
-        FILES["Attachment ingestion<br/>Extract · chunk · index"]
-        SCHED["Durable task scheduler<br/>Run through chat service"]
-        CONTROL["Configuration APIs<br/>Providers · MCP · policies"]
-        LEARN_API["Knowledge & review APIs"]
-        SSE["SSE stream<br/>Tokens · tools · interrupts · outcomes"]
+    subgraph BACKEND["02 · FASTAPI APPLICATION"]
+        API["REST /api/v1 · chat / branches / regeneration<br/>attachments: extract / chunk / index · scheduler<br/>provider / MCP / policy / review APIs · SSE events"]
     end
 
-    %% ───────────────────────────────────────────────────────────────
-    %% 03. Input trust boundary
-    %% ───────────────────────────────────────────────────────────────
-    subgraph PREFLIGHT["03 · REQUEST VALIDATION & INPUT GUARDRAILS"]
+    subgraph PREFLIGHT["03 · INPUT GUARDRAILS & PREFLIGHT"]
         direction LR
-        INPUT_G["Input guardrails<br/>Prompt-injection check · optional jailbreak"]
-        INPUT_DECIDE{"Configured action?"}
-        STOP["Block request<br/>if policy requires"]
-        PREP["Run preflight<br/>Model · workspace · tools · checkpoint"]
-        CONTEXT_INIT["Build bounded context<br/>Relevant memory · active skills"]
+        INPUT["Input guardrails<br/>Prompt injection · optional jailbreak"]
+        DECIDE{"Configured<br/>action?"}
+        BLOCK["Block request"]
+        PREP["Pass / warn → preflight<br/>Model · folder · tools · checkpoint"]
+        INPUT --> DECIDE
+        DECIDE -->|Block| BLOCK
+        DECIDE -->|Pass / warn| PREP
     end
 
-    %% ───────────────────────────────────────────────────────────────
-    %% 04. Stateful agent engine
-    %% ───────────────────────────────────────────────────────────────
-    subgraph ENGINE["04 · STATEFUL AGENT EXECUTION"]
-        direction LR
-        GRAPH["LangChain Deep Agents<br/>LangGraph orchestration"]
-        PLAN["Task planning<br/>Subagent delegation"]
-        THREADS["Conversation branches<br/>Edit · resend · regenerate"]
-        CHECKPOINT["LangGraph checkpoints<br/>Interrupt & resume"]
-        ASK_USER["Human questions<br/>Ask for missing information"]
-        OUTPUT["Streaming response<br/>Text · tool events · status"]
+    subgraph ENGINE["04 · STATEFUL AGENT"]
+        AGENT["Deep Agents + LangGraph<br/>Planning / subagents · edit / resend / regenerate<br/>Checkpoints · human questions · HITL resume · SSE output"]
     end
 
-    %% ───────────────────────────────────────────────────────────────
-    %% 05. Safety for LLM and tool actions
-    %% ───────────────────────────────────────────────────────────────
-    subgraph SECURITY["05 · SECURITY & HUMAN CONTROL"]
+    subgraph EXECUTION["05–07 · MODEL & TOOL EXECUTION"]
         direction LR
-        MODEL_G["Model-context guardrails<br/>Untrusted content · secrets · PII"]
-        POLICY["Deterministic permission policy"]
-        CHOICE{"ALLOW / ASK / DENY"}
-        USER_OK["Human approval<br/>Durable HITL interrupt"]
-        NO_EXEC["Deny tool action"]
-        RECEIPT["Connector verification<br/>Read-back receipts where supported"]
+        subgraph MODEL_LANE["MODEL ROUTE"]
+            direction TB
+            MODEL_G["Model-context guardrails<br/>Untrusted content · secrets · PII"]
+            BIFROST["Bifrost gateway<br/>OpenAI · Anthropic · 9Router<br/>compatible APIs · Ollama + embeddings"]
+            MODEL_G --> BIFROST
+        end
+        subgraph TOOL_LANE["TOOL ROUTE"]
+            direction TB
+            POLICY{"ALLOW / ASK / DENY"}
+            APPROVAL["ASK → human approval<br/>durable interrupt / resume"]
+            TOOLSET["Enabled local + MCP tools<br/>validated workspace · optional Docker<br/>connector read-back verification"]
+            DENY["DENY → no execution"]
+            POLICY -->|ALLOW| TOOLSET
+            POLICY -->|ASK| APPROVAL
+            APPROVAL -->|Approved| TOOLSET
+            POLICY -->|DENY| DENY
+        end
     end
 
-    %% ───────────────────────────────────────────────────────────────
-    %% 06. Model infrastructure
-    %% ───────────────────────────────────────────────────────────────
-    subgraph MODELS["06 · MODEL & INFERENCE PLANE"]
-        direction LR
-        BIFROST["Bifrost gateway<br/>Model selection · provider routing"]
-        CLOUD["OpenAI · Anthropic"]
-        ROUTER["9Router · compatible APIs"]
-        OLLAMA["Ollama<br/>Local generation · embeddings"]
-    end
-
-    %% ───────────────────────────────────────────────────────────────
-    %% 07. Extensible tools
-    %% ───────────────────────────────────────────────────────────────
-    subgraph ACTIONS["07 · TOOLS & WORKSPACE EXECUTION"]
-        direction LR
-        TOOL_REG["Tool registry<br/>Enabled capabilities"]
-        PERSONAL["Personal tools<br/>Web · documents · browser · system"]
-        MCP["MCP tool gateway<br/>Enabled servers & tools"]
-        WORKSPACE["Selected local workspace<br/>Validated folder mapping"]
-        SANDBOX["Optional Docker sandbox<br/>Isolated execution paths"]
-    end
-
-    %% ───────────────────────────────────────────────────────────────
-    %% 08. Retrieval and knowledge
-    %% ───────────────────────────────────────────────────────────────
     subgraph KNOWLEDGE["08 · KNOWLEDGE, SEARCH & RAG"]
-        direction LR
-        RETRIEVE["Unified hybrid retriever<br/>Relevance · scope · conflict checks"]
-        SEM["Semantic memory<br/>Facts · preferences"]
-        EPI["Episodic memory<br/>Past runs · verified status"]
-        PROC["Procedural records<br/>Observed workflows"]
-        SKILL["Active version-matched skills"]
-        ATTACH["Attachment RAG<br/>Conversation-scoped search"]
-        CURATOR["Manual curator<br/>Maintenance findings"]
+        RETRIEVE["Hybrid retrieval · scope / rank / conflicts<br/>Semantic facts · episodic evidence · procedural records<br/>active versioned skills · attachment RAG · manual curator"]
     end
 
-    %% ───────────────────────────────────────────────────────────────
-    %% 09. Experience-led learning
-    %% ───────────────────────────────────────────────────────────────
-    subgraph LEARNING["09 · EXPERIENCE-DRIVEN LEARNING LIFECYCLE"]
-        direction LR
-        TRAJ["Append-only trajectories<br/>Messages · tool events · outcomes"]
-        METRICS["Metrics & feedback<br/>Completion is not verified success"]
-        EXPERIENCE["Learned experiences<br/>Explicit preferences · corrections"]
-        QUEUE["Durable reflection queue<br/>Rate limits · restart recovery"]
-        REFLECT["Bounded LLM reflection<br/>Evidence-linked insights"]
-        PROPOSAL["Procedure suggestions<br/>Reviewable drafts & revisions"]
-        REVIEW["Human knowledge review<br/>Approve · reject · archive"]
-        CANDIDATE["Explicit skill candidate"]
-        EVALUATE["Manual evaluation<br/>Replay · regression checks"]
-        PROMOTE["Versioned activation<br/>Promotion · rollback"]
+    subgraph LEARNING["09 · EXPERIENCE-DRIVEN LEARNING"]
+        direction TB
+        EVENTS["Append-only trajectories · tool events · metrics<br/>Completed ≠ independently verified success"]
+        LEARN["Explicit preferences → learned context<br/>corrections · durable, budgeted reflection queue<br/>Bifrost insights → evidence-linked procedure drafts"]
+        REVIEW["Human review · approve / reject / archive"]
+        SKILLS["Explicit candidate → manual replay / regression eval<br/>versioned skill activation / rollback"]
+        EVENTS --> LEARN --> REVIEW --> SKILLS
     end
 
-    %% ───────────────────────────────────────────────────────────────
-    %% 10. Storage and durability
-    %% ───────────────────────────────────────────────────────────────
     subgraph STORAGE["10 · DURABLE LOCAL DATA"]
-        direction LR
-        SQLITE["SQLite<br/>Chats · settings · jobs · learning · audits"]
-        FTS["SQLite FTS5<br/>Exact & lexical retrieval"]
-        QDRANT["Embedded Qdrant<br/>Semantic vector search"]
-        PERSIST["LangGraph checkpoint store"]
-        ASSETS["Local attachment files<br/>Workspace documents"]
+        STORE["SQLite · FTS5 · embedded Qdrant<br/>Chats · settings · jobs · audits · checkpoints<br/>attachment files / workspace documents"]
     end
 
-    %% ───────────────────────────────────────────────────────────────
-    %% Primary user and automation paths
-    %% ───────────────────────────────────────────────────────────────
-    SHELL --- CHATUI
-    SHELL --- KNOWUI
-    SHELL --- TASKUI
-    SHELL --- SETTINGSUI
-    CHATUI --> REST
-    KNOWUI --> LEARN_API
-    TASKUI --> REST
-    SETTINGSUI --> CONTROL
-    REST --> CHAT_SVC
-    REST --> FILES
-    REST --> SCHED
-    SCHED -->|"Scheduled prompt"| CHAT_SVC
-    CHAT_SVC --> INPUT_G --> INPUT_DECIDE
-    INPUT_DECIDE -->|"Block, if configured"| STOP
-    INPUT_DECIDE -->|"Pass / warn"| PREP
-    PREP --> CONTEXT_INIT --> GRAPH
-    GRAPH --> OUTPUT --> SSE --> CHATUI
+    %% Primary request path; scheduled prompts use the same chat preflight.
+    UI --> API --> INPUT
+    PREP --> RETRIEVE --> AGENT
+    AGENT -->|Model call| MODEL_G
+    AGENT -->|Tool action| POLICY
+    AGENT -. "Events / feedback" .-> EVENTS
+    SKILLS -. "Approved versions" .-> RETRIEVE
+    LEARN -. "Explicit preferences" .-> RETRIEVE
+    RETRIEVE --> STORE
+    EVENTS --> STORE
+    API -. "Persistent records" .-> STORE
 
-    %% Stateful orchestration
-    CHAT_SVC <--> THREADS
-    GRAPH <--> CHECKPOINT
-    THREADS --> CHECKPOINT
-    GRAPH --> PLAN
-    GRAPH -->|"Clarification"| ASK_USER --> SSE
-
-    %% Model requests cross a separate inspection boundary
-    GRAPH -->|"Model request"| MODEL_G --> BIFROST
-    BIFROST --> CLOUD
-    BIFROST --> ROUTER
-    BIFROST --> OLLAMA
-    BIFROST -. "Model responses" .-> GRAPH
-    CONTROL -. "Provider settings" .-> BIFROST
-
-    %% Tools require independent authorization
-    GRAPH -->|"Tool request"| POLICY --> CHOICE
-    CHOICE -->|"ALLOW"| TOOL_REG
-    CHOICE -->|"ASK"| USER_OK
-    CHOICE -->|"DENY"| NO_EXEC
-    USER_OK -->|"Approved / resumed"| TOOL_REG
-    USER_OK -. "Interrupt event" .-> SSE
-    TOOL_REG --> PERSONAL
-    TOOL_REG --> MCP
-    TOOL_REG -. "Configured execution" .-> SANDBOX
-    PERSONAL -->|"Workspace-scoped tools"| WORKSPACE
-    MCP -. "Supported mutating actions" .-> RECEIPT
-    PERSONAL -. "Tool result" .-> GRAPH
-    MCP -. "Tool result" .-> GRAPH
-    WORKSPACE -. "Files & context" .-> GRAPH
-    PREP -->|"Validate selected folder"| WORKSPACE
-
-    %% Memory and document retrieval
-    CONTEXT_INIT --> RETRIEVE
-    RETRIEVE --> SEM
-    RETRIEVE --> EPI
-    RETRIEVE --> SKILL
-    RETRIEVE --> ATTACH
-    FILES --> ATTACH
-    FILES --> ASSETS
-    SEM --> SQLITE
-    EPI --> SQLITE
-    PROC --> SQLITE
-    SKILL --> SQLITE
-    RETRIEVE --> FTS
-    RETRIEVE --> QDRANT
-    ATTACH --> FTS
-    ATTACH --> QDRANT
-    CURATOR -. "Manual inspection" .-> SQLITE
-    OLLAMA -. "Selected embedding model" .-> QDRANT
-
-    %% Feedback, background review and manual skill promotion
-    GRAPH -. "Run events" .-> TRAJ
-    OUTPUT -. "Completion record" .-> METRICS
-    LEARN_API --> REVIEW
-    LEARN_API --> METRICS
-    TRAJ --> METRICS
-    METRICS --> EXPERIENCE
-    TRAJ --> QUEUE --> REFLECT
-    REFLECT -. "Review model through Bifrost" .-> BIFROST
-    REFLECT --> PROPOSAL
-    REFLECT -. "Lessons / corrections to review" .-> REVIEW
-    EXPERIENCE -. "Corrections needing review" .-> REVIEW
-    PROPOSAL --> REVIEW
-    REVIEW -->|"Approved draft + explicit creation"| CANDIDATE
-    CANDIDATE -. "Explicit / manual" .-> EVALUATE
-    EVALUATE -->|"Promotion gate"| PROMOTE
-    PROMOTE --> SKILL
-    EXPERIENCE -. "Active approved context" .-> RETRIEVE
-    TRAJ -. "Episode summaries when enabled" .-> EPI
-    TRAJ --> SQLITE
-    METRICS --> SQLITE
-    QUEUE --> SQLITE
-    PROPOSAL --> SQLITE
-    REVIEW --> SQLITE
-    SCHED --> SQLITE
-    CONTROL --> SQLITE
-    CHECKPOINT --> PERSIST --> SQLITE
-
-    %% Styling: amber = boundaries/control, violet = agent, teal = retrieval.
+    %% Amber highlights trust boundaries; other hues indicate responsibility.
     classDef ui fill:#172033,stroke:#94A3B8,color:#F8FAFC,stroke-width:1.3px;
     classDef api fill:#1F2937,stroke:#93C5FD,color:#F8FAFC,stroke-width:1.3px;
-    classDef critical fill:#4A2D12,stroke:#FBBF24,color:#FFFBEB,stroke-width:2px;
-    classDef agent fill:#312E81,stroke:#A5B4FC,color:#FFFFFF,stroke-width:1.5px;
+    classDef critical fill:#4A2D12,stroke:#FBBF24,color:#FFFBEB,stroke-width:1.7px;
+    classDef agent fill:#312E81,stroke:#A5B4FC,color:#FFFFFF,stroke-width:1.4px;
     classDef model fill:#164E63,stroke:#67E8F9,color:#ECFEFF,stroke-width:1.3px;
     classDef tool fill:#1E3A5F,stroke:#60A5FA,color:#EFF6FF,stroke-width:1.3px;
     classDef knowledge fill:#134E4A,stroke:#5EEAD4,color:#F0FDFA,stroke-width:1.3px;
     classDef learn fill:#3B3055,stroke:#D8B4FE,color:#FAF5FF,stroke-width:1.3px;
     classDef storage fill:#193927,stroke:#86EFAC,color:#F0FDF4,stroke-width:1.3px;
     classDef denied fill:#522222,stroke:#FCA5A5,color:#FEF2F2,stroke-width:1.3px;
-    class SHELL,CHATUI,KNOWUI,TASKUI,SETTINGSUI ui;
-    class REST,CHAT_SVC,FILES,SCHED,CONTROL,LEARN_API,SSE api;
-    class INPUT_G,INPUT_DECIDE,PREP,MODEL_G,POLICY,CHOICE,USER_OK critical;
-    class STOP,NO_EXEC denied;
-    class CONTEXT_INIT,GRAPH,PLAN,THREADS,CHECKPOINT,ASK_USER,OUTPUT agent;
-    class BIFROST,CLOUD,ROUTER,OLLAMA model;
-    class TOOL_REG,PERSONAL,MCP,WORKSPACE,SANDBOX,RECEIPT tool;
-    class RETRIEVE,SEM,EPI,PROC,SKILL,ATTACH,CURATOR knowledge;
-    class TRAJ,METRICS,EXPERIENCE,QUEUE,REFLECT,PROPOSAL,REVIEW,CANDIDATE,EVALUATE,PROMOTE learn;
-    class SQLITE,FTS,QDRANT,PERSIST,ASSETS storage;
+    class UI ui;
+    class API api;
+    class INPUT,DECIDE,PREP,MODEL_G,POLICY,APPROVAL critical;
+    class BLOCK,DENY denied;
+    class AGENT agent;
+    class BIFROST model;
+    class TOOLSET tool;
+    class RETRIEVE knowledge;
+    class EVENTS,LEARN,REVIEW,SKILLS learn;
+    class STORE storage;
 ```
-
-**Legend:** Solid arrows = primary runtime or data flow · Dashed arrows = conditional, optional, or manual relationships · Amber = security and human-control boundaries.
-
-> **Accuracy notes:** Input checks warn by default unless blocking is configured. Model-context protection applies before model calls; tool permissions are enforced separately. Reflection never activates a skill automatically; evaluation and promotion are explicit operations. Docker sandboxing is optional, and full OpenTelemetry/Grafana integration is not represented as a completed feature.
 
 ## How learning works
 
@@ -320,7 +159,7 @@ flowchart TB
 - **Backend:** Python 3.11+, FastAPI, LangChain Deep Agents, LangGraph.
 - **Models:** Bifrost gateway; cloud, Ollama, and OpenAI-compatible providers.
 - **Search & storage:** SQLite, FTS5, embedded Qdrant; configurable Ollama embeddings.
-- **Infrastructure:** Docker Compose; optional sandbox services.
+- **Infrastructure:** Docker Compose, Guardrails; optional sandbox services.
 
 ## Quick start
 
@@ -364,22 +203,6 @@ pnpm tauri dev
 - **Bifrost:** `http://127.0.0.1:8080`
 - **Browser-only UI:** `pnpm dev` (native folder selection needs Tauri)
 - **First launch:** Set up **Settings → LLM Providers**; optionally choose an Ollama embedding model.
-
-## Development
-
-```bash
-# Repository root — backend tests
-uv run python -m pytest server/tests -q
-
-# apps/desktop — frontend tests and build
-pnpm test
-pnpm build
-
-# apps/desktop — native desktop build
-pnpm tauri build
-```
-
-> Commands reflect the repository setup; passing all tests and desktop packaging across platforms is not yet guaranteed.
 
 ## Repository layout
 
