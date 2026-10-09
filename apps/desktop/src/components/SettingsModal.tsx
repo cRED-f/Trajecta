@@ -68,7 +68,7 @@ export function SettingsModal({
       <div className="settings-modal settings-modal--large">
         <SettingsHeader
           title="Settings"
-          subtitle="Configure Trajecta and connected tools."
+          subtitle="Configure Trajecta and connected tools. Reflection settings are on Memory → Learning activity."
           onClose={onClose}
         />
 

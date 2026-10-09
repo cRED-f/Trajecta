@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from typing import Literal
 
@@ -94,6 +95,38 @@ async def learning_overview(request: Request):
         "skills": await service.repository.list_registered(),
         "previous_candidates": await service.repository.list_candidates(limit=200),
     }
+
+
+class ReflectionSettingsUpdate(BaseModel):
+    enabled: bool | None = None
+    # A qualified provider/model, or null to follow the global default.
+    model: str | None = Field(default=None, max_length=200)
+    max_daily_reviews: int | None = Field(default=None, ge=0, le=1000)
+    max_output_tokens: int | None = Field(default=None, ge=100, le=2000)
+    timeout_seconds: float | None = Field(default=None, ge=5, le=180)
+
+
+@router.get("/reflection/settings")
+async def reflection_settings(request: Request):
+    worker = getattr(request.app.state, "reflection_worker", None)
+    if worker is None:
+        raise HTTPException(503, "Reflection worker is not available")
+    return await worker.get_config()
+
+
+@router.patch("/reflection/settings")
+async def update_reflection_settings(body: ReflectionSettingsUpdate, request: Request):
+    worker = getattr(request.app.state, "reflection_worker", None)
+    if worker is None:
+        raise HTTPException(503, "Reflection worker is not available")
+    patch = body.model_dump(exclude_unset=True)
+    if any(value is None for key, value in patch.items() if key != "model"):
+        raise HTTPException(422, "Review limits and enabled status cannot be null")
+    if "model" in patch:
+        model = patch["model"]
+        if model is not None and not re.fullmatch(r"[A-Za-z0-9._-]+/[A-Za-z0-9._:/-]+", model):
+            raise HTTPException(400, "Choose a provider/model, or the default")
+    return await worker.update_config(patch)
 
 
 @router.get("/reflection/status")

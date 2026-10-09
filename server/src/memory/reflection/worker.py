@@ -91,6 +91,44 @@ class ReflectionWorker:
         self._task: asyncio.Task[None] | None = None
         self._wake = asyncio.Event()
         self._stopping = False
+        self._config_loaded = False
+
+    async def load_config(self) -> None:
+        """Apply persisted review configuration before accepting any work."""
+        if self._config_loaded:
+            return
+        stored = await self._policy.get_setting("memory.reflection.settings", {})
+        if isinstance(stored, dict):
+            try:
+                self._cfg = ReflectionConfig.model_validate({**self._cfg.model_dump(), **stored})
+            except ValueError:
+                logger.warning("Invalid stored reflection configuration; using defaults")
+        self._config_loaded = True
+
+    async def get_config(self) -> dict[str, Any]:
+        await self.load_config()
+        return {
+            "enabled": self._cfg.enabled, "model": self._cfg.model,
+            "max_daily_reviews": self._cfg.max_daily_reviews,
+            "max_output_tokens": self._cfg.max_output_tokens,
+            "timeout_seconds": self._cfg.timeout_seconds,
+        }
+
+    async def update_config(self, patch: dict[str, Any]) -> dict[str, Any]:
+        await self.load_config()
+        updated = ReflectionConfig.model_validate({**self._cfg.model_dump(), **patch})
+        # Only user-exposed fields are persisted; installation defaults remain intact.
+        snapshot = {key: getattr(updated, key) for key in
+                    ("enabled", "model", "max_daily_reviews", "max_output_tokens", "timeout_seconds")}
+        await self._policy.set_setting("memory.reflection.settings", snapshot)
+        self._cfg = updated
+        if not updated.enabled:
+            await self.stop()
+        elif self._task is None:
+            await self.start()
+        else:
+            self._wake.set()
+        return snapshot
 
     async def enqueue(self, trajectory_id: str, *, reason: Literal["completion", "feedback"] = "completion") -> bool:
         """Idempotent, bounded, non-LLM queue insertion; called after persist."""
@@ -132,6 +170,7 @@ class ReflectionWorker:
         )
 
     async def start(self) -> None:
+        await self.load_config()
         if not self._cfg.enabled or self._task is not None:
             return
         self._stopping = False

@@ -94,7 +94,7 @@ async function readError(
   );
 }
 
-async function request<T>(
+export async function request<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {

@@ -65,10 +65,15 @@ class AsyncSQLite:
 class Policy:
     def __init__(self):
         self.enabled = True
+        self.settings = {}
 
     async def get_setting(self, key, default):
-        assert key == "automatic_memory"
-        return self.enabled
+        if key == "automatic_memory":
+            return self.enabled
+        return self.settings.get(key, default)
+
+    async def set_setting(self, key, value):
+        self.settings[key] = value
 
 
 class LLMConfig:
@@ -235,3 +240,29 @@ async def test_skips_trivial_and_interrupted(engine):
     await engine.store.finish(paused, outcome="interrupted")
     assert not await engine.worker.enqueue(paused)
     assert not await engine.worker.run_once()
+
+
+@pytest.mark.asyncio
+async def test_review_configuration_persists_and_respects_disable(engine):
+    config = await engine.worker.get_config()
+    assert config["enabled"] is True and config["model"] is None
+    updated = await engine.worker.update_config({
+        "model": "ollama/local-review", "enabled": False,
+        "max_daily_reviews": 3, "timeout_seconds": 10,
+    })
+    assert updated["model"] == "ollama/local-review"
+    assert not engine.worker._cfg.enabled
+    assert engine.policy.settings["memory.reflection.settings"] == updated
+    tid = await trace(engine)
+    assert not await engine.worker.enqueue(tid)
+
+    fresh = ReflectionWorker(
+        engine.db, engine.store, engine.learning, engine.episodic,
+        Settings(), engine.policy, LLMConfig(), reviewer=engine.reviewer,
+    )
+    await fresh.load_config()
+    assert (await fresh.get_config()) == updated
+    assert not await fresh.run_once()
+    with pytest.raises(ValueError):
+        await fresh.update_config({"max_daily_reviews": -1})
+    assert await fresh.get_config() == updated

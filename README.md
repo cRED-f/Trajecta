@@ -104,15 +104,18 @@ Capture message, tool activity, outcome, and feedback
          +--> User correction -----------> Needs review
          |
          +--> User-confirmed task --------> Procedure suggestion
-                                           |              |
-                                    Read-only        Risky/unknown
-                                           |              |
-                                         Active       Needs review
-                                           \              /
-                                            v            v
-                                      Relevant future context
-                                               |
-                                      Observe more outcomes
+                                           |
+                                     Needs review
+                                           |
+                                    Approved draft
+                                           |
+                               Explicit skill candidate
+                                           |
+                                  Manual evaluation
+                                           |
+                                  Versioned active skill
+                                           |
+                                      Observe outcomes
 ```
 
 ### What is recorded
@@ -147,6 +150,14 @@ skills:
 ```
 
 The legacy automatic mining/evaluation worker and its chat hooks have been removed. The separate, lightweight reflection queue uses schema migration v18, leases and bounded retry/backoff. It checks the existing `automatic_memory` switch, restores expired jobs after restarts, and enforces configurable daily call/input/output budgets. Its inspection endpoint is `GET /api/v1/learning/reflection/status`. The default reflection model follows the persisted new-chat model; it can be overridden using `memory.reflection.model`. Sensitive content follows the current model-context guardrails before Bifrost receives it. Reflection suggestions are not automatically activated, and project/user-scoped reviews are not published to the existing global learned-experience context. The old `/skills/learning/status` and `/skills/learning/run` endpoints return HTTP 410 for stale clients. An explicitly requested manual candidate evaluation or upgrade can still use model tokens and replay infrastructure. Experience records **do not** grant tool permissions or automatically rewrite an active executable skill.
+
+### Desktop memory and learning console
+
+The Memory page now separates **Semantic**, **Episodic**, **Procedural**, **Learning activity**, and **Maintenance**. Episodic and procedural lists default to general-local scope; **Choose folder** switches to the exact selected workspace. This applies the same workspace hashing as the backend. The episode view shows source-trajectory references, observed errors, verification status, explicit success/failure feedback, and deletion. The procedural view shows observed tool steps, version history, approval/rejection, reversible archiving, and guarded manual candidate creation. Approved drafts are **not** activated skills; inspect active versions in Skills.
+
+Learning activity shows the durable queue, retries/errors and structured review insights. A separate review-model selector and call-budget fields are available there: `GET/PATCH /api/v1/learning/reflection/settings` persists the worker's **enabled**, **model**, **max_daily_reviews**, **max_output_tokens**, and **timeout_seconds** settings across restarts. The optional model must be `provider/model` routed through Bifrost; `null` follows the global chat default. Disabling review stops the worker, while existing jobs remain durable. `GET /api/v1/learning/reflection/status` reports processing status. The curator remains manual-only; scans never delete memories or change executable skills.
+
+Memory console API contract tests: `server/tests/memory/test_memory_console_api.py`; browser client tests: `apps/desktop/src/lib/learning-memory-api.test.ts`. Run the full frontend build and integration tests with the dependencies from `apps/desktop/pnpm-lock.yaml` in an environment that has Node package access.
 
 ## Memory, RAG, and embeddings
 

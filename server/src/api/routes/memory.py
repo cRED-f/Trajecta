@@ -272,12 +272,15 @@ async def search_episodes(
     query: str = Query(..., min_length=1, max_length=2000),
     limit: int = Query(default=10, ge=1, le=100),
     scope: str = Query(default="local", max_length=64),
+    workspace_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Search episodic memories without exposing other users' records."""
     memory = _provider(request)
     if memory is None or memory.sqlite is None:
         raise HTTPException(status_code=503, detail="Memory store is not ready")
-    return await memory.episodic.search(query, limit, user_id="local", scope=scope)
+    from server.src.memory.episodic.store import EpisodicMemory
+    scoped = EpisodicMemory.workspace_scope(workspace_path) if workspace_path else scope
+    return await memory.episodic.search(query, limit, user_id="local", scope=scoped)
 
 
 @router.get("/episodic/{episode_id}")
@@ -285,11 +288,14 @@ async def get_episode(
     episode_id: str,
     request: Request,
     scope: str = Query(default="local", max_length=64),
+    workspace_path: str | None = None,
 ) -> dict[str, Any]:
     memory = _provider(request)
     if memory is None or memory.sqlite is None:
         raise HTTPException(status_code=503, detail="Memory store is not ready")
-    episode = await memory.episodic.get(episode_id, user_id="local", scope=scope)
+    from server.src.memory.episodic.store import EpisodicMemory
+    scoped = EpisodicMemory.workspace_scope(workspace_path) if workspace_path else scope
+    episode = await memory.episodic.get(episode_id, user_id="local", scope=scoped)
     if episode is None:
         raise HTTPException(status_code=404, detail="Episode not found")
     return episode
@@ -300,11 +306,14 @@ async def delete_episode(
     episode_id: str,
     request: Request,
     scope: str = Query(default="local", max_length=64),
+    workspace_path: str | None = None,
 ) -> dict[str, bool]:
     memory = _provider(request)
     if memory is None or memory.sqlite is None:
         raise HTTPException(status_code=503, detail="Memory store is not ready")
-    removed = await memory.episodic.delete(episode_id, user_id="local", scope=scope)
+    from server.src.memory.episodic.store import EpisodicMemory
+    scoped = EpisodicMemory.workspace_scope(workspace_path) if workspace_path else scope
+    removed = await memory.episodic.delete(episode_id, user_id="local", scope=scoped)
     if not removed:
         raise HTTPException(status_code=404, detail="Episode not found")
     return {"ok": True}
@@ -398,6 +407,7 @@ async def list_memories(
     memory_type: str,
     request: Request,
     limit: int = 50,
+    workspace_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return the saved memories of a given tier, newest first."""
 
@@ -413,7 +423,11 @@ async def list_memories(
         raise HTTPException(status_code=503, detail="Memory store is not ready")
 
     if memory_type == "episodic":
-        return await provider.episodic.list(limit=limit, user_id="local")
+        from server.src.memory.episodic.store import EpisodicMemory
+        return await provider.episodic.list(
+            limit=limit, user_id="local",
+            scope=EpisodicMemory.workspace_scope(workspace_path),
+        )
 
     if provider.fts is None:
         raise HTTPException(status_code=503, detail="Memory index is not ready")

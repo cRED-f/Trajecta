@@ -60,6 +60,7 @@ export interface MemoryCatalog {
   };
   counts: {
     semantic: number;
+    episodic: number;
     procedural: number;
   };
   items: MemoryItem[];
