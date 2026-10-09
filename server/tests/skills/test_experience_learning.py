@@ -112,7 +112,7 @@ async def test_confirmed_trajectory_creates_procedure_and_updates_version(servic
     await store.finish(tid, outcome="completed", result="Done")
     learned = await learning.feedback(trajectory_id=tid, rating="success")
     assert learned["item"]["kind"] == "procedure"
-    assert learned["item"]["status"] == "active"
+    assert learned["item"]["status"] == "needs_review"
     assert learned["item"]["version"] == 1
     assert (await store.get(tid))["outcome"] == "success"
     with pytest.raises(ValueError, match="already recorded"):

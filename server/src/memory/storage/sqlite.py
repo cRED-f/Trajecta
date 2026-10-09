@@ -226,7 +226,51 @@ class SQLiteDatabase:
             )
             version = 18
 
+        if version < 19:
+            await self._migrate_v19()
+            await self._conn.execute("INSERT INTO schema_version(version) VALUES (19)")
+            version = 19
+
         await self._conn.commit()
+
+    async def _migrate_v19(self) -> None:
+        """Reviewable procedural suggestions, evidence and draft history."""
+        assert self._conn is not None
+        await self._conn.executescript("""
+            CREATE TABLE IF NOT EXISTS procedure_drafts (
+                id TEXT PRIMARY KEY,
+                source_trajectory_id TEXT NOT NULL REFERENCES trajectories(id) ON DELETE CASCADE,
+                trigger TEXT NOT NULL CHECK(trigger IN ('feedback','reflection')),
+                parent_id TEXT REFERENCES procedure_drafts(id) ON DELETE SET NULL,
+                user_id TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK(kind IN ('new','revision')),
+                target_skill_name TEXT,
+                base_skill_version TEXT,
+                title TEXT NOT NULL,
+                steps_json TEXT NOT NULL,
+                rationale TEXT NOT NULL,
+                fingerprint TEXT NOT NULL,
+                evidence_json TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'needs_review'
+                    CHECK(status IN ('needs_review','approved','rejected','candidate_created')),
+                version INTEGER NOT NULL DEFAULT 1,
+                user_confirmed INTEGER NOT NULL DEFAULT 0,
+                candidate_id TEXT REFERENCES skill_candidates(id) ON DELETE SET NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(source_trajectory_id, trigger)
+            );
+            CREATE INDEX IF NOT EXISTS idx_procedure_drafts_status
+                ON procedure_drafts(status, updated_at DESC);
+            CREATE TABLE IF NOT EXISTS procedure_draft_revisions (
+                draft_id TEXT NOT NULL REFERENCES procedure_drafts(id) ON DELETE CASCADE,
+                version INTEGER NOT NULL,
+                snapshot_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (draft_id, version)
+            );
+        """)
 
     async def _migrate_v18(self) -> None:
         """Persist bounded reflection jobs and provenance of reviewer output."""

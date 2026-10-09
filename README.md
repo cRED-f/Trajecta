@@ -119,10 +119,13 @@ Capture message, tool activity, outcome, and feedback
 
 - **Preferences:** Explicit response-style instructions can be stored without an extra evaluation-model call.
 - **Corrections:** Potential corrections are kept for review instead of silently being treated as authoritative facts.
-- **Confirmed procedures:** Helpful feedback on a completed run can produce a short record of the task and tools observed. A record involving unknown or potentially mutating tools requires review.
+- **Confirmed procedures:** Helpful feedback can produce reviewable procedural observations, but no procedure becomes active merely because a task was completed or rated positively.
 - **Reflections:** Meaningful tool use, recoveries, corrections, or substantial tasks can be queued for an evidence-grounded, structured LLM review. This produces reviewable suggestions; it does not execute tools or automatically promote skills.
+- **Procedural refinement:** Successful feedback and evidence-backed reflections can produce structured proposals with observed tool order, event references, workspace scope, and a cautious match to an existing active skill. The worker never stores tool arguments or rewrites active skill instructions. New proposals and proposed revisions remain reviewable in SQLite (schema v19). Approval alone does not publish a skill; an explicit candidate-creation action is required and still uses the existing manual evaluation and versioning process. Draft changes preserve historical snapshots; rejected proposals cannot be silently reopened.
 - **Revisions:** Learned experiences have version history and rejected entries remain archived rather than being silently reactivated.
 - **Evidence and attribution:** The system retains links to source trajectories and captures model/tool execution metrics.
+
+Procedural proposals are available through `/api/v1/learning/procedures` (list), `/{id}`, `/{id}/history`, `/{id}/review`, and `/{id}/candidate` under that prefix. The final operation creates an **unverified candidate**, never an active skill; it requires approval and explicit positive feedback. Proposals from other workspaces are not globally published. The existing executable `/skills/` store is modified only through the established promotion/versioning path.
 
 **Completion is not success.** A normal assistant response produces a `completed` trajectory and a metrics record, but its outcome is **unverified** until separate evidence or user feedback establishes success or failure. Unverified completions do not enter verified-success statistics.
 

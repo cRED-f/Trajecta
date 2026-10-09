@@ -33,6 +33,7 @@ from server.src.memory.reflection.worker import ReflectionWorker
 from server.src.runtime_encoding import configure_utf8_runtime
 from server.src.skills.service import build_skills_service
 from server.src.skills.learning.experience import ExperienceLearningService
+from server.src.skills.learning.procedures import ProcedureRefinementService
 from server.src.tools.personal import PersonalToolProvider
 from server.src.tools.personal.scheduler import SchedulerService
 from server.src.tools.verification import ConnectorVerificationService
@@ -86,6 +87,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             personal_tools,
         )
         experiences = ExperienceLearningService(memory.sqlite, skills.trajectories)
+        procedures = ProcedureRefinementService(memory.sqlite, skills.trajectories, skills.repository)
 
         # Bifrost control plane (Settings -> management API -> config DB)
         # and the persisted global default for new conversations.
@@ -100,6 +102,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             memory.sqlite, skills.trajectories, experiences, memory.episodic,
             settings, permission_policy, llm_settings,
             guardrails=content_guardrails,
+            procedures=procedures,
         )
 
         chat = build_chat_service(
@@ -158,6 +161,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.mcp_tools = mcp_tools
         app.state.chat_service = chat
         app.state.skills_service = skills
+        app.state.procedure_refinement = procedures
         app.state.experience_learning = experiences
         app.state.reflection_worker = reflection
         app.state.scheduler = scheduler

@@ -75,6 +75,7 @@ class ReflectionWorker:
         *,
         reviewer: ReviewCallable | None = None,
         guardrails: Any | None = None,
+        procedures: Any | None = None,
     ) -> None:
         self._db = db
         self._trajectories = trajectories
@@ -86,6 +87,7 @@ class ReflectionWorker:
         self._llm_settings = llm_settings
         self._reviewer = reviewer
         self._guardrails = guardrails
+        self._procedures = procedures
         self._task: asyncio.Task[None] | None = None
         self._wake = asyncio.Event()
         self._stopping = False
@@ -362,7 +364,14 @@ class ReflectionWorker:
                 )
                 if item:
                     persisted.append(str(item["id"]))
+        draft = None
+        if self._procedures is not None and accepted:
+            draft = await self._procedures.propose(
+                str(job["trajectory_id"]), trigger="reflection",
+                insights=[insight.model_dump() for insight in accepted],
+            )
         await self._mark(job, "completed", {
+            "procedure_draft_id": draft["id"] if draft else None,
             "summary": summary,
             "insights": [i.model_dump() for i in accepted],
             "experience_ids": persisted,

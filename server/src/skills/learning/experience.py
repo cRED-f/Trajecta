@@ -195,7 +195,7 @@ class ExperienceLearningService:
                        f"Previously used tools: {', '.join(names[:12])}.\n"
                        "Check current conditions and tool permissions before reuse.")
             item = await self._upsert(
-                kind="procedure", status="needs_review" if risky else "active",
+                kind="procedure", status="needs_review",
                 content=content, confidence=0.85 if not risky else 0.55,
                 evidence={"source": "confirmed_task", "tools": names[:12], "note": note},
                 source_trajectory_id=trajectory_id,
