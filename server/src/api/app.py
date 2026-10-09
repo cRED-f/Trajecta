@@ -30,6 +30,8 @@ from server.src.llm_gateway.bifrost_admin import BifrostAdminClient
 from server.src.llm_gateway.settings import LLMSettingsStore
 from server.src.memory.provider import MemoryProvider, get_memory_provider
 from server.src.memory.reflection.worker import ReflectionWorker
+from server.src.memory.retrieval import UnifiedMemoryRetriever
+from server.src.memory.curator import MemoryCurator
 from server.src.runtime_encoding import configure_utf8_runtime
 from server.src.skills.service import build_skills_service
 from server.src.skills.learning.experience import ExperienceLearningService
@@ -88,6 +90,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         experiences = ExperienceLearningService(memory.sqlite, skills.trajectories)
         procedures = ProcedureRefinementService(memory.sqlite, skills.trajectories, skills.repository)
+        retrieval = UnifiedMemoryRetriever(memory)
+        curator = MemoryCurator(memory.sqlite)
 
         # Bifrost control plane (Settings -> management API -> config DB)
         # and the persisted global default for new conversations.
@@ -119,6 +123,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             experiences=experiences,
             llm_settings=llm_settings,
             reflection=reflection,
+            memory_retriever=retrieval,
         )
 
         async def run_scheduled_job(job: dict) -> str:
@@ -164,6 +169,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.procedure_refinement = procedures
         app.state.experience_learning = experiences
         app.state.reflection_worker = reflection
+        app.state.memory_retriever = retrieval
+        app.state.memory_curator = curator
         app.state.scheduler = scheduler
         app.state.model_catalog = ModelCatalogService(
             settings,

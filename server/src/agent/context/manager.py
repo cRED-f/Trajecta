@@ -1,14 +1,28 @@
-"""Context manager implementation.
+"""Context assembly for an agent run, backed by unified memory retrieval.
 
-Retrieves relevant short-term, semantic, and episodic memories plus procedural
-skills, and assembles them into the agent's context window.
+No autonomous evaluation or skill promotion occurs during context assembly.
 """
-
 from __future__ import annotations
+
+from typing import Any
+
+from server.src.memory.retrieval import UnifiedMemoryRetriever
 
 
 class ContextManager:
-    """Builds the context for each agent run."""
+    def __init__(self, memory: Any) -> None:
+        self.retriever = UnifiedMemoryRetriever(memory)
 
-    # TODO: retrieve relevant memories + skills based on task, combine into prompt context
-    pass
+    async def retrieve(self, task: str, *, workspace_path: str | None = None,
+                       user_id: str = "local", limit: int = 8) -> list[dict[str, Any]]:
+        return await self.retriever.search(
+            task, workspace_path=workspace_path, user_id=user_id, limit=limit,
+        )
+
+    async def build(self, task: str, *, workspace_path: str | None = None,
+                    user_id: str = "local", thread_id: str | None = None,
+                    max_chars: int = 2500, limit: int = 8) -> str:
+        return await self.retriever.context(
+            task, workspace_path=workspace_path, user_id=user_id,
+            thread_id=thread_id, max_chars=max_chars, limit=limit,
+        )

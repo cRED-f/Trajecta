@@ -1393,6 +1393,7 @@ def build_chat_service(
     llm_settings: "LLMSettingsStore | None" = None,
     experiences: Any | None = None,
     reflection: Any | None = None,
+    memory_retriever: Any | None = None,
 ) -> ChatService:
     if memory.sqlite is None:
         raise RuntimeError("MemoryProvider must be opened before ChatService")
@@ -1451,6 +1452,7 @@ def build_chat_service(
         content_guardrails=content_guardrails,
         skill_experiments=skill_experiments,
         experiences=experiences,
+        memory_retriever=memory_retriever,
     )
     runs = ChatRunRegistry()
     trajectories = trajectories or TrajectoryStore(memory.sqlite)

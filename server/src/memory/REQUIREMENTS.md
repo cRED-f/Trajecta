@@ -140,3 +140,18 @@ Suggested experiences remain `needs_review` and never grant tool permissions,
 activate executable skills, or trigger replay evaluation. Workspace-scoped and
 non-local user insights stay in the audit job record until scoped learning is
 implemented. `GET /api/v1/learning/reflection/status` reports queue activity.
+
+## Unified retrieval (schema v20)
+
+- `memory/retrieval.py` fuses global semantic FTS/Qdrant results, workspace-scoped
+  episodes, approved global experience notes and active, registry-version-matched
+  skill descriptors. Qdrant IDs are re-checked in SQLite and never grant access.
+- `agent/context/manager.py` wraps the unified reader; the chat preflight
+  supplies a fixed char/item/time budget and respects `automatic_memory`.
+- `memory_usage` counts context retrieval, **not successful tool use**.
+- `memory_conflicts` records conservative, explicit contradictory instructions;
+  unresolved pairs are suppressed until a user resolves them.
+- `memory/curator.py` records review findings about stale drafts and unused
+  skills. It cannot auto-promote or deactivate skills. Explicit archive/restore
+  applies only to pending procedure drafts via the `archived_at` flag.
+- This patch adds no automatic scheduled curation or unsafe LLM consolidation.

@@ -310,6 +310,89 @@ async def delete_episode(
     return {"ok": True}
 
 
+class ConflictResolution(BaseModel):
+    preferred_ref: str = Field(min_length=3, max_length=200)
+
+
+@router.get("/unified/search")
+async def unified_search(request: Request, query: str = Query(min_length=1, max_length=1000),
+                         workspace_path: str | None = None, limit: int = Query(8, ge=1, le=16)):
+    """Inspection only; does not record retrieval as actual agent usage."""
+    retriever = getattr(request.app.state, "memory_retriever", None)
+    if retriever is None:
+        raise HTTPException(503, "Unified retrieval is unavailable")
+    return {"items": await retriever.search(query, workspace_path=workspace_path, limit=limit)}
+
+
+@router.get("/unified/conflicts")
+async def memory_conflicts(request: Request, status: str = Query("open", pattern="^(open|resolved)$"),
+                           limit: int = Query(100, ge=1, le=200)):
+    db = _provider(request).sqlite
+    return {"items": await db.fetch(
+        "SELECT * FROM memory_conflicts WHERE status=? ORDER BY created_at DESC LIMIT ?",
+        (status, limit))}
+
+
+@router.post("/unified/conflicts/{conflict_id}/resolve")
+async def resolve_memory_conflict(conflict_id: int, body: ConflictResolution, request: Request):
+    db = _provider(request).sqlite
+    conflict = await db.fetchone("SELECT * FROM memory_conflicts WHERE id=?", (conflict_id,))
+    if not conflict:
+        raise HTTPException(404, "Conflict not found")
+    if body.preferred_ref not in {conflict["left_ref"], conflict["right_ref"]}:
+        raise HTTPException(400, "Choose one of the conflicting source references")
+    from datetime import UTC, datetime
+    await db.execute(
+        """UPDATE memory_conflicts SET status='resolved', preferred_ref=?, resolved_at=?
+           WHERE id=?""", (body.preferred_ref, datetime.now(UTC).isoformat(), conflict_id))
+    return {"ok": True}
+
+
+@router.get("/curator/findings")
+async def curator_findings(request: Request, workspace_path: str | None = None,
+                           limit: int = Query(100, ge=1, le=200)):
+    from server.src.memory.episodic.store import EpisodicMemory
+    scope = EpisodicMemory.workspace_scope(workspace_path)
+    return {"items": await request.app.state.memory_curator.list(scope=scope, limit=limit)}
+
+
+@router.post("/curator/scan")
+async def curator_scan(request: Request, workspace_path: str | None = None,
+                       stale_days: int = Query(30, ge=7, le=365)):
+    from server.src.memory.episodic.store import EpisodicMemory
+    scope = EpisodicMemory.workspace_scope(workspace_path)
+    return {"items": await request.app.state.memory_curator.scan(
+        scope=scope, stale_days=stale_days)}
+
+
+@router.post("/curator/findings/{finding_id}/dismiss")
+async def curator_dismiss(finding_id: int, request: Request,
+                          workspace_path: str | None = None):
+    from server.src.memory.episodic.store import EpisodicMemory
+    if not await request.app.state.memory_curator.dismiss(
+        finding_id, scope=EpisodicMemory.workspace_scope(workspace_path)):
+        raise HTTPException(404, "Open finding not found")
+    return {"ok": True}
+
+
+@router.post("/curator/procedures/{draft_id}/archive")
+async def curator_archive(draft_id: str, request: Request, workspace_path: str | None = None):
+    from server.src.memory.episodic.store import EpisodicMemory
+    if not await request.app.state.memory_curator.archive_proposal(
+        draft_id, scope=EpisodicMemory.workspace_scope(workspace_path)):
+        raise HTTPException(409, "Only pending proposals can be archived")
+    return {"ok": True}
+
+
+@router.post("/curator/procedures/{draft_id}/restore")
+async def curator_restore(draft_id: str, request: Request, workspace_path: str | None = None):
+    from server.src.memory.episodic.store import EpisodicMemory
+    if not await request.app.state.memory_curator.restore_proposal(
+        draft_id, scope=EpisodicMemory.workspace_scope(workspace_path)):
+        raise HTTPException(409, "Archived proposal not found")
+    return {"ok": True}
+
+
 @router.get("/{memory_type}")
 async def list_memories(
     memory_type: str,

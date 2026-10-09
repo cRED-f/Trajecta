@@ -39,6 +39,11 @@ llm:
       model: ""
 
 memory:
+  retrieval:
+    enabled: true
+    max_items: 8
+    max_chars: 2500
+    timeout_seconds: 2.0
   reflection:
     enabled: true
     model: null # Use the persisted new-chat model through Bifrost

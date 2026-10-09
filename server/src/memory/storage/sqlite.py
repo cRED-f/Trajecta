@@ -231,7 +231,58 @@ class SQLiteDatabase:
             await self._conn.execute("INSERT INTO schema_version(version) VALUES (19)")
             version = 19
 
+        if version < 20:
+            await self._migrate_v20()
+            await self._conn.execute("INSERT INTO schema_version(version) VALUES (20)")
+            version = 20
+
         await self._conn.commit()
+
+    async def _migrate_v20(self) -> None:
+        """Non-destructive retrieval attribution, conflicts, and curator findings."""
+        assert self._conn is not None
+        await self._conn.executescript("""
+            CREATE TABLE IF NOT EXISTS memory_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tier TEXT NOT NULL, item_id TEXT NOT NULL,
+                version TEXT NOT NULL DEFAULT '',
+                user_id TEXT NOT NULL, scope TEXT NOT NULL,
+                thread_id TEXT NOT NULL, retrieved_at TEXT NOT NULL,
+                UNIQUE(tier, item_id, version, thread_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_usage_last
+                ON memory_usage(tier, item_id, retrieved_at DESC);
+            CREATE TABLE IF NOT EXISTS memory_conflicts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                left_ref TEXT NOT NULL, right_ref TEXT NOT NULL,
+                predicate TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open'
+                    CHECK(status IN ('open', 'resolved')),
+                preferred_ref TEXT,
+                created_at TEXT NOT NULL, resolved_at TEXT,
+                UNIQUE(left_ref, right_ref)
+            );
+            CREATE TABLE IF NOT EXISTS memory_curator_findings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                finding_type TEXT NOT NULL,
+                item_type TEXT NOT NULL, item_id TEXT NOT NULL,
+                user_id TEXT NOT NULL DEFAULT 'local',
+                scope TEXT NOT NULL DEFAULT 'local',
+                summary TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open'
+                    CHECK(status IN ('open', 'dismissed', 'resolved')),
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                UNIQUE(finding_type, item_type, item_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_curator_open
+                ON memory_curator_findings(user_id, scope, status);
+        """)
+        # Keep v19's status CHECK unchanged. Archival is a separate flag so
+        # older procedure review code cannot accidentally publish archives.
+        cursor = await self._conn.execute("PRAGMA table_info(procedure_drafts)")
+        columns = {row[1] for row in await cursor.fetchall()}
+        if "archived_at" not in columns:
+            await self._conn.execute("ALTER TABLE procedure_drafts ADD COLUMN archived_at TEXT")
 
     async def _migrate_v19(self) -> None:
         """Reviewable procedural suggestions, evidence and draft history."""

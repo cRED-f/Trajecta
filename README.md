@@ -157,6 +157,34 @@ Trajecta distinguishes four memory roles:
 - **Semantic memory:** Reusable factual context and preferences.
 - **Procedural memory:** Saved skills and reusable procedures.
 
+### Unified retrieval and safe maintenance
+
+Before a run, a bounded unified retriever can recall relevant **global semantic** facts,
+**same-workspace episodic** evidence, **approved local experiences**, and **active
+version-matched skills**. It combines FTS5 and optional Qdrant candidates but
+validates identity, status, and scope against canonical SQLite records. The
+retrieval budget defaults to 8 entries, 2,500 characters, and 2 seconds; the
+`automatic_memory` setting also disables this injection. An unverified episode
+is labeled as an observation, not proof of successful execution. Procedural
+drafts, rejected learnings, and staged skill versions are never injected.
+
+Conflicting explicit rules (for example, the same predicate with opposite
+"always"/"never" guidance) are withheld until reviewed. This conservative
+heuristic does not claim to detect all semantic contradictions. Retrieval usage
+is recorded separately from task outcomes: **retrieval is not evidence of skill
+success**.
+
+SQLite migration v20 stores retrieval attribution, rule conflicts, and curator
+findings. The curator can flag old pending procedure drafts and active skills
+with no recent recorded retrieval. Scanning **never** deactivates a skill or
+auto-deletes a memory. Archived pending proposals can be restored and cannot
+be reviewed or promoted while archived. The curator is available through
+`/api/v1/memory/curator/*`; hybrid inspection through
+`/api/v1/memory/unified/search`; conflicts and resolutions through
+`/api/v1/memory/unified/conflicts`. Automatic curation is deliberately not
+scheduled in this stage.
+
+
 The storage layers have different jobs:
 
 - **SQLite:** Durable application records, chat history, settings, skill metadata, feedback, jobs, audit trails, and schema migrations.

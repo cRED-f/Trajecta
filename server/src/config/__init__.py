@@ -333,6 +333,13 @@ class ReflectionConfig(BaseModel):
     lease_seconds: int = Field(default=180, ge=60, le=600)
 
 
+class MemoryRetrievalConfig(BaseModel):
+    enabled: bool = True
+    max_items: int = Field(default=8, ge=1, le=16)
+    max_chars: int = Field(default=2500, ge=500, le=8000)
+    timeout_seconds: float = Field(default=2.0, ge=0.2, le=15.0)
+
+
 class MemoryConfig(BaseModel):
     db_path: str = ".trajecta/data/trajecta.db"         # our task/skill/config store + FTS
     langgraph_db_path: str = ".trajecta/data/langgraph.db"  # LangGraph checkpointer + store (one file)
@@ -341,6 +348,7 @@ class MemoryConfig(BaseModel):
     skills_path: str = "/skills/"
     vector_store: VectorStoreConfig = VectorStoreConfig()
     reflection: ReflectionConfig = ReflectionConfig()
+    retrieval: MemoryRetrievalConfig = MemoryRetrievalConfig()
 
 
 class LlmProviderConfig(BaseModel):

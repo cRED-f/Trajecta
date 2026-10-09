@@ -194,7 +194,8 @@ class ProcedureRefinementService:
             "SELECT * FROM procedure_drafts WHERE source_trajectory_id=? AND trigger=?",
             (trajectory_id, trigger))
         if existing:
-            if existing["fingerprint"] == fingerprint or existing["status"] != "needs_review":
+            if (existing["fingerprint"] == fingerprint or existing["status"] != "needs_review"
+                    or existing.get("archived_at") is not None):
                 return _decode(existing)
             await self._db.execute(
                 """INSERT INTO procedure_draft_revisions
@@ -227,18 +228,23 @@ class ProcedureRefinementService:
 
     async def list(self, *, status: str | None = None, limit: int = 100,
                    user_id: str = "local", scope: str = "local") -> list[dict[str, Any]]:
-        if status is not None and status not in {"needs_review", "approved", "rejected", "candidate_created"}:
+        if status is not None and status not in {"needs_review", "approved", "rejected", "candidate_created", "archived"}:
             raise ValueError("invalid procedure status")
         limit = max(1, min(limit, 200))
-        if status:
+        if status == "archived":
             rows = await self._db.fetch(
-                """SELECT * FROM procedure_drafts WHERE user_id=? AND scope=? AND status=?
+                """SELECT * FROM procedure_drafts WHERE user_id=? AND scope=?
+                   AND archived_at IS NOT NULL ORDER BY updated_at DESC LIMIT ?""",
+                (user_id, scope, limit))
+        elif status:
+            rows = await self._db.fetch(
+                """SELECT * FROM procedure_drafts WHERE user_id=? AND scope=? AND status=? AND archived_at IS NULL
                    ORDER BY updated_at DESC LIMIT ?""",
                 (user_id, scope, status, limit))
         else:
             rows = await self._db.fetch(
                 """SELECT * FROM procedure_drafts WHERE user_id=? AND scope=?
-                   ORDER BY updated_at DESC LIMIT ?""", (user_id, scope, limit))
+                   AND archived_at IS NULL ORDER BY updated_at DESC LIMIT ?""", (user_id, scope, limit))
         return [_decode(row) for row in rows]
 
     async def history(self, draft_id: str) -> list[dict[str, Any]]:
@@ -253,7 +259,7 @@ class ProcedureRefinementService:
             raise ValueError("decision must be approve or reject")
         cur = await self._db.execute(
             """UPDATE procedure_drafts SET status=?, updated_at=?
-               WHERE id=? AND status='needs_review'""",
+               WHERE id=? AND status='needs_review' AND archived_at IS NULL""",
             ("approved" if decision == "approve" else "rejected", _now(), draft_id))
         if not cur.rowcount:
             raise ValueError("procedure is missing or no longer needs review")
@@ -270,7 +276,7 @@ class ProcedureRefinementService:
         )
 
         draft = await self.get(draft_id)
-        if not draft or draft["status"] != "approved":
+        if not draft or draft["status"] != "approved" or draft.get("archived_at") is not None:
             raise ValueError("approve the proposal before creating a candidate")
         if draft["user_id"] != "local" or draft["scope"] != "local":
             raise ValueError("scoped proposals cannot be turned into global skills")

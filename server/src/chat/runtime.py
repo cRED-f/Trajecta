@@ -18,7 +18,7 @@ from server.src.chat.mcp import MCPToolProvider
 from server.src.chat.model import BifrostModelFactory
 from server.src.chat.models import Attachment, ChatEvent, Conversation
 from server.src.chat.rag import AttachmentRAGIndex
-from server.src.chat.workspace import conversation_workspace
+from server.src.chat.workspace import conversation_workspace, METADATA_KEY
 from server.src.config import Settings
 from server.src.guardrails.content import (
     ContentGuardrailService,
@@ -252,6 +252,7 @@ class DeepAgentRuntime:
         content_guardrails: ContentGuardrailService | None = None,
         skill_experiments: "SkillExperimentService | None" = None,
         experiences: Any | None = None,
+        memory_retriever: Any | None = None,
     ) -> None:
         self._settings = settings
         self._memory = memory
@@ -263,6 +264,7 @@ class DeepAgentRuntime:
         self._content_guardrails = content_guardrails
         self._skill_experiments = skill_experiments
         self._experiences = experiences
+        self._memory_retriever = memory_retriever
         self._models = BifrostModelFactory(settings)
 
     async def prepare(
@@ -358,10 +360,26 @@ class DeepAgentRuntime:
                 "No content guardrail service wired into the runtime"
             )
 
-        experience_prompt = (
-            await self._experiences.context(task_text)
-            if self._experiences is not None and automatic_memory else ""
-        )
+        experience_prompt = ""
+        retrieval_cfg = self._settings.memory.retrieval
+        if automatic_memory and retrieval_cfg.enabled and self._memory_retriever is not None:
+            try:
+                experience_prompt = await asyncio.wait_for(
+                    self._memory_retriever.context(
+                        task_text,
+                        workspace_path=(conversation.metadata or {}).get(METADATA_KEY),
+                        user_id="local",
+                        thread_id=thread_id,
+                        max_chars=retrieval_cfg.max_chars,
+                        limit=retrieval_cfg.max_items,
+                    ), timeout=retrieval_cfg.timeout_seconds,
+                )
+            except Exception:
+                # Memory search is advisory; it must never break a chat turn.
+                logger.warning("Unified memory retrieval unavailable", exc_info=True)
+        elif self._memory_retriever is None and self._experiences is not None and automatic_memory:
+            # Compatibility for tests / standalone runtime construction.
+            experience_prompt = await self._experiences.context(task_text)
         system_prompt = (
             SYSTEM_PROMPT
             + f"\nThis conversation's workspace folder is {workspace_root}. "
