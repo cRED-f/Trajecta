@@ -1,303 +1,358 @@
-# Trajecta
+<p align="center">
+  <img src="apps/desktop/src-tauri/icons/icon.png" alt="Trajecta app icon" width="112" />
+</p>
 
-**A local-first, chat-first desktop agent that learns from real experience.**
+<h1 align="center">Trajecta</h1>
 
-Trajecta combines **LangChain Deep Agents and LangGraph** with persistent memory, local and hosted LLMs, practical tools, and human-controlled permissions. It is built to become more useful over time by remembering explicit preferences, incorporating feedback, and reusing evidence-linked procedures—without running an expensive benchmark every time a conversation ends.
+<p align="center"><strong>A desktop AI agent that learns from experience.</strong></p>
 
-> **Project status:** Active development. The repository implements the core desktop/chat, tools, memory, and experience-learning paths described below. Some advanced evaluation infrastructure remains accessible through backend APIs; full OpenTelemetry/Grafana observability and release-grade end-to-end validation are still in progress.
+<p align="center">
+  Chat · Tools · Knowledge · Automation · Human control
+</p>
 
-## At a glance
+---
 
-- **Desktop-first:** Tauri 2, React 19, TypeScript, streaming chat, conversations, and model selection.
-- **Agentic execution:** Deep Agents + LangGraph with tools, subagents, checkpoints, cancellation, and durable human-in-the-loop resume.
-- **Your workspace:** Select a different local project folder for each conversation.
-- **Experience-first learning:** Learn explicit preferences, capture corrections, and reuse user-confirmed procedures; review uncertain or sensitive discoveries.
-- **Persistent retrieval:** SQLite + FTS5 for structured/exact search, and embedded Qdrant for semantic search.
-- **Model choice:** Bifrost connects the agent to OpenAI, Anthropic, Ollama, 9Router, and other OpenAI-compatible providers.
-- **Controlled tool use:** MCP tools, local utilities, optional Docker sandboxing, content guardrails, and deterministic `allow / ask / deny` permissions.
-- **Personal automation:** One-time and recurring scheduled agent tasks, with approvals retained for sensitive actions.
+## Overview
 
-## Why Trajecta exists
+**Trajecta** combines a desktop workspace, agentic execution, and persistent learning.
 
-A conventional agent can answer questions and operate tools. Trajecta also maintains the context needed to make the **next** interaction more effective: user preferences, past attempts, corrections, task outcomes, and reusable procedures.
+- **Act:** Run multi-step tasks using local tools, MCP integrations, and selected AI models.
+- **Remember:** Retrieve relevant preferences, facts, previous tasks, and documents.
+- **Improve:** Capture corrections and propose reusable procedures from real experience.
+- **Stay in control:** Approve sensitive actions and skill changes before they take effect.
 
-The design separates three responsibilities:
+> **Status:** Active development.
 
-1. **Execution:** Solve the current task quickly using the chosen model, tools, memory, and workspace.
-2. **Learning:** Retain useful evidence from actual interactions and incorporate user corrections without automatically re-running entire tasks.
-3. **Control:** Keep model decisions inside deterministic tool permissions, review workflows, and independent action verification.
+## Features
 
-Learning is not the same as proving that a model has improved on a benchmark. Trajecta treats routine experience capture as a low-cost operation, and reserves replay-based evaluation for explicit diagnostics or higher-risk skill changes.
+- **Desktop chat:** Streaming, conversation history, edit/resend/regenerate, branching, cancellation.
+- **Agent runtime:** LangChain Deep Agents, LangGraph checkpoints, subagents, resumable approvals.
+- **Knowledge Center:** Overview, Memories, Skills, and Review in one place.
+- **Learning:** Preferences, corrections, evidence-linked procedures, bounded reflection.
+- **Memory & RAG:** Semantic, episodic, procedural, attachment search, hybrid retrieval.
+- **Local workspaces:** Select and validate a folder for each conversation.
+- **Models:** Bifrost routing for OpenAI, Anthropic, Ollama, 9Router, and compatible APIs.
+- **Tools:** Web, documents, files, local utilities, MCP, optional Docker sandbox.
+- **Safety:** Context guardrails, `allow / ask / deny`, human questions and approvals.
+- **Scheduling:** One-time, recurring, and cron tasks that retain agent permissions.
 
-## What you can do
+## Architecture
 
-### Chat and work in local folders
-
-The desktop client supports:
-
-- Persistent conversations and **SSE token streaming**.
-- Tool and subagent activity with expandable inputs/results.
-- An optional reasoning/activity view for **reasoning text actually provided by the selected model or gateway**. Trajecta does not reconstruct private model reasoning if the provider does not expose it.
-- Message editing, resend, regeneration, and switching between LangGraph-backed conversation branches.
-- File uploads, extracted-text companions, previews, and large-document retrieval.
-- Per-conversation provider/model selection, stopping an active run, and resuming interrupted operations.
-- A **folder selector** that binds `/workspace/` to the selected host directory for that conversation. The backend validates the directory and does not silently substitute a different folder if a selected path becomes inaccessible.
-- **Human questions** (for missing information or choices) distinguished from **permission requests** (for sensitive tool actions).
-
-### Use practical tools
-
-Alongside Deep Agents' file and task primitives, Trajecta contains personal-agent tools for:
-
-- Web search, HTTP extraction, RSS, and browser automation.
-- Document extraction/search, spreadsheets, images/OCR, archives, and media conversion.
-- Sessions and memory, local databases, processes, clipboard/system utilities, and notifications.
-- Scheduled jobs and optional host-computer control.
-- External integrations discovered through the **Model Context Protocol (MCP)**, with user-controlled server/tool availability.
-- Isolated command or code execution where the configured Docker backend is used.
-
-Tool availability depends on local dependencies, platform, configuration, and permission policy. Host-computer control is opt-in; **not every operation is automatically sandboxed**.
-
-Web-source failures such as HTTP 403, timeouts, or connection errors are surfaced to the agent as recoverable errors for supported web tools. The runtime directs it to search for independent sources rather than repeatedly retrying an inaccessible URL or inventing its contents.
-
-## How the system fits together
+**End-to-end system map** — request processing, agent execution, model routing, tool authority, long-term knowledge, and experience-driven skill improvement.
 
 ```mermaid
-flowchart TD
-    UI["Tauri 2 + React Desktop"] -->|"HTTP / SSE"| API["FastAPI"]
-    API --> CHAT["Chat + Conversation State"]
-    API --> SETTINGS["Providers, Tools, Permissions"]
-    API --> LEARN["Experience + Skill Services"]
+flowchart TB
+    %% ───────────────────────────────────────────────────────────────
+    %% 01. Product surface
+    %% ───────────────────────────────────────────────────────────────
+    subgraph DESKTOP["01 · DESKTOP EXPERIENCE"]
+        direction LR
+        SHELL["Tauri 2 shell<br/>React 19 · TypeScript"]
+        CHATUI["Chat workspace<br/>SSE · activity timeline · branching"]
+        KNOWUI["Knowledge Center<br/>Memories · Skills · Review"]
+        TASKUI["Scheduled Tasks<br/>One-time · interval · cron"]
+        SETTINGSUI["Settings<br/>Models · tools · permissions"]
+    end
 
-    CHAT --> AGENT["Deep Agents / LangGraph"]
-    AGENT --> GATEWAY["Bifrost LLM Gateway"]
-    GATEWAY --> MODELS["Cloud / Ollama / Compatible APIs"]
-    AGENT --> ACTIONS["Local Tools / MCP / Sandbox"]
-    AGENT --> POLICY["Guardrails + Deterministic Permissions"]
-    AGENT --> MEM["Memory + Document Retrieval"]
-    MEM --> SQLITE["SQLite + FTS5"]
-    MEM --> VECTOR["Embedded Qdrant"]
-    CHAT --> EVENTS["Trajectory Events + Outcome Metrics"]
-    EVENTS --> LEARN
-    LEARN --> EXPERIENCE["Preferences / Corrections / Procedures"]
-    EXPERIENCE --> AGENT
-    LEARN -. "Optional manual replay" .-> EVAL["Skill Evaluation + Versioning"]
+    %% ───────────────────────────────────────────────────────────────
+    %% 02. HTTP and application services
+    %% ───────────────────────────────────────────────────────────────
+    subgraph BACKEND["02 · FASTAPI APPLICATION LAYER"]
+        direction LR
+        REST["REST API · /api/v1"]
+        CHAT_SVC["Chat service<br/>Conversations · edits · regeneration"]
+        FILES["Attachment ingestion<br/>Extract · chunk · index"]
+        SCHED["Durable task scheduler<br/>Run through chat service"]
+        CONTROL["Configuration APIs<br/>Providers · MCP · policies"]
+        LEARN_API["Knowledge & review APIs"]
+        SSE["SSE stream<br/>Tokens · tools · interrupts · outcomes"]
+    end
+
+    %% ───────────────────────────────────────────────────────────────
+    %% 03. Input trust boundary
+    %% ───────────────────────────────────────────────────────────────
+    subgraph PREFLIGHT["03 · REQUEST VALIDATION & INPUT GUARDRAILS"]
+        direction LR
+        INPUT_G["Input guardrails<br/>Prompt-injection check · optional jailbreak"]
+        INPUT_DECIDE{"Configured action?"}
+        STOP["Block request<br/>if policy requires"]
+        PREP["Run preflight<br/>Model · workspace · tools · checkpoint"]
+        CONTEXT_INIT["Build bounded context<br/>Relevant memory · active skills"]
+    end
+
+    %% ───────────────────────────────────────────────────────────────
+    %% 04. Stateful agent engine
+    %% ───────────────────────────────────────────────────────────────
+    subgraph ENGINE["04 · STATEFUL AGENT EXECUTION"]
+        direction LR
+        GRAPH["LangChain Deep Agents<br/>LangGraph orchestration"]
+        PLAN["Task planning<br/>Subagent delegation"]
+        THREADS["Conversation branches<br/>Edit · resend · regenerate"]
+        CHECKPOINT["LangGraph checkpoints<br/>Interrupt & resume"]
+        ASK_USER["Human questions<br/>Ask for missing information"]
+        OUTPUT["Streaming response<br/>Text · tool events · status"]
+    end
+
+    %% ───────────────────────────────────────────────────────────────
+    %% 05. Safety for LLM and tool actions
+    %% ───────────────────────────────────────────────────────────────
+    subgraph SECURITY["05 · SECURITY & HUMAN CONTROL"]
+        direction LR
+        MODEL_G["Model-context guardrails<br/>Untrusted content · secrets · PII"]
+        POLICY["Deterministic permission policy"]
+        CHOICE{"ALLOW / ASK / DENY"}
+        USER_OK["Human approval<br/>Durable HITL interrupt"]
+        NO_EXEC["Deny tool action"]
+        RECEIPT["Connector verification<br/>Read-back receipts where supported"]
+    end
+
+    %% ───────────────────────────────────────────────────────────────
+    %% 06. Model infrastructure
+    %% ───────────────────────────────────────────────────────────────
+    subgraph MODELS["06 · MODEL & INFERENCE PLANE"]
+        direction LR
+        BIFROST["Bifrost gateway<br/>Model selection · provider routing"]
+        CLOUD["OpenAI · Anthropic"]
+        ROUTER["9Router · compatible APIs"]
+        OLLAMA["Ollama<br/>Local generation · embeddings"]
+    end
+
+    %% ───────────────────────────────────────────────────────────────
+    %% 07. Extensible tools
+    %% ───────────────────────────────────────────────────────────────
+    subgraph ACTIONS["07 · TOOLS & WORKSPACE EXECUTION"]
+        direction LR
+        TOOL_REG["Tool registry<br/>Enabled capabilities"]
+        PERSONAL["Personal tools<br/>Web · documents · browser · system"]
+        MCP["MCP tool gateway<br/>Enabled servers & tools"]
+        WORKSPACE["Selected local workspace<br/>Validated folder mapping"]
+        SANDBOX["Optional Docker sandbox<br/>Isolated execution paths"]
+    end
+
+    %% ───────────────────────────────────────────────────────────────
+    %% 08. Retrieval and knowledge
+    %% ───────────────────────────────────────────────────────────────
+    subgraph KNOWLEDGE["08 · KNOWLEDGE, SEARCH & RAG"]
+        direction LR
+        RETRIEVE["Unified hybrid retriever<br/>Relevance · scope · conflict checks"]
+        SEM["Semantic memory<br/>Facts · preferences"]
+        EPI["Episodic memory<br/>Past runs · verified status"]
+        PROC["Procedural records<br/>Observed workflows"]
+        SKILL["Active version-matched skills"]
+        ATTACH["Attachment RAG<br/>Conversation-scoped search"]
+        CURATOR["Manual curator<br/>Maintenance findings"]
+    end
+
+    %% ───────────────────────────────────────────────────────────────
+    %% 09. Experience-led learning
+    %% ───────────────────────────────────────────────────────────────
+    subgraph LEARNING["09 · EXPERIENCE-DRIVEN LEARNING LIFECYCLE"]
+        direction LR
+        TRAJ["Append-only trajectories<br/>Messages · tool events · outcomes"]
+        METRICS["Metrics & feedback<br/>Completion is not verified success"]
+        EXPERIENCE["Learned experiences<br/>Explicit preferences · corrections"]
+        QUEUE["Durable reflection queue<br/>Rate limits · restart recovery"]
+        REFLECT["Bounded LLM reflection<br/>Evidence-linked insights"]
+        PROPOSAL["Procedure suggestions<br/>Reviewable drafts & revisions"]
+        REVIEW["Human knowledge review<br/>Approve · reject · archive"]
+        CANDIDATE["Explicit skill candidate"]
+        EVALUATE["Manual evaluation<br/>Replay · regression checks"]
+        PROMOTE["Versioned activation<br/>Promotion · rollback"]
+    end
+
+    %% ───────────────────────────────────────────────────────────────
+    %% 10. Storage and durability
+    %% ───────────────────────────────────────────────────────────────
+    subgraph STORAGE["10 · DURABLE LOCAL DATA"]
+        direction LR
+        SQLITE["SQLite<br/>Chats · settings · jobs · learning · audits"]
+        FTS["SQLite FTS5<br/>Exact & lexical retrieval"]
+        QDRANT["Embedded Qdrant<br/>Semantic vector search"]
+        PERSIST["LangGraph checkpoint store"]
+        ASSETS["Local attachment files<br/>Workspace documents"]
+    end
+
+    %% ───────────────────────────────────────────────────────────────
+    %% Primary user and automation paths
+    %% ───────────────────────────────────────────────────────────────
+    SHELL --- CHATUI
+    SHELL --- KNOWUI
+    SHELL --- TASKUI
+    SHELL --- SETTINGSUI
+    CHATUI --> REST
+    KNOWUI --> LEARN_API
+    TASKUI --> REST
+    SETTINGSUI --> CONTROL
+    REST --> CHAT_SVC
+    REST --> FILES
+    REST --> SCHED
+    SCHED -->|"Scheduled prompt"| CHAT_SVC
+    CHAT_SVC --> INPUT_G --> INPUT_DECIDE
+    INPUT_DECIDE -->|"Block, if configured"| STOP
+    INPUT_DECIDE -->|"Pass / warn"| PREP
+    PREP --> CONTEXT_INIT --> GRAPH
+    GRAPH --> OUTPUT --> SSE --> CHATUI
+
+    %% Stateful orchestration
+    CHAT_SVC <--> THREADS
+    GRAPH <--> CHECKPOINT
+    THREADS --> CHECKPOINT
+    GRAPH --> PLAN
+    GRAPH -->|"Clarification"| ASK_USER --> SSE
+
+    %% Model requests cross a separate inspection boundary
+    GRAPH -->|"Model request"| MODEL_G --> BIFROST
+    BIFROST --> CLOUD
+    BIFROST --> ROUTER
+    BIFROST --> OLLAMA
+    BIFROST -. "Model responses" .-> GRAPH
+    CONTROL -. "Provider settings" .-> BIFROST
+
+    %% Tools require independent authorization
+    GRAPH -->|"Tool request"| POLICY --> CHOICE
+    CHOICE -->|"ALLOW"| TOOL_REG
+    CHOICE -->|"ASK"| USER_OK
+    CHOICE -->|"DENY"| NO_EXEC
+    USER_OK -->|"Approved / resumed"| TOOL_REG
+    USER_OK -. "Interrupt event" .-> SSE
+    TOOL_REG --> PERSONAL
+    TOOL_REG --> MCP
+    TOOL_REG -. "Configured execution" .-> SANDBOX
+    PERSONAL -->|"Workspace-scoped tools"| WORKSPACE
+    MCP -. "Supported mutating actions" .-> RECEIPT
+    PERSONAL -. "Tool result" .-> GRAPH
+    MCP -. "Tool result" .-> GRAPH
+    WORKSPACE -. "Files & context" .-> GRAPH
+    PREP -->|"Validate selected folder"| WORKSPACE
+
+    %% Memory and document retrieval
+    CONTEXT_INIT --> RETRIEVE
+    RETRIEVE --> SEM
+    RETRIEVE --> EPI
+    RETRIEVE --> SKILL
+    RETRIEVE --> ATTACH
+    FILES --> ATTACH
+    FILES --> ASSETS
+    SEM --> SQLITE
+    EPI --> SQLITE
+    PROC --> SQLITE
+    SKILL --> SQLITE
+    RETRIEVE --> FTS
+    RETRIEVE --> QDRANT
+    ATTACH --> FTS
+    ATTACH --> QDRANT
+    CURATOR -. "Manual inspection" .-> SQLITE
+    OLLAMA -. "Selected embedding model" .-> QDRANT
+
+    %% Feedback, background review and manual skill promotion
+    GRAPH -. "Run events" .-> TRAJ
+    OUTPUT -. "Completion record" .-> METRICS
+    LEARN_API --> REVIEW
+    LEARN_API --> METRICS
+    TRAJ --> METRICS
+    METRICS --> EXPERIENCE
+    TRAJ --> QUEUE --> REFLECT
+    REFLECT -. "Review model through Bifrost" .-> BIFROST
+    REFLECT --> PROPOSAL
+    REFLECT -. "Lessons / corrections to review" .-> REVIEW
+    EXPERIENCE -. "Corrections needing review" .-> REVIEW
+    PROPOSAL --> REVIEW
+    REVIEW -->|"Approved draft + explicit creation"| CANDIDATE
+    CANDIDATE -. "Explicit / manual" .-> EVALUATE
+    EVALUATE -->|"Promotion gate"| PROMOTE
+    PROMOTE --> SKILL
+    EXPERIENCE -. "Active approved context" .-> RETRIEVE
+    TRAJ -. "Episode summaries when enabled" .-> EPI
+    TRAJ --> SQLITE
+    METRICS --> SQLITE
+    QUEUE --> SQLITE
+    PROPOSAL --> SQLITE
+    REVIEW --> SQLITE
+    SCHED --> SQLITE
+    CONTROL --> SQLITE
+    CHECKPOINT --> PERSIST --> SQLITE
+
+    %% Styling: amber = boundaries/control, violet = agent, teal = retrieval.
+    classDef ui fill:#172033,stroke:#94A3B8,color:#F8FAFC,stroke-width:1.3px;
+    classDef api fill:#1F2937,stroke:#93C5FD,color:#F8FAFC,stroke-width:1.3px;
+    classDef critical fill:#4A2D12,stroke:#FBBF24,color:#FFFBEB,stroke-width:2px;
+    classDef agent fill:#312E81,stroke:#A5B4FC,color:#FFFFFF,stroke-width:1.5px;
+    classDef model fill:#164E63,stroke:#67E8F9,color:#ECFEFF,stroke-width:1.3px;
+    classDef tool fill:#1E3A5F,stroke:#60A5FA,color:#EFF6FF,stroke-width:1.3px;
+    classDef knowledge fill:#134E4A,stroke:#5EEAD4,color:#F0FDFA,stroke-width:1.3px;
+    classDef learn fill:#3B3055,stroke:#D8B4FE,color:#FAF5FF,stroke-width:1.3px;
+    classDef storage fill:#193927,stroke:#86EFAC,color:#F0FDF4,stroke-width:1.3px;
+    classDef denied fill:#522222,stroke:#FCA5A5,color:#FEF2F2,stroke-width:1.3px;
+    class SHELL,CHATUI,KNOWUI,TASKUI,SETTINGSUI ui;
+    class REST,CHAT_SVC,FILES,SCHED,CONTROL,LEARN_API,SSE api;
+    class INPUT_G,INPUT_DECIDE,PREP,MODEL_G,POLICY,CHOICE,USER_OK critical;
+    class STOP,NO_EXEC denied;
+    class CONTEXT_INIT,GRAPH,PLAN,THREADS,CHECKPOINT,ASK_USER,OUTPUT agent;
+    class BIFROST,CLOUD,ROUTER,OLLAMA model;
+    class TOOL_REG,PERSONAL,MCP,WORKSPACE,SANDBOX,RECEIPT tool;
+    class RETRIEVE,SEM,EPI,PROC,SKILL,ATTACH,CURATOR knowledge;
+    class TRAJ,METRICS,EXPERIENCE,QUEUE,REFLECT,PROPOSAL,REVIEW,CANDIDATE,EVALUATE,PROMOTE learn;
+    class SQLITE,FTS,QDRANT,PERSIST,ASSETS storage;
 ```
 
-### Agent runtime and conversation history
+**Legend:** Solid arrows = primary runtime or data flow · Dashed arrows = conditional, optional, or manual relationships · Amber = security and human-control boundaries.
 
-Trajecta validates the conversation, attachments, selected workspace, model configuration, enabled MCP tools, permissions, and applicable checkpoint **before opening the response stream**. LangGraph checkpoints support edits, regenerations, and interrupted approval flows without overwriting the original message history.
+> **Accuracy notes:** Input checks warn by default unless blocking is configured. Model-context protection applies before model calls; tool permissions are enforced separately. Reflection never activates a skill automatically; evaluation and promotion are explicit operations. Docker sandboxing is optional, and full OpenTelemetry/Grafana integration is not represented as a completed feature.
 
-Streaming sends response text as model chunks arrive. Trajectory capture stores activity in append-only event records rather than repeatedly rewriting the entire event history. Replay-fixture/workspace snapshots are **disabled by default** for ordinary chat, reducing work before the first response.
+## How learning works
 
-## Memory consistency and reliability (schema v21)
+1. **Capture** — conversation, tool activity, outcome evidence, and feedback.
+2. **Extract** — explicit preferences, corrections, and procedure suggestions.
+3. **Review** — uncertain lessons and procedural changes require human decisions.
+4. **Promote** — an executable skill requires an explicit candidate and manual evaluation/activation.
+5. **Recall** — relevant approved knowledge and active skills can inform future work.
 
-- Explicit success/failure feedback updates stored episode outcomes and FTS/vector summaries without changing independent verification status.
-- Procedural candidates include source event references, observed sequence, and evidence-linked guidance. Candidate creation is atomic and idempotent; activation still requires manual evaluation.
-- Retrieval usage records first/last access and counts; the curator uses last access.
-- Daily background review quotas count individually timestamped, atomically claimed attempts, not lifetime job attempts. Prior undated attempts are not retroactively attributed to today.
-- A `search_past_conversations` tool is bound to the current user/workspace and exposed only when automatic memory is enabled.
+**Important distinctions**
 
-## Experience-first learning
+- **Completed ≠ successful:** outcomes stay unverified until supported by feedback or other evidence.
+- **Remembered ≠ approved:** pending or rejected suggestions are not active skills.
+- **Evaluation is manual:** routine chats do not automatically benchmark every skill candidate.
+- **Model reasoning is conditional:** the UI shows reasoning only when the provider exposes it.
 
-Trajecta's learning path focuses on **real interactions**, not automatic candidate-versus-baseline tournaments. A separate, bounded reflection worker reviews qualifying completed trajectories and explicit feedback through Bifrost without delaying streamed chat. Reviewer-generated insights always require human review before becoming active experience context.
+## Technology
 
-```text
-Real conversation / task
-         |
-         v
-Capture message, tool activity, outcome, and feedback
-         |
-         +--> Explicit response preference --> Active learned experience
-         |
-         +--> User correction -----------> Needs review
-         |
-         +--> User-confirmed task --------> Procedure suggestion
-                                           |
-                                     Needs review
-                                           |
-                                    Approved draft
-                                           |
-                               Explicit skill candidate
-                                           |
-                                  Manual evaluation
-                                           |
-                                  Versioned active skill
-                                           |
-                                      Observe outcomes
-```
+- **Desktop:** Tauri 2, React 19, TypeScript, Vite, Lucide icons.
+- **Backend:** Python 3.11+, FastAPI, LangChain Deep Agents, LangGraph.
+- **Models:** Bifrost gateway; cloud, Ollama, and OpenAI-compatible providers.
+- **Search & storage:** SQLite, FTS5, embedded Qdrant; configurable Ollama embeddings.
+- **Infrastructure:** Docker Compose; optional sandbox services.
 
-### What is recorded
-
-- **Preferences:** Explicit response-style instructions can be stored without an extra evaluation-model call.
-- **Corrections:** Potential corrections are kept for review instead of silently being treated as authoritative facts.
-- **Confirmed procedures:** Helpful feedback can produce reviewable procedural observations, but no procedure becomes active merely because a task was completed or rated positively.
-- **Reflections:** Meaningful tool use, recoveries, corrections, or substantial tasks can be queued for an evidence-grounded, structured LLM review. This produces reviewable suggestions; it does not execute tools or automatically promote skills.
-- **Procedural refinement:** Successful feedback and evidence-backed reflections can produce structured proposals with observed tool order, event references, workspace scope, and a cautious match to an existing active skill. The worker never stores tool arguments or rewrites active skill instructions. New proposals and proposed revisions remain reviewable in SQLite (schema v19). Approval alone does not publish a skill; an explicit candidate-creation action is required and still uses the existing manual evaluation and versioning process. Draft changes preserve historical snapshots; rejected proposals cannot be silently reopened.
-- **Revisions:** Learned experiences have version history and rejected entries remain archived rather than being silently reactivated.
-- **Evidence and attribution:** The system retains links to source trajectories and captures model/tool execution metrics.
-
-Procedural proposals are available through `/api/v1/learning/procedures` (list), `/{id}`, `/{id}/history`, `/{id}/review`, and `/{id}/candidate` under that prefix. The final operation creates an **unverified candidate**, never an active skill; it requires approval and explicit positive feedback. Proposals from other workspaces are not globally published. The existing executable `/skills/` store is modified only through the established promotion/versioning path.
-
-**Completion is not success.** A normal assistant response produces a `completed` trajectory and a metrics record, but its outcome is **unverified** until separate evidence or user feedback establishes success or failure. Unverified completions do not enter verified-success statistics.
-
-The Skills page is organized around **Learned**, **Improved**, **Needs review**, **Rejected**, and **Saved skills**. It surfaces prior candidates for review without automatically running their old evaluation workflow.
-
-### What remains optional
-
-Trajecta retains an optional skill-mining module (not wired into the running app), replay fixtures, manual baseline-versus-candidate evaluation, versioning, dependency checks, configuration-gated statistical experiments, regression analysis, and rollback. These are **advanced/manual or configuration-gated capabilities**, not the default path for everyday experience learning.
-
-In `config/default.yaml`, the default settings include:
-
-```yaml
-skills:
-  experiments:
-    enabled: false
-  fixtures:
-    enabled: false
-    capture_workspace: false
-```
-
-The legacy automatic mining/evaluation worker and its chat hooks have been removed. The separate, lightweight reflection queue uses schema migration v18, leases and bounded retry/backoff. It checks the existing `automatic_memory` switch, restores expired jobs after restarts, and enforces configurable daily call/input/output budgets. Its inspection endpoint is `GET /api/v1/learning/reflection/status`. The default reflection model follows the persisted new-chat model; it can be overridden using `memory.reflection.model`. Sensitive content follows the current model-context guardrails before Bifrost receives it. Reflection suggestions are not automatically activated, and project/user-scoped reviews are not published to the existing global learned-experience context. The old `/skills/learning/status` and `/skills/learning/run` endpoints return HTTP 410 for stale clients. An explicitly requested manual candidate evaluation or upgrade can still use model tokens and replay infrastructure. Experience records **do not** grant tool permissions or automatically rewrite an active executable skill.
-
-### Desktop memory and learning console
-
-The Memory page now separates **Semantic**, **Episodic**, **Procedural**, **Learning activity**, and **Maintenance**. Episodic and procedural lists default to general-local scope; **Choose folder** switches to the exact selected workspace. This applies the same workspace hashing as the backend. The episode view shows source-trajectory references, observed errors, verification status, explicit success/failure feedback, and deletion. The procedural view shows observed tool steps, version history, approval/rejection, reversible archiving, and guarded manual candidate creation. Approved drafts are **not** activated skills; inspect active versions in Skills.
-
-Learning activity shows the durable queue, retries/errors and structured review insights. A separate review-model selector and call-budget fields are available there: `GET/PATCH /api/v1/learning/reflection/settings` persists the worker's **enabled**, **model**, **max_daily_reviews**, **max_output_tokens**, and **timeout_seconds** settings across restarts. The optional model must be `provider/model` routed through Bifrost; `null` follows the global chat default. Disabling review stops the worker, while existing jobs remain durable. `GET /api/v1/learning/reflection/status` reports processing status. The curator remains manual-only; scans never delete memories or change executable skills.
-
-Memory console API contract tests: `server/tests/memory/test_memory_console_api.py`; browser client tests: `apps/desktop/src/lib/learning-memory-api.test.ts`. Run the full frontend build and integration tests with the dependencies from `apps/desktop/pnpm-lock.yaml` in an environment that has Node package access.
-
-## Memory, RAG, and embeddings
-
-Trajecta distinguishes four memory roles:
-
-- **Working memory:** The active task and LangGraph execution state.
-- **Episodic memory:** Durable, evidence-linked summaries extracted from meaningful finished tasks, with SQLite FTS5 and optional Qdrant retrieval. Episodes remain unverified unless supported by separate outcome evidence. A separate background reviewer can derive reviewable lessons from source events without overwriting those episodes.
-- **Semantic memory:** Reusable factual context and preferences.
-- **Procedural memory:** Saved skills and reusable procedures.
-
-### Unified retrieval and safe maintenance
-
-Before a run, a bounded unified retriever can recall relevant **global semantic** facts,
-**same-workspace episodic** evidence, **approved local experiences**, and **active
-version-matched skills**. It combines FTS5 and optional Qdrant candidates but
-validates identity, status, and scope against canonical SQLite records. The
-retrieval budget defaults to 8 entries, 2,500 characters, and 2 seconds; the
-`automatic_memory` setting also disables this injection. An unverified episode
-is labeled as an observation, not proof of successful execution. Procedural
-drafts, rejected learnings, and staged skill versions are never injected.
-
-Conflicting explicit rules (for example, the same predicate with opposite
-"always"/"never" guidance) are withheld until reviewed. This conservative
-heuristic does not claim to detect all semantic contradictions. Retrieval usage
-is recorded separately from task outcomes: **retrieval is not evidence of skill
-success**.
-
-SQLite migration v20 stores retrieval attribution, rule conflicts, and curator
-findings. The curator can flag old pending procedure drafts and active skills
-with no recent recorded retrieval. Scanning **never** deactivates a skill or
-auto-deletes a memory. Archived pending proposals can be restored and cannot
-be reviewed or promoted while archived. The curator is available through
-`/api/v1/memory/curator/*`; hybrid inspection through
-`/api/v1/memory/unified/search`; conflicts and resolutions through
-`/api/v1/memory/unified/conflicts`. Automatic curation is deliberately not
-scheduled in this stage.
-
-
-The storage layers have different jobs:
-
-- **SQLite:** Durable application records, chat history, settings, skill metadata, feedback, jobs, audit trails, and schema migrations.
-- **SQLite FTS5:** Lexical search for names, exact strings, and document content.
-- **Embedded Qdrant:** Vector-based semantic retrieval. A separate Qdrant container is available for development but is not required by the default embedded configuration.
-
-The desktop can discover supported **Ollama embedding models**, select one, and reindex memory, episodes, and attachment chunks. Without a configured real embedding model, the built-in fallback does **not** provide equivalent semantic quality.
-
-For large text-based uploads, Trajecta extracts text, chunks it, indexes it in FTS5 and Qdrant, and exposes a conversation-scoped `search_attachments` tool. The original attachment remains the source of truth. Scanned PDFs and visual layouts require OCR or suitable visual inspection; text extraction alone is not visual verification.
-
-## Models and Bifrost
-
-The normal model path is:
-
-```text
-Deep Agents / LangChain
-          |
-          v
-   Bifrost gateway
-          |
-          +-- OpenAI
-          +-- Anthropic
-          +-- Ollama
-          +-- 9Router
-          +-- Custom OpenAI-compatible endpoint
-```
-
-**Settings → LLM Providers** manages configured providers, connections, available models, and defaults via Bifrost's management API. Provider credentials are managed by Bifrost instead of being written into Trajecta's ordinary settings records.
-
-A global default applies to **new** conversations. Existing conversations retain their own selected model unless changed explicitly. Ollama can provide local inference, while cloud provider requests may transmit prompts or context externally.
-
-## Safety, approvals, and verification
-
-Trajecta separates **content inspection** from **authority to act**:
-
-- **Content guardrails** inspect applicable user, tool, retrieved-document, or cloud-bound model context for configured risks such as prompt injection, secrets, and PII. Structured internal responses have separate validation utilities.
-- **Deterministic permissions** use `allow`, `ask`, and `deny`. Denied personal tools are filtered out before the agent receives them; `ask` actions interrupt for explicit user approval.
-- **Human questions** use an `ask_user` flow independent of approving an action.
-- **MCP settings** enable or disable servers and individual tools. Some mutating connector actions can be checked with an independent read-back receipt instead of trusting a tool's success message alone.
-- **Docker sandboxing** is available for supported execution paths, with configurable time, CPU, memory, filesystem, and network restrictions.
-
-There is no blanket claim of output-side LLM filtering: the current `GuardrailsModelMiddleware` operates **before** model calls. A guardrail warning is not permission to perform a blocked operation.
-
-## Scheduled tasks
-
-Trajecta persists one-time, interval, and cron schedules. Scheduled tasks reuse the normal chat/agent runtime and its model selection, tools, memory, and permission policy. If a scheduled operation needs approval, it pauses rather than bypassing the user's settings.
-
-## Get started
+## Quick start
 
 ### Prerequisites
 
-- **Python 3.11+** and [`uv`](https://docs.astral.sh/uv/).
-- **Node.js**, **pnpm**, and the **Rust/Tauri development prerequisites** for your operating system.
-- **Docker + Docker Compose** for the supplied Bifrost stack and optional sandbox services.
-- Optional: **Ollama** for locally hosted models and embeddings.
+- Python **3.11+** and [uv](https://docs.astral.sh/uv/)
+- Node.js, pnpm, Rust, and [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
+- Docker + Docker Compose for Bifrost
+- Optional: [Ollama](https://ollama.com/) for local models and embeddings
 
-Some personal tools require extra host dependencies (for example, browser automation, OCR, audio, or GUI utilities). Their installation and behavior vary by platform.
-
-### 1. Configure the project
-
-Use the current Trajecta source checkout (or the extracted project archive). If cloning from a remote repository, first make sure that branch contains this implementation; an older published branch may not yet include the changes described here.
-
-From the project root:
+### 1. Configure
 
 ```bash
 cp .env.example .env
 ```
 
-On Windows PowerShell, use `Copy-Item .env.example .env` in place of `cp` if necessary.
+> Windows PowerShell: `Copy-Item .env.example .env`. Match `BIFROST_VIRTUAL_KEY` to the key configured in Bifrost; do not commit secrets.
 
-Review `.env` and `config/bifrost/` before starting. Ensure the application's `BIFROST_VIRTUAL_KEY` matches the virtual key configured in Bifrost. If you use a 9Router provider, supply its real credential through your local configuration; never commit secrets.
-
-### 2. Start the LLM gateway
+### 2. Start the gateway
 
 ```bash
 docker compose up -d bifrost
 ```
 
-By default, Bifrost is served at `http://127.0.0.1:8080`. The root compose file also defines a standalone Qdrant service; Trajecta's default vector store is embedded and does not require that service.
-
-### 3. Start the Python backend
-
-From the repository root:
+### 3. Start the backend
 
 ```bash
 uv sync
 uv run python -m server.src.main
 ```
 
-The configured default API origin is `http://127.0.0.1:8420`, with routes under `/api/v1`. The `server.src.main` entry point includes a Windows UTF-8 startup safeguard.
-
 ### 4. Start the desktop app
-
-In another terminal:
 
 ```bash
 cd apps/desktop
@@ -305,93 +360,57 @@ pnpm install
 pnpm tauri dev
 ```
 
-For browser-only UI development, run `pnpm dev` instead. Native folder selection requires the Tauri desktop app.
+- **Backend:** `http://127.0.0.1:8420/api/v1`
+- **Bifrost:** `http://127.0.0.1:8080`
+- **Browser-only UI:** `pnpm dev` (native folder selection needs Tauri)
+- **First launch:** Set up **Settings → LLM Providers**; optionally choose an Ollama embedding model.
 
-In the app, open **Settings → LLM Providers**, confirm gateway connectivity, configure an available provider/model, and choose a default. For better local retrieval, select a compatible model under **Settings → Embedding**.
-
-### Common development commands
+## Development
 
 ```bash
-# Run all backend tests (repository root)
+# Repository root — backend tests
 uv run python -m pytest server/tests -q
 
-# Frontend unit tests
-cd apps/desktop
+# apps/desktop — frontend tests and build
 pnpm test
-
-# Frontend TypeScript check + Vite build
 pnpm build
 
-# Desktop production build (requires Tauri platform prerequisites)
+# apps/desktop — native desktop build
 pnpm tauri build
 ```
 
-These commands are provided from the repository configuration; **they are not a claim that the full test or packaging suite has passed on every platform**.
+> Commands reflect the repository setup; passing all tests and desktop packaging across platforms is not yet guaranteed.
 
-## Configuration and project layout
-
-The default configuration is `config/default.yaml`, with local overrides supported through `.trajecta/config.yaml` and environment variables as implemented by the settings loader. The desktop stores user-controlled runtime preferences in local application storage.
+## Repository layout
 
 ```text
 Trajecta/
-├── apps/desktop/
-│   ├── src/                 # React UI, streaming chat, learning and settings
-│   └── src-tauri/           # Tauri 2 shell
+├── apps/desktop/          # React interface and Tauri shell
 ├── server/
 │   ├── src/
-│   │   ├── api/             # Versioned FastAPI routes
-│   │   ├── chat/            # Runtime, persistence, SSE, workspace, branching, RAG
-│   │   ├── agent/           # Agent support and HITL primitives
-│   │   ├── memory/          # SQLite, FTS5, Qdrant, memory and embeddings
-│   │   ├── skills/          # Experience learning, metrics and optional evaluation
-│   │   ├── tools/           # Personal tools, MCP, sandbox, connector verification
-│   │   ├── guardrails/      # Content inspection and deterministic policy
-│   │   └── llm_gateway/     # Bifrost integration and provider settings
-│   └── tests/              # Backend regression tests
-├── config/                 # Default config, Bifrost, guardrail rules
-├── infra-docker/           # Infrastructure and sandbox definitions
-├── docker-compose.yaml     # Bifrost + optional standalone Qdrant
-├── pyproject.toml          # Python dependencies and tools
-└── README.md
+│   │   ├── api/          # FastAPI routes
+│   │   ├── chat/         # Streaming, conversations, branches, RAG
+│   │   ├── agent/        # Agent orchestration and HITL
+│   │   ├── memory/       # Memory, retrieval, embeddings
+│   │   ├── skills/       # Learning, evaluation, versioning
+│   │   ├── tools/        # Local utilities, MCP, sandbox
+│   │   ├── guardrails/   # Content checks and permissions
+│   │   └── llm_gateway/  # Bifrost integration
+│   └── tests/            # Backend tests
+├── config/               # Defaults, Bifrost, guardrail rules
+├── infra-docker/         # Supporting services and sandbox
+├── docker-compose.yaml
+└── pyproject.toml
 ```
 
-### Key API groups
+## Documentation
 
-The FastAPI backend serves endpoints under `/api/v1`:
-
-- `/chat` — conversations, SSE streaming, attachments, branch operations, workspace selection, model selection, and approval resume.
-- `/models` and `/llm` — available models and Bifrost provider settings.
-- `/memory` — memory records and embeddings.
-- `/learning` — feedback, learned experiences, reviews, and consolidated Skills overview.
-- `/skills` — saved skills plus legacy/manual evaluations, experiments, analytics, and versions.
-- `/permissions`, `/guardrails`, `/tools` — capability policy, content settings, MCP, and action verification receipts.
-- `/tasks` — persisted personal tasks and schedules.
-- `/health` — service health.
-
-## Current scope and limitations
-
-**Implemented in the uploaded source:** Chat streaming, checkpoint-backed branches, local workspaces, attachments/RAG, provider configuration, memory, permissions/HITL, personal and MCP tools, scheduler paths, feedback-driven experience storage, skill versioning, and execution metrics.
-
-**Retained but not the default workflow:** The standalone skill miner, replay evaluation, online experiments, and regression/rollback code. Mining no longer has an active endpoint; explicit candidate evaluation and other manual/opt-in APIs remain available. Normal conversations do not automatically run an evaluation campaign.
-
-**Not yet a complete production observability stack:** OpenTelemetry dependencies and observability documentation exist, but end-to-end instrumented traces/exporters and the Grafana/Tempo/Loki/Prometheus integration are not wired into the runtime. The `/traces` router is currently a placeholder.
-
-**Still needs release hardening:** Desktop/backend packaging, platform-specific tool installation, full end-to-end validation, performance profiling under realistic workloads, and thorough integration testing across Bifrost, Ollama, sandboxed actions, and external MCP servers.
-
-Trajecta is **local-first**, not guaranteed offline or inherently safe for unrestricted host execution. Actual privacy and security depend on the chosen provider, enabled tools, sandbox setup, and permission configuration.
-
-## Further documentation
-
-- [Desktop requirements](apps/desktop/REQUIREMENTS.md)
-- [Backend requirements](server/REQUIREMENTS.md)
-- [Memory architecture](server/src/memory/REQUIREMENTS.md)
-- [Skills and learning](server/src/skills/REQUIREMENTS.md) — includes older evaluation-first design details; use the current implementation and this README for active defaults.
-- [Guardrails and permissions](server/src/guardrails/REQUIREMENTS.md)
-- [LLM gateway](server/src/llm_gateway/REQUIREMENTS.md)
-- [Tool runtime](server/src/tools/REQUIREMENTS.md)
-- [Observability plan](server/src/observability/REQUIREMENTS.md)
-- [Infrastructure requirements](infra-docker/REQUIREMENTS.md)
+- [Desktop](apps/desktop/REQUIREMENTS.md) · [Backend](server/REQUIREMENTS.md)
+- [Memory](server/src/memory/REQUIREMENTS.md) · [Skills](server/src/skills/REQUIREMENTS.md)
+- [Guardrails](server/src/guardrails/REQUIREMENTS.md) · [Tools](server/src/tools/REQUIREMENTS.md)
+- [LLM gateway](server/src/llm_gateway/REQUIREMENTS.md) · [Observability](server/src/observability/REQUIREMENTS.md)
+- [Infrastructure](infra-docker/REQUIREMENTS.md)
 
 ## License
 
-[MIT License](LICENSE).
+[MIT](LICENSE)
