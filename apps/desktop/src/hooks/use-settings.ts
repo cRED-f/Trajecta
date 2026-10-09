@@ -25,7 +25,6 @@ export const settingsQueryKeys = {
   skills: ["settings", "skills"] as const,
   skillVersions: (skillName: string) =>
     ["settings", "skills", "versions", skillName] as const,
-  skillLearning: ["settings", "skills", "learning"] as const,
   skillAnalytics: (skillName: string) =>
     ["settings", "skills", "analytics", skillName] as const,
   skillDependencies: (skillName: string) =>
@@ -306,17 +305,6 @@ export function useSkillAnalytics(skillName: string | null, enabled = true) {
   });
 }
 
-export function useSkillLearningStatus(enabled = true) {
-  return useQuery({
-    queryKey: settingsQueryKeys.skillLearning,
-    queryFn: settingsApi.learningStatus,
-    enabled,
-    staleTime: 5_000,
-    refetchInterval: 15_000,
-    refetchOnWindowFocus: false,
-  });
-}
-
 /** Declared dependencies of one skill. */
 export function useSkillDependencies(skillName: string | null, enabled = true) {
   return useQuery({
@@ -471,28 +459,6 @@ export function useSkillActions() {
     addingDependency: addDependency.isPending,
     removeDependency: removeDependency.mutateAsync,
     removingDependency: removeDependency.isPending,
-  };
-}
-
-/** Queueing a manual mining pass for the automatic learning loop. */
-export function useSkillLearningActions() {
-  const queryClient = useQueryClient();
-
-  const run = useMutation({
-    mutationFn: (force: boolean) => settingsApi.runSkillLearning(force),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: settingsQueryKeys.skillLearning,
-      });
-      void queryClient.invalidateQueries({
-        queryKey: settingsQueryKeys.skills,
-      });
-    },
-  });
-
-  return {
-    run: run.mutateAsync,
-    running: run.isPending,
   };
 }
 

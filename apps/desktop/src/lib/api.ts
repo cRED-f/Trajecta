@@ -40,7 +40,6 @@ import type {
   SkillDependency,
   SkillEvaluationReport,
   SkillExperiment,
-  SkillLearningStatus,
   SkillPromotionResult,
   SkillUpgradeResult,
   SkillVersion,
@@ -766,19 +765,6 @@ export const settingsApi = {
         candidate_id: candidateId,
         reason,
       }),
-    });
-  },
-
-  learningStatus(): Promise<SkillLearningStatus> {
-    return request("/skills/learning/status");
-  },
-
-  runSkillLearning(
-    force = true,
-  ): Promise<{ queued: boolean; status: SkillLearningStatus }> {
-    return request("/skills/learning/run", {
-      method: "POST",
-      body: JSON.stringify({ force }),
     });
   },
 

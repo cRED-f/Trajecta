@@ -77,8 +77,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             permission_policy,
         )
 
-        # Skills must be built before ChatService: chat and learning use the
-        # same trajectory store and replay-fixture store.
+        # Skills must be built before ChatService: chat and experience learning
+        # share its trajectory store and replay-fixture store.
         skills = build_skills_service(
             settings,
             memory,
@@ -160,11 +160,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.llm_admin = llm_admin
         app.state.llm_settings = llm_settings
 
-        # Experience learning is synchronous/deterministic on explicit user
-        # statements and feedback. The old mining/evaluation worker MUST NOT
-        # start from chat or application startup, including when a stale local
-        # config still says skills.learning.enabled=true.
-        # Manual replay evaluation endpoints are retained for diagnostics.
+        # Experience learning uses explicit user instructions and feedback.
+        # There is no automatic mining worker. Manual replay-evaluation APIs
+        # remain available for diagnostics and deliberate skill upgrades.
 
         try:
             yield
@@ -172,7 +170,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             # Stop producers before SQLite/tools disappear.
             await scheduler.stop()
-            await skills.learning.stop()
             await personal_tools.close()
             await memory.close()
 

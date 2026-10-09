@@ -129,17 +129,12 @@ The Skills page is organized around **Learned**, **Improved**, **Needs review**,
 
 ### What remains optional
 
-Trajecta retains backend modules for skill mining, replay fixtures, baseline-versus-candidate evaluation, versioning, dependency checks, statistical experiments, regression analysis, and rollback. These are **advanced/manual or configuration-gated capabilities**, not the default path for everyday experience learning.
+Trajecta retains an optional skill-mining module (not wired into the running app), replay fixtures, manual baseline-versus-candidate evaluation, versioning, dependency checks, configuration-gated statistical experiments, regression analysis, and rollback. These are **advanced/manual or configuration-gated capabilities**, not the default path for everyday experience learning.
 
 In `config/default.yaml`, the default settings include:
 
 ```yaml
 skills:
-  learning:
-    enabled: false
-    auto_evaluate: false
-    auto_promote_initial: false
-    auto_experiment_upgrades: false
   experiments:
     enabled: false
   fixtures:
@@ -147,7 +142,7 @@ skills:
     capture_workspace: false
 ```
 
-The legacy automatic mining/evaluation worker is not started at application startup. An explicitly requested manual evaluation can still use model tokens and replay infrastructure. Experience records **do not** grant tool permissions or automatically rewrite an active executable skill.
+The legacy automatic mining/evaluation worker and its chat hooks have been removed. The old `/skills/learning/status` and `/skills/learning/run` endpoints return HTTP 410 for stale clients. An explicitly requested manual candidate evaluation or upgrade can still use model tokens and replay infrastructure. Experience records **do not** grant tool permissions or automatically rewrite an active executable skill.
 
 ## Memory, RAG, and embeddings
 
@@ -326,7 +321,7 @@ The FastAPI backend serves endpoints under `/api/v1`:
 
 **Implemented in the uploaded source:** Chat streaming, checkpoint-backed branches, local workspaces, attachments/RAG, provider configuration, memory, permissions/HITL, personal and MCP tools, scheduler paths, feedback-driven experience storage, skill versioning, and execution metrics.
 
-**Retained but not the default workflow:** Legacy candidate mining, replay evaluation, online experiments, and regression/rollback code. Their APIs and modules exist, but normal conversations do not automatically run an evaluation campaign.
+**Retained but not the default workflow:** The standalone skill miner, replay evaluation, online experiments, and regression/rollback code. Mining no longer has an active endpoint; explicit candidate evaluation and other manual/opt-in APIs remain available. Normal conversations do not automatically run an evaluation campaign.
 
 **Not yet a complete production observability stack:** OpenTelemetry dependencies and observability documentation exist, but end-to-end instrumented traces/exporters and the Grafana/Tempo/Loki/Prometheus integration are not wired into the runtime. The `/traces` router is currently a placeholder.
 

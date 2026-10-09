@@ -2,7 +2,15 @@
 
 ## Overview
 
-Trajecta uses **LangChain Deep Agents Memory** as the primary agent memory system. The Trajectory Store (in `server/src/skills/trajectory_store/`) is separate — it holds raw execution data for skill mining and evaluation.
+Trajecta uses **LangChain Deep Agents Memory** for agent context, plus SQLite,
+FTS5 and embedded Qdrant for application records and retrieval. The Trajectory
+Store (in `server/src/skills/trajectory_store/`) is separate: it holds raw
+execution evidence for attribution, experience learning, and optional evaluation.
+
+**Current implementation limitation:** Episodic memory can search existing
+LangGraph threads but does not yet consolidate them into indexed episodes.
+Feedback-backed procedure suggestions live in `learned_experiences` and do
+not automatically become executable skills in `/skills/`.
 
 ## Memory Architecture
 

@@ -141,7 +141,6 @@ export interface SkillCatalog {
   skills: SkillRegistryItem[];
   candidates: SkillCandidate[];
   experiments: SkillExperiment[];
-  learning: SkillLearningStatus;
   summary: {
     active: number;
     disabled: number;
@@ -219,46 +218,6 @@ export interface SkillEvaluationReport {
     reasons?: string[];
   };
   case_results?: Array<Record<string, unknown>>;
-}
-
-export interface SkillLearningRun {
-  id: string;
-  started_at: string;
-  completed_at: string | null;
-  status: string;
-  checkpoint_before: number;
-  observed_success_count: number;
-  created_count: number;
-  evaluated_count: number;
-  verified_count: number;
-  promoted_count: number;
-  error: string | null;
-  metadata: Record<string, unknown>;
-}
-
-export interface SkillLearningStatus {
-  enabled: boolean;
-
-  worker_running: boolean;
-
-  /**
-   * True while a mining pass is in flight. The spec calls it `run_active`;
-   * backends still emitting the older `learning_run_active` are accepted.
-   */
-  run_active?: boolean;
-  learning_run_active?: boolean;
-
-  total_successful_trajectories: number;
-
-  success_count_checkpoint: number;
-
-  pending_successes: number;
-
-  trigger_every_successes: number;
-
-  state: Record<string, unknown>;
-
-  recent_runs: SkillLearningRun[];
 }
 
 export interface SkillMetricSummary {

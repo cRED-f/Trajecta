@@ -25,8 +25,7 @@
 - GET  /api/v1/skills/evaluations             Evaluation history
 - GET  /api/v1/skills/evaluations/{id}        A specific evaluation
 - GET  /api/v1/skills/fixtures/{id}           A replay fixture manifest
-- GET  /api/v1/skills/learning/status         Automatic learning loop status
-- POST /api/v1/skills/learning/run            Manually queue a learning pass
+- GET/POST /api/v1/skills/learning/*          Retired endpoints (HTTP 410)
 """
 
 from __future__ import annotations
@@ -69,10 +68,6 @@ class SkillEnabledUpdate(BaseModel):
     enabled: bool
 
 
-class SkillLearningRunRequest(BaseModel):
-    force: bool = True
-
-
 @router.get("")
 async def list_skills(request: Request) -> dict[str, Any]:
     service = _service(request)
@@ -85,7 +80,6 @@ async def list_skills(request: Request) -> dict[str, Any]:
         "skills": registered,
         "candidates": candidates,
         "experiments": experiments,
-        "learning": await service.learning.status(),
         "summary": {
             "active": sum(
                 1 for item in registered if item.get("status") == "active"
@@ -378,21 +372,13 @@ async def skill_dependency_graph(request: Request) -> dict[str, Any]:
 
 
 @router.get("/learning/status")
-async def skill_learning_status(request: Request) -> dict[str, Any]:
-    return await _service(request).learning.status()
-
-
-@router.post("/learning/run", status_code=202)
-async def queue_skill_learning_run(
-    request: Request,
-    body: SkillLearningRunRequest,
-) -> dict[str, Any]:
-    # Removed from the experience-first workflow. Do not silently enqueue
-    # the old token-expensive mining process from stale desktop clients.
+@router.post("/learning/run")
+async def retired_skill_learning() -> dict[str, Any]:
+    # Keep explicit 410s for stale clients; never restart the retired loop.
     raise HTTPException(
         status_code=410,
-        detail="Automatic skill mining has been retired. Learning now happens "
-               "from real task outcomes and explicit user feedback.",
+        detail="Automatic skill mining has been retired. Use /learning for "
+               "feedback-driven experiences, or explicit skill evaluation APIs.",
     )
 
 

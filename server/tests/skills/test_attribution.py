@@ -525,7 +525,6 @@ async def _chat_service(
         TrajectoryStore(db),
         ReplayFixtureStore(settings, db),
         ContentGuardrailService(settings, PermissionPolicyStore(db)),
-        None,  # skill_learning
         _attributor(db),  # skill_execution
     )
 

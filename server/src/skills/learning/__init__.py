@@ -1,3 +1,1 @@
-from server.src.skills.learning.coordinator import SkillLearningCoordinator
-
-__all__ = ["SkillLearningCoordinator"]
+"""Experience-first learning; retired automatic skill mining is not exported."""

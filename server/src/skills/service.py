@@ -1,8 +1,9 @@
 """Skills service — wires mining/evaluation/promotion persistence for the API.
 
-Owns the skill repository, trajectory store, replay fixtures, skill miner,
-evaluator, versioner, promoter and the automatic learning coordinator. REST
-routes reach it through ``request.app.state.skills_service``.
+Owns the skill repository, trajectory store, replay fixtures, evaluator,
+versioner, and promoter. The standalone skill miner is not instantiated here;
+experience learning is separate.
+REST routes reach this service through ``request.app.state.skills_service``.
 """
 
 from __future__ import annotations
@@ -24,7 +25,6 @@ from server.src.skills.evaluation.live_stream import BackgroundEvaluationStreams
 from server.src.skills.evaluation.replay import DeepAgentReplayExecutor, SkillReplay
 from server.src.skills.evaluation.regression import SkillRegressionDetector
 from server.src.skills.experiments import SkillExperimentRouter, SkillExperimentService
-from server.src.skills.learning import SkillLearningCoordinator
 from server.src.skills.promotion.promoter import SkillPromoter
 from server.src.skills.regression import (
     AutomaticRollback,
@@ -32,7 +32,6 @@ from server.src.skills.regression import (
     VersionRegressionDetector,
 )
 from server.src.skills.repository import SkillRepository
-from server.src.skills.skill_miner.miner import SkillMiner
 from server.src.skills.trajectory_store import TrajectoryStore
 from server.src.skills.versioning.versioner import SkillVersioner
 
@@ -105,26 +104,6 @@ class SkillsService:
             versioner=self.versioner,
             analytics=self.analytics,
             trajectories=trajectories,
-        )
-
-        # -- Mining ----------------------------------------------------
-        self.miner = SkillMiner(
-            settings=settings,
-            trajectories=trajectories,
-            repository=repository,
-        )
-
-        # -- Automatic learning loop -----------------------------------
-        self.learning = SkillLearningCoordinator(
-            settings=settings,
-            db=memory.sqlite,
-            trajectories=trajectories,
-            miner=self.miner,
-            evaluator=self.evaluator,
-            promoter=self.promoter,
-            repository=repository,
-            experiments=self.experiments,
-            evaluation_streams=self.background_evaluation_streams,
         )
 
         # -- Regression policy ----------------------------------------

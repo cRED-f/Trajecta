@@ -19,14 +19,57 @@ def test_skills_screen_does_not_mount_old_dashboard():
 def test_startup_does_not_boot_background_mining_worker():
     code = (ROOT / "server/src/api/app.py").read_text()
     assert 'skills.learning.start()' not in code
+    assert 'skills.learning.stop()' not in code
+
+
+def test_retired_mining_coordinator_is_not_attached_to_chat_or_skills():
+    assert not (ROOT / "server/src/skills/learning/coordinator.py").exists()
+    for relative_path in (
+        "server/src/chat/service.py",
+        "server/src/skills/service.py",
+    ):
+        code = (ROOT / relative_path).read_text()
+        assert "SkillLearningCoordinator" not in code
+        assert "_skill_learning" not in code
+    assert "SkillMiner(" not in (
+        ROOT / "server/src/skills/service.py"
+    ).read_text()
+    assert (ROOT / "server/src/skills/skill_miner/miner.py").exists()
+    assert "class SkillLearningConfig" not in (
+        ROOT / "server/src/config/__init__.py"
+    ).read_text()
+
+
+def test_stale_learning_routes_are_explicitly_retired():
+    code = (ROOT / "server/src/api/routes/skills.py").read_text()
+    assert '@router.get("/learning/status")' in code
+    assert '@router.post("/learning/run")' in code
+    assert 'async def retired_skill_learning()' in code
+    assert 'status_code=410' in code
+    assert '"learning": await service.learning.status()' not in code
+
+
+def test_stale_local_learning_settings_cannot_restart_the_worker():
+    from server.src.config import Settings
+
+    settings = Settings.model_validate({"skills": {"learning": {"enabled": True}}})
+    assert "learning" not in settings.skills.model_fields_set
+    assert not hasattr(settings.skills, "learning")
+
+
+def test_manual_evaluation_and_experience_learning_are_preserved():
+    skills = (ROOT / "server/src/skills/service.py").read_text()
+    app = (ROOT / "server/src/api/app.py").read_text()
+    assert "self.evaluator = SkillEvaluator" in skills
+    assert "async def upgrade_skill(" in skills
+    assert "ExperienceLearningService" in app
+    assert "app.state.experience_learning = experiences" in app
 
 
 def test_default_old_experiment_and_mining_controls_disabled():
     code = (ROOT / "config/default.yaml").read_text()
-    learning = code.split('  learning:', 1)[1].split('  experiments:', 1)[0]
     experiment = code.split('  experiments:', 1)[1].split('  regression:', 1)[0]
-    assert 'enabled: false' in learning
-    assert 'auto_evaluate: false' in learning
+    assert '  learning:' not in code
     assert 'enabled: false' in experiment
 
 

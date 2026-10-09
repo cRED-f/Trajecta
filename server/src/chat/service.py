@@ -50,7 +50,6 @@ if TYPE_CHECKING:
     from server.src.llm_gateway.settings import LLMSettingsStore
     from server.src.skills.analytics import SkillExecutionAttributor
     from server.src.skills.experiments import SkillExperimentService
-    from server.src.skills.learning import SkillLearningCoordinator
     from server.src.skills.service import SkillsService
 
 logger = logging.getLogger(__name__)
@@ -121,7 +120,6 @@ class ChatService:
         trajectories: TrajectoryStore,
         replay_fixtures: ReplayFixtureStore,
         content_guardrails: ContentGuardrailService,
-        skill_learning: "SkillLearningCoordinator | None" = None,
         skill_execution: "SkillExecutionAttributor | None" = None,
         skills: "SkillsService | None" = None,
         llm_settings: "LLMSettingsStore | None" = None,
@@ -146,12 +144,9 @@ class ChatService:
         # One service covers everything; the individual collaborators stay
         # overridable so callers that only have an attributor still work.
         if skills is not None:
-            if skill_learning is None:
-                skill_learning = skills.learning
             if skill_execution is None:
                 skill_execution = skills.execution
 
-        self._skill_learning = skill_learning
         self._skill_execution = skill_execution
 
     # ------------------------------------------------------------------
@@ -682,8 +677,6 @@ class ChatService:
                 "user_message_id": turn.user_message.id,
             },
             )
-        if self._skill_learning is not None:
-            self._skill_learning.begin_interactive()
         try:
             yield ChatEvent(
                 type="message.accepted",
@@ -848,8 +841,6 @@ class ChatService:
                 pass
             raise
         finally:
-            if self._skill_learning is not None:
-                self._skill_learning.end_interactive()
             await self._attribute_skill_execution(trajectory_id)
             await self._runs.unregister(turn.conversation.id, turn.run_id)
 
@@ -1037,8 +1028,6 @@ class ChatService:
                 "decisions": turn.decisions,
             },
         )
-        if self._skill_learning is not None:
-            self._skill_learning.begin_interactive()
         try:
             async for event in self._runtime.stream_resume(
                 prepared=turn.runtime,
@@ -1162,8 +1151,6 @@ class ChatService:
                 pass
             raise
         finally:
-            if self._skill_learning is not None:
-                self._skill_learning.end_interactive()
             await self._attribute_skill_execution(trajectory_id)
             await self._runs.unregister(turn.conversation.id, turn.run_id)
 
@@ -1368,7 +1355,6 @@ def build_chat_service(
     content_guardrails: ContentGuardrailService | None = None,
     trajectories: TrajectoryStore | None = None,
     replay_fixtures: ReplayFixtureStore | None = None,
-    skill_learning: "SkillLearningCoordinator | None" = None,
     skill_execution: "SkillExecutionAttributor | None" = None,
     skills: "SkillsService | None" = None,
     skill_experiments: "SkillExperimentService | None" = None,
@@ -1446,7 +1432,6 @@ def build_chat_service(
         trajectories,
         replay_fixtures,
         content_guardrails,
-        skill_learning,
         skill_execution,
         skills,
         llm_settings,

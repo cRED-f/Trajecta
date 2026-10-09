@@ -2,16 +2,23 @@
 
 ## Overview
 
-The core differentiating subsystem of Trajecta. Captures trajectories, mines patterns, generates candidate skills, evaluates them against baselines, and promotes only verified improvements into procedural memory.
+Trajecta's default learning path is **experience-first**: the chat runtime records
+trajectories, while `ExperienceLearningService` saves explicit preferences,
+corrections for review, and feedback-backed procedure suggestions. This path
+does not mine candidates or evaluate them at the end of a conversation.
 
-## Pipeline
+The older skill miner, replay evaluator, versioner, promoter, experiments,
+and rollback services are retained for explicit/manual or opt-in workflows.
+The automatic learning coordinator and its threshold-based worker are retired.
+
+## Optional skill-evaluation pipeline (not automatic)
 
 ```
-Task Execution
+Recorded trajectories / existing candidate
   → Trajectory Store (raw data)
-  → Skill Miner (pattern extraction)
+  → Optional standalone Skill Miner (pattern extraction)
   → Candidate Skill
-  → Replay + Evaluation
+  → Explicit replay + evaluation
   → PASS / FAIL
   → Promote to Procedural Memory (or Reject)
   → Versioned Skill Registry

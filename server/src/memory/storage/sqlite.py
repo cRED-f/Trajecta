@@ -866,7 +866,11 @@ class SQLiteDatabase:
         )
 
     async def _migrate_v12(self) -> None:
-        """Schema v12: persisted verified-skill learning coordinator state."""
+        """Historical v12 schema for retired learning coordinator state.
+
+        Keep the migration for existing user databases and schema-version
+        continuity; it does not enable or start the retired worker.
+        """
 
         assert self._conn is not None
         await self._conn.executescript(

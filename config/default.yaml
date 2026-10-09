@@ -53,28 +53,6 @@ memory:
 skills:
   storage_path: ".trajecta/skills"
 
-  learning:
-    # Expensive skill generation is manual; ordinary experience is learned on real turns.
-    enabled: false
-
-    # Run learning after every 4 newly successful trajectories.
-    trigger_every_successes: 4
-
-    scan_limit: 200
-    minimum_occurrences: 4
-
-    sequence_similarity: 0.72
-    goal_similarity: 0.18
-
-    max_candidates_per_run: 3
-
-    # null = normal Bifrost/default model resolution
-    model_name: null
-
-    auto_evaluate: false
-    auto_promote_initial: false
-    auto_experiment_upgrades: false
-
   experiments:
     enabled: false
 
