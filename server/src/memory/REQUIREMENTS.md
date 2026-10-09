@@ -128,3 +128,15 @@ Each memory wrapper exposes async methods:
 - `EpisodicMemory`: `consolidate(trajectory_id)`, `list(limit, user_id, scope)`, `get(id, user_id, scope)`, `search(query, limit, user_id, scope)`, `delete(id, user_id, scope)`, `as_tool(name)`
 - `ProceduralMemory`: `apromote(name, content)`, `alist()`, `aload(name)`, `asearch(query, limit)`
 - `MemoryProvider`: `open()`/`close()` (async), `agent_kwargs()`, module-level `get_memory_provider()` / `reset_memory_provider()`
+
+## Bounded background reflection (migration v18)
+
+The experience-first reflection worker queues meaningful completed trajectories and
+explicit feedback in `reflection_jobs`. Atomic leases, retry/backoff, and recovery
+protect the queue across restarts. It uses a configured Bifrost model to produce
+strictly structured, event-grounded lessons and procedure suggestions. The
+`automatic_memory` switch applies; model calls have daily, input and output limits.
+Suggested experiences remain `needs_review` and never grant tool permissions,
+activate executable skills, or trigger replay evaluation. Workspace-scoped and
+non-local user insights stay in the audit job record until scoped learning is
+implemented. `GET /api/v1/learning/reflection/status` reports queue activity.

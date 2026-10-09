@@ -1,12 +1,15 @@
 """Low-cost experience learning and human review APIs."""
 from __future__ import annotations
 
+import logging
+
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/learning", tags=["learning"])
+logger = logging.getLogger(__name__)
 
 
 class FeedbackRequest(BaseModel):
@@ -27,8 +30,15 @@ def _learner(request: Request):
 async def feedback(body: FeedbackRequest, request: Request):
     try:
         response = await _learner(request).feedback(**body.model_dump())
+        # Feedback is committed before any analytics or model work.
+        # Queueing must not depend on downstream skill metrics succeeding.
+        worker = getattr(request.app.state, "reflection_worker", None)
+        if worker is not None:
+            try:
+                await worker.enqueue(body.trajectory_id, reason="feedback")
+            except Exception:
+                logger.warning("feedback reflection enqueue failed", exc_info=True)
         skills = request.app.state.skills_service
-        # Only newly confirmed outcomes can contribute to online skill scores.
         trajectory = await skills.trajectories.get(body.trajectory_id)
         if trajectory is not None:
             await skills.execution.attribute(body.trajectory_id)
@@ -37,8 +47,6 @@ async def feedback(body: FeedbackRequest, request: Request):
                 success=body.rating == "success",
                 metrics=(trajectory.get("metadata") or {}).get("run_metrics") or {},
             )
-        # Outcome evidence is stored immediately; do not wake the retired
-        # mining/evaluation worker or spend additional model tokens.
         return response
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -78,3 +86,12 @@ async def learning_overview(request: Request):
         "skills": await service.repository.list_registered(),
         "previous_candidates": await service.repository.list_candidates(limit=200),
     }
+
+
+@router.get("/reflection/status")
+async def reflection_status(request: Request, limit: int = 20):
+    """Inspect durable review progress without starting or evaluating anything."""
+    worker = getattr(request.app.state, "reflection_worker", None)
+    if worker is None:
+        raise HTTPException(status_code=503, detail="Reflection worker is not available")
+    return await worker.status(limit=limit)

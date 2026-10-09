@@ -7,6 +7,7 @@ Lives under `.trajecta/data/trajecta.db`.
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ class SQLiteDatabase:
     def __init__(self, path: str | Path) -> None:
         self._path = Path(path)
         self._conn: Any | None = None  # aiosqlite.Connection
+        self._write_lock = asyncio.Lock()
 
     @property
     def path(self) -> Path:
@@ -217,7 +219,41 @@ class SQLiteDatabase:
             )
             version = 17
 
+        if version < 18:
+            await self._migrate_v18()
+            await self._conn.execute(
+                "INSERT INTO schema_version(version) VALUES (18)"
+            )
+            version = 18
+
         await self._conn.commit()
+
+    async def _migrate_v18(self) -> None:
+        """Persist bounded reflection jobs and provenance of reviewer output."""
+        assert self._conn is not None
+        await self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS reflection_jobs (
+                id TEXT PRIMARY KEY,
+                trajectory_id TEXT NOT NULL REFERENCES trajectories(id) ON DELETE CASCADE,
+                reason TEXT NOT NULL CHECK(reason IN ('completion', 'feedback')),
+                status TEXT NOT NULL DEFAULT 'pending'
+                    CHECK(status IN ('pending', 'processing', 'completed', 'skipped', 'failed')),
+                attempts INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at TEXT NOT NULL,
+                lease_until TEXT,
+                result_json TEXT,
+                last_error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(trajectory_id, reason)
+            );
+            CREATE INDEX IF NOT EXISTS idx_reflection_jobs_due
+              ON reflection_jobs(status, next_attempt_at, created_at);
+            CREATE INDEX IF NOT EXISTS idx_reflection_jobs_trajectory
+              ON reflection_jobs(trajectory_id);
+            """
+        )
 
     async def _migrate_v17(self) -> None:
         """Durable episodic records and transactionally maintained FTS5 index."""
@@ -1234,15 +1270,28 @@ class SQLiteDatabase:
     async def execute(self, sql: str, params: tuple[Any, ...] = ()) -> Any:
         """Run a single SQL statement. Use `executescript` for multi-statement DDL."""
         assert self._conn is not None, "call open() first"
-        cur = await self._conn.execute(sql, params)
-        await self._conn.commit()
-        return cur
+        async with self._write_lock:
+            cur = await self._conn.execute(sql, params)
+            await self._conn.commit()
+            return cur
 
     async def executescript(self, sql: str) -> None:
         """Run a multi-statement SQL script (DDL with several statements)."""
         assert self._conn is not None, "call open() first"
         await self._conn.executescript(sql)
         await self._conn.commit()
+
+    async def execute_returning(
+        self, sql: str, params: tuple[Any, ...] = ()
+    ) -> list[dict[str, Any]]:
+        """Run a mutating RETURNING statement and commit after consuming rows."""
+        assert self._conn is not None, "call open() first"
+        async with self._write_lock:
+            cur = await self._conn.execute(sql, params)
+            rows = await cur.fetchall()
+            await cur.close()
+            await self._conn.commit()
+            return [dict(row) for row in rows]
 
     async def fetch(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
         assert self._conn is not None, "call open() first"

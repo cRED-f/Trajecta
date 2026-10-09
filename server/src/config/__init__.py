@@ -318,6 +318,21 @@ class VectorStoreConfig(BaseModel):
     collection_prefix: str = "trajecta_"
 
 
+class ReflectionConfig(BaseModel):
+    """Bounded learning reviews. Uses the existing Bifrost gateway."""
+
+    enabled: bool = True
+    model: str | None = None  # None uses the persisted new-chat default
+    poll_seconds: float = Field(default=5.0, ge=0.1, le=300.0)
+    timeout_seconds: float = Field(default=45.0, ge=5.0, le=180.0)
+    max_input_chars: int = Field(default=6000, ge=500, le=24000)
+    max_output_tokens: int = Field(default=500, ge=100, le=2000)
+    max_daily_reviews: int = Field(default=20, ge=0, le=1000)
+    max_attempts: int = Field(default=3, ge=1, le=10)
+    retry_delay_seconds: int = Field(default=60, ge=1, le=3600)
+    lease_seconds: int = Field(default=180, ge=60, le=600)
+
+
 class MemoryConfig(BaseModel):
     db_path: str = ".trajecta/data/trajecta.db"         # our task/skill/config store + FTS
     langgraph_db_path: str = ".trajecta/data/langgraph.db"  # LangGraph checkpointer + store (one file)
@@ -325,6 +340,7 @@ class MemoryConfig(BaseModel):
     memory_files: list[str] = Field(default_factory=lambda: ["/memories/AGENTS.md"])
     skills_path: str = "/skills/"
     vector_store: VectorStoreConfig = VectorStoreConfig()
+    reflection: ReflectionConfig = ReflectionConfig()
 
 
 class LlmProviderConfig(BaseModel):

@@ -127,6 +127,7 @@ class ChatService:
         experiences: Any | None = None,
         permission_policy: PermissionPolicyStore | None = None,
         episodic: EpisodicMemory | None = None,
+        reflection: Any | None = None,
     ) -> None:
         self._settings = settings
         self._models = BifrostModelFactory(settings)
@@ -143,6 +144,7 @@ class ChatService:
         self._experiences = experiences
         self._permission_policy = permission_policy
         self._episodic = episodic
+        self._reflection = reflection
 
         # One service covers everything; the individual collaborators stay
         # overridable so callers that only have an attributor still work.
@@ -943,6 +945,12 @@ class ChatService:
             await self._episodic.consolidate(trajectory_id)
         except Exception:
             logger.warning("episodic consolidation failed", exc_info=True)
+        # Enqueue only after the run is durable. Never wait for LLM review.
+        if self._reflection is not None:
+            try:
+                await self._reflection.enqueue(trajectory_id)
+            except Exception:
+                logger.warning("reflection enqueue failed", exc_info=True)
 
     async def _attribute_skill_execution(self, trajectory_id: str | None) -> None:
         """Turn the finished trajectory into skill execution metrics.
@@ -1384,6 +1392,7 @@ def build_chat_service(
     skill_experiments: "SkillExperimentService | None" = None,
     llm_settings: "LLMSettingsStore | None" = None,
     experiences: Any | None = None,
+    reflection: Any | None = None,
 ) -> ChatService:
     if memory.sqlite is None:
         raise RuntimeError("MemoryProvider must be opened before ChatService")
@@ -1462,4 +1471,5 @@ def build_chat_service(
         experiences,
         permission_policy,
         episodic=memory.episodic,
+        reflection=reflection,
     )

@@ -1,4 +1,4 @@
-"""Evidence-linked learning from real interactions; no evaluation-model calls.
+"""Evidence-linked learning from real interactions.
 
 Nothing recorded here changes permission policy, invokes a tool, or changes
 an active skill version. Unconfirmed corrections require review, and learned
@@ -204,6 +204,37 @@ class ExperienceLearningService:
         else:
             return {"status": "feedback_recorded", "trajectory_id": trajectory_id}
         return {"status": "learned", "trajectory_id": trajectory_id, "item": item}
+
+    async def record_reflection(
+        self, *, trajectory_id: str, kind: str, content: str,
+        confidence: float, evidence_event_seqs: list[int], reason: str,
+    ) -> dict[str, Any] | None:
+        """Store reviewer suggestions for human review; never activate them."""
+        if kind not in {"lesson", "correction", "procedure"} or not evidence_event_seqs:
+            return None
+        content = " ".join(content.strip().split())[:450]
+        if len(content) < 16 or _SECRET.search(content):
+            return None
+        # The present UI understands correction/procedure; lessons are a
+        # non-executable procedural suggestion until the next refinement step.
+        target_kind = "correction" if kind == "correction" else "procedure"
+        fingerprint = _fingerprint(content)
+        old = await self._db.fetchone(
+            """SELECT * FROM learned_experiences
+               WHERE scope='local' AND kind=? AND fingerprint=?""",
+            (target_kind, fingerprint),
+        )
+        # A background inference cannot demote an already user-approved item.
+        if old is not None and old["status"] in {"active", "rejected"}:
+            return _decode(old)
+        return await self._upsert(
+            kind=target_kind, status="needs_review", content=content,
+            confidence=min(float(confidence), 0.7),
+            source_trajectory_id=trajectory_id,
+            fingerprint=fingerprint,
+            evidence={"source": "background_reflection", "reason": reason,
+                      "insight_kind": kind, "event_seqs": evidence_event_seqs[:12]},
+        )
 
     async def list(self, *, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         limit = max(1, min(200, limit))

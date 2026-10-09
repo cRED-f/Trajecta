@@ -29,6 +29,7 @@ from server.src.guardrails.policy import PermissionPolicyStore
 from server.src.llm_gateway.bifrost_admin import BifrostAdminClient
 from server.src.llm_gateway.settings import LLMSettingsStore
 from server.src.memory.provider import MemoryProvider, get_memory_provider
+from server.src.memory.reflection.worker import ReflectionWorker
 from server.src.runtime_encoding import configure_utf8_runtime
 from server.src.skills.service import build_skills_service
 from server.src.skills.learning.experience import ExperienceLearningService
@@ -95,6 +96,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         llm_admin = BifrostAdminClient(
             BifrostModelFactory(settings).gateway_base_url(),
         )
+        reflection = ReflectionWorker(
+            memory.sqlite, skills.trajectories, experiences, memory.episodic,
+            settings, permission_policy, llm_settings,
+            guardrails=content_guardrails,
+        )
 
         chat = build_chat_service(
             settings,
@@ -109,6 +115,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             skills=skills,
             experiences=experiences,
             llm_settings=llm_settings,
+            reflection=reflection,
         )
 
         async def run_scheduled_job(job: dict) -> str:
@@ -152,6 +159,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.chat_service = chat
         app.state.skills_service = skills
         app.state.experience_learning = experiences
+        app.state.reflection_worker = reflection
         app.state.scheduler = scheduler
         app.state.model_catalog = ModelCatalogService(
             settings,
@@ -160,15 +168,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.llm_admin = llm_admin
         app.state.llm_settings = llm_settings
 
-        # Experience learning uses explicit user instructions and feedback.
-        # There is no automatic mining worker. Manual replay-evaluation APIs
-        # remain available for diagnostics and deliberate skill upgrades.
-
+        # Reflection consumes recorded evidence, never invokes replay evaluation
+        # and never auto-activates a skill. Scheduler and chat remain independent.
+        await reflection.start()
         try:
             yield
-
         finally:
             # Stop producers before SQLite/tools disappear.
+            await reflection.stop()
             await scheduler.stop()
             await personal_tools.close()
             await memory.close()

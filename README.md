@@ -91,7 +91,7 @@ Streaming sends response text as model chunks arrive. Trajectory capture stores 
 
 ## Experience-first learning
 
-Trajecta's current learning path focuses on **real interactions**, not automatic candidate-versus-baseline tournaments.
+Trajecta's learning path focuses on **real interactions**, not automatic candidate-versus-baseline tournaments. A separate, bounded reflection worker reviews qualifying completed trajectories and explicit feedback through Bifrost without delaying streamed chat. Reviewer-generated insights always require human review before becoming active experience context.
 
 ```text
 Real conversation / task
@@ -120,6 +120,7 @@ Capture message, tool activity, outcome, and feedback
 - **Preferences:** Explicit response-style instructions can be stored without an extra evaluation-model call.
 - **Corrections:** Potential corrections are kept for review instead of silently being treated as authoritative facts.
 - **Confirmed procedures:** Helpful feedback on a completed run can produce a short record of the task and tools observed. A record involving unknown or potentially mutating tools requires review.
+- **Reflections:** Meaningful tool use, recoveries, corrections, or substantial tasks can be queued for an evidence-grounded, structured LLM review. This produces reviewable suggestions; it does not execute tools or automatically promote skills.
 - **Revisions:** Learned experiences have version history and rejected entries remain archived rather than being silently reactivated.
 - **Evidence and attribution:** The system retains links to source trajectories and captures model/tool execution metrics.
 
@@ -142,14 +143,14 @@ skills:
     capture_workspace: false
 ```
 
-The legacy automatic mining/evaluation worker and its chat hooks have been removed. The old `/skills/learning/status` and `/skills/learning/run` endpoints return HTTP 410 for stale clients. An explicitly requested manual candidate evaluation or upgrade can still use model tokens and replay infrastructure. Experience records **do not** grant tool permissions or automatically rewrite an active executable skill.
+The legacy automatic mining/evaluation worker and its chat hooks have been removed. The separate, lightweight reflection queue uses schema migration v18, leases and bounded retry/backoff. It checks the existing `automatic_memory` switch, restores expired jobs after restarts, and enforces configurable daily call/input/output budgets. Its inspection endpoint is `GET /api/v1/learning/reflection/status`. The default reflection model follows the persisted new-chat model; it can be overridden using `memory.reflection.model`. Sensitive content follows the current model-context guardrails before Bifrost receives it. Reflection suggestions are not automatically activated, and project/user-scoped reviews are not published to the existing global learned-experience context. The old `/skills/learning/status` and `/skills/learning/run` endpoints return HTTP 410 for stale clients. An explicitly requested manual candidate evaluation or upgrade can still use model tokens and replay infrastructure. Experience records **do not** grant tool permissions or automatically rewrite an active executable skill.
 
 ## Memory, RAG, and embeddings
 
 Trajecta distinguishes four memory roles:
 
 - **Working memory:** The active task and LangGraph execution state.
-- **Episodic memory:** Durable, evidence-linked summaries extracted from meaningful finished tasks, with SQLite FTS5 and optional Qdrant retrieval. Episodes remain unverified unless supported by separate outcome evidence.
+- **Episodic memory:** Durable, evidence-linked summaries extracted from meaningful finished tasks, with SQLite FTS5 and optional Qdrant retrieval. Episodes remain unverified unless supported by separate outcome evidence. A separate background reviewer can derive reviewable lessons from source events without overwriting those episodes.
 - **Semantic memory:** Reusable factual context and preferences.
 - **Procedural memory:** Saved skills and reusable procedures.
 
