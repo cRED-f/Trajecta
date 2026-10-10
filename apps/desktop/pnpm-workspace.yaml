@@ -1,2 +1,3 @@
 allowBuilds:
-  esbuild: set this to true or false
+  # esbuild uses a postinstall check for its platform-specific binary.
+  esbuild: true
