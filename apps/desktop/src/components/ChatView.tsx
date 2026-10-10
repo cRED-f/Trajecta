@@ -543,13 +543,6 @@ const approval =
                     onEdit={
                       startEdit
                     }
-                    onResend={(
-                      value,
-                    ) =>
-                      void actions.resend(
-                        value,
-                      )
-                    }
                     onRegenerate={(
                       value,
                     ) =>

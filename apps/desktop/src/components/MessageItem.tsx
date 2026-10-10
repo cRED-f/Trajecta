@@ -3,7 +3,6 @@ import {
   Copy,
   Pencil,
   RefreshCcw,
-  RotateCcw,
   ThumbsUp,
   ThumbsDown,
 } from "lucide-react";
@@ -41,10 +40,6 @@ interface Props {
   attachments: Attachment[];
 
   onEdit(
-    message: ChatMessage,
-  ): void;
-
-  onResend(
     message: ChatMessage,
   ): void;
 
@@ -173,7 +168,6 @@ export function MessageItem({
   message,
   attachments,
   onEdit,
-  onResend,
   onRegenerate,
 }: Props) {
   const [copied, setCopied] =
@@ -357,34 +351,17 @@ export function MessageItem({
         </button>
 
         {user && (
-          <>
-            <button
-              className="icon-button"
-              type="button"
-              aria-label="Edit message"
-              title="Edit"
-              onClick={() =>
-                onEdit(message)
-              }
-            >
-              <Pencil size={15} />
-            </button>
-
-            <button
-              className="icon-button"
-              type="button"
-              disabled
-              aria-label="Resend message"
-              title="Resend"
-              onClick={() =>
-                onResend(message)
-              }
-            >
-              <RotateCcw
-                size={15}
-              />
-            </button>
-          </>
+          <button
+            className="icon-button"
+            type="button"
+            aria-label="Edit message"
+            title="Edit"
+            onClick={() =>
+              onEdit(message)
+            }
+          >
+            <Pencil size={15} />
+          </button>
         )}
 
         {!user && (
