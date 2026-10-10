@@ -54,7 +54,15 @@ package before replacing the existing Python environment. If Settings reports Fa
 Re-run `pnpm trajecta:install` after updating the source to repair it.
 
 The installed FastAPI backend runs at `127.0.0.1:8420`. If that port is occupied,
-Trajecta **fails closed** rather than attaching to an unknown backend. Data is
+Trajecta **fails closed** rather than attaching to an unknown backend.
+The process manager checks its existing child before probing port 8420. If an older
+Trajecta window terminates unexpectedly but its backend survives, the new window
+can reconnect when the health endpoint reports the same persisted installation
+identity. This identity is for accidental-collision detection, **not API
+authentication**. Attached orphan processes are never force-killed by the new
+window: stop them explicitly to restart or completely shut down their backend.
+Backends installed before this fix do not report an instance identity and must
+be stopped once before the new runtime can manage the port. Data is
 separated from build artifacts so updates don't delete conversations or memories.
 The built-in embedded Qdrant mode needs no Docker service.
 
@@ -110,3 +118,19 @@ must be tested on a Windows machine with Node/pnpm/Rust/MSVC dependencies.
 permissions; this patch does not add per-session loopback authentication.
 Do not expose port 8420 outside localhost or treat this as a hardened multi-user
 service without additional authentication and threat-model testing.
+
+### Chat says "Failed to fetch" even though FastAPI started
+
+The v42 supervisor distinguishes startup from normal operation. A backend that
+has already passed its readiness check is **never killed solely because a later
+health probe times out while a model/tool request is running**. The Desktop &
+Application page reports a temporarily unreachable live process as **Not
+responding**, and a chat network failure now points to that page and the log.
+
+For Windows diagnostics, compare `Invoke-RestMethod
+http://127.0.0.1:8420/api/v1/health` before and immediately after sending a
+message, and inspect the last 80 lines of
+`$env:LOCALAPPDATA\ai.trajecta.desktop\logs\backend.log`. If health succeeds
+but requests still fail, check the desktop WebView network console for a blocked
+request/CORS error. These checks distinguish process termination from a browser
+network policy problem; they should not be used to kill an unrelated process.

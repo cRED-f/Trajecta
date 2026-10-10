@@ -101,6 +101,8 @@ struct DesktopProcesses {
     restart_attempts: Mutex<u8>,
     stopping: AtomicBool,
     backend_started_at: Mutex<Option<std::time::Instant>>,
+    // A previous Tauri process may have left its own FastAPI backend alive.
+    attached_backend: AtomicBool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -136,23 +138,50 @@ fn service_online(port: u16) -> bool {
     TcpStream::connect_timeout(&addr, Duration::from_millis(250)).is_ok()
 }
 
-// A TCP listener on the port is not proof that Trajecta is healthy: it could
-// belong to another app, or Python could still be starting up.
-fn fastapi_ready(port: u16) -> bool {
+// A successful health response is not proof that a backend belongs to this
+// installed application. In particular, do not attach to the dev server or a
+// different app just because it happens to listen on 8420.
+fn probe_fastapi(port: u16) -> Option<serde_json::Value> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(350)) else {
-        return false;
-    };
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(650)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(650)));
-    if stream.write_all(b"GET /api/v1/health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n").is_err() {
-        return false;
-    }
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(350)).ok()?;
+    stream.set_read_timeout(Some(Duration::from_millis(900))).ok()?;
+    stream.set_write_timeout(Some(Duration::from_millis(900))).ok()?;
+    stream.write_all(b"GET /api/v1/health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n").ok()?;
     let mut result = Vec::new();
-    if stream.take(4096).read_to_end(&mut result).is_err() { return false; }
+    stream.take(8192).read_to_end(&mut result).ok()?;
     let response = String::from_utf8_lossy(&result);
-    (response.starts_with("HTTP/1.1 200 ") || response.starts_with("HTTP/1.0 200 "))
-        && (response.contains("\"status\":\"ok\"") || response.contains("\"status\": \"ok\""))
+    if !response.starts_with("HTTP/1.1 200 ") && !response.starts_with("HTTP/1.0 200 ") {
+        return None;
+    }
+    let (_, body) = response.split_once("\r\n\r\n")?;
+    let health: serde_json::Value = serde_json::from_str(body).ok()?;
+    (health.get("status")?.as_str()? == "ok" && health.get("service")?.as_str()? == "trajecta")
+        .then_some(health)
+}
+fn fastapi_ready(port: u16) -> bool { probe_fastapi(port).is_some() }
+
+// Persist a nonsecret installation identifier so another Tauri instance can
+// recognize an orphaned *same-installation* backend after an app crash.
+fn backend_instance_id(base: &std::path::Path) -> Result<String, String> {
+    let path = base.join("runtime/backend.instance");
+    if let Ok(value) = fs::read_to_string(&path) {
+        let value = value.trim();
+        if value.len() >= 16 && value.len() <= 100 && value.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-') {
+            return Ok(value.to_owned());
+        }
+    }
+    fs::create_dir_all(path.parent().ok_or("Invalid backend identity path")?).map_err(|e| e.to_string())?;
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?.as_nanos();
+    let id = format!("{nanos:x}-{:x}", std::process::id());
+    fs::write(path, &id).map_err(|e| e.to_string())?;
+    Ok(id)
+}
+fn backend_is_ours(app: &tauri::AppHandle) -> bool {
+    let Some(health) = probe_fastapi(8420) else { return false; };
+    let Some(instance) = health.get("instance_id").and_then(|id| id.as_str()) else { return false; };
+    app_base(app).ok().and_then(|base| backend_instance_id(&base).ok())
+        .is_some_and(|expected| expected == instance)
 }
 
 // Display only a short, recognizable exception line; the full diagnostic
@@ -204,34 +233,51 @@ fn start_services(app: &tauri::AppHandle) -> Result<(), String> {
             if let Ok(child) = launch_process(cmd, base.join("logs/bifrost.log")) { *guard = Some(child); }
         }
     }
+    // Check the child we already own BEFORE probing the port. Previously the
+    // supervisor rejected its own healthy backend as an external conflict.
+    let mut backend = processes.backend.lock().unwrap();
+    if let Some(child) = backend.as_mut() {
+        match child.try_wait() {
+            Ok(None) => { *processes.error.lock().unwrap() = None; return Ok(()); }
+            Ok(Some(_)) | Err(_) => { *backend = None; }
+        }
+    }
     if service_online(8420) {
-        // Avoid taking ownership of, or terminating, another service on this port.
-        let message = "Port 8420 is occupied; refusing to start a second backend. Stop the other process.".to_string();
+        if backend_is_ours(app) {
+            // A previous desktop process exited but left this installation's
+            // backend running. Reuse it; never spawn a duplicate.
+            processes.attached_backend.store(true, Ordering::Relaxed);
+            *processes.error.lock().unwrap() = None;
+            return Ok(());
+        }
+        let message = "Port 8420 belongs to another process (or an older unidentifiable Trajecta backend). Close that server before restarting Trajecta. The existing process was not terminated.".to_string();
         *processes.error.lock().unwrap() = Some(message.clone());
         return Err(message);
     }
-    let mut backend = processes.backend.lock().unwrap();
-    if backend.is_none() {
-        let resources = base.join("runtime/backend/config");
-        let mut cmd = Command::new(backend_python);
-        cmd.arg("-X").arg("utf8").arg("-m").arg("server.src.main")
-            .current_dir(base.join("data"))
-            .env("TRAJECTA_RESOURCE_DIR", &resources)
-            .env("TRAJECTA_SERVER_PORT", "8420")
-            .env("PYTHONUTF8", "1");
-        let child = launch_process(cmd, base.join("logs/backend.log")).map_err(|message| {
-            *processes.error.lock().unwrap() = Some(format!("Unable to start FastAPI: {message}"));
-            message
-        })?;
-        *backend = Some(child);
-        *processes.backend_started_at.lock().unwrap() = Some(std::time::Instant::now());
-    }
+    processes.attached_backend.store(false, Ordering::Relaxed);
+    let resources = base.join("runtime/backend/config");
+    let mut cmd = Command::new(backend_python);
+    cmd.arg("-X").arg("utf8").arg("-m").arg("server.src.main")
+        .current_dir(base.join("data"))
+        .env("TRAJECTA_RESOURCE_DIR", &resources)
+        .env("TRAJECTA_SERVER_PORT", "8420")
+        .env("TRAJECTA_BACKEND_INSTANCE_ID", backend_instance_id(&base)?)
+        .env("PYTHONUTF8", "1");
+    let child = launch_process(cmd, base.join("logs/backend.log")).map_err(|message| {
+        *processes.error.lock().unwrap() = Some(format!("Unable to start FastAPI: {message}"));
+        message
+    })?;
+    *backend = Some(child);
+    *processes.backend_started_at.lock().unwrap() = Some(std::time::Instant::now());
     *processes.error.lock().unwrap() = None;
     Ok(())
 }
 fn stop_services(app: &tauri::AppHandle) {
     let processes = app.state::<DesktopProcesses>();
     *processes.backend_started_at.lock().unwrap() = None;
+    // An attached backend was not spawned by this process. Never kill it
+    // without verified OS-level ownership; it remains available for reuse.
+    processes.attached_backend.store(false, Ordering::Relaxed);
     for slot in [&processes.backend, &processes.bifrost] {
         if let Ok(mut guard) = slot.lock() {
             if let Some(mut child) = guard.take() { let _ = child.kill(); let _ = child.wait(); }
@@ -240,8 +286,14 @@ fn stop_services(app: &tauri::AppHandle) {
 }
 fn restart_services(app: &tauri::AppHandle) -> Result<(), String> {
     if cfg!(debug_assertions) { return Err("Development services are managed by your dev terminal".into()); }
+    // Avoid implying a restart succeeded when the backend belongs to an
+    // earlier desktop process and we cannot terminate it safely.
+    let processes = app.state::<DesktopProcesses>();
+    if processes.attached_backend.load(Ordering::Relaxed) && backend_is_ours(app) {
+        return Err("FastAPI was started by a previous Trajecta instance and is still running. Restart the original backend process before using Restart services.".into());
+    }
     stop_services(app);
-    *app.state::<DesktopProcesses>().restart_attempts.lock().unwrap() = 0;
+    *processes.restart_attempts.lock().unwrap() = 0;
     start_services(app)
 }
 
@@ -268,12 +320,20 @@ fn backend_health(app: &tauri::AppHandle) -> (String, Option<String>) {
             }
         }
     }
-    // A child can remain alive while failing to initialize the HTTP server.
-    // Avoid leaving the user stuck on "Starting" indefinitely.
-    if managed && !fastapi_ready(8420) {
-        let timed_out = processes.backend_started_at.lock().unwrap()
+    // Probe once per poll. A *startup* deadline must never apply to a server
+    // that has already answered its first readiness check: during LLM/tool
+    // execution, one HTTP probe can time out without the backend being dead.
+    // The old code kept backend_started_at forever and killed healthy servers
+    // after 60 seconds if any subsequent probe was slow.
+    let healthy = backend_is_ours(app);
+    if healthy {
+        // None now means: this child has been healthy at least once.
+        *processes.backend_started_at.lock().unwrap() = None;
+    }
+    if managed && !healthy {
+        let startup_timed_out = processes.backend_started_at.lock().unwrap()
             .as_ref().is_some_and(|at| at.elapsed() > Duration::from_secs(60));
-        if timed_out {
+        if startup_timed_out {
             let mut guard = processes.backend.lock().unwrap();
             if let Some(mut child) = guard.take() { let _ = child.kill(); let _ = child.wait(); }
             managed = false;
@@ -294,8 +354,23 @@ fn backend_health(app: &tauri::AppHandle) -> (String, Option<String>) {
             if start_services(app).is_ok() { return ("starting".into(), None); }
         }
     }
-    if fastapi_ready(8420) && managed { return ("connected".into(), None); }
-    if managed { return ("starting".into(), None); }
+    // Reconcile survivors of a previous app process before reporting Offline.
+    // The identity check prevents attaching to unrelated services.
+    if healthy || backend_is_ours(app) {
+        if !managed { processes.attached_backend.store(true, Ordering::Relaxed); }
+        *processes.backend_started_at.lock().unwrap() = None;
+        *processes.error.lock().unwrap() = None;
+        return ("connected".into(), None);
+    }
+    if managed {
+        // Do not kill or restart a live backend because a single health probe
+        // failed during a long request. Only a never-ready child can time out.
+        let still_starting = processes.backend_started_at.lock().unwrap().is_some();
+        if still_starting { return ("starting".into(), None); }
+        return ("unresponsive".into(), Some(
+            "FastAPI is running but did not answer its latest health check. It will not be terminated during an active chat; check the backend log if the problem persists.".into(),
+        ));
+    }
     let error = processes.error.lock().unwrap().clone();
     if error.is_some() { ("failed".into(), error) }
     else { ("offline".into(), None) }

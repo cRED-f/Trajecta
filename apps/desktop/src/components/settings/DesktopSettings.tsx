@@ -11,7 +11,7 @@ type DesktopPrefs = {
 type DesktopStatus = {
   installed: boolean;
   backend_running: boolean;
-  backend_state: "connected" | "starting" | "failed" | "offline";
+  backend_state: "connected" | "starting" | "unresponsive" | "failed" | "offline";
   backend_log_path: string | null;
   bifrost_reachable: boolean;
   managed_bifrost: boolean;
@@ -96,7 +96,7 @@ export function DesktopSettings() {
       <div className="settings-row">
         <div className="settings-row__icon"><HardDrive size={16}/></div>
         <div className="settings-row__body"><strong>FastAPI</strong><span>{status?.installed ? "Managed production backend" : "Development backend"} · local port {status?.installed ? "8420" : "8421"}</span></div>
-        <span className={`settings-status-pill ${status?.backend_running ? "settings-status-pill--online" : "settings-status-pill--offline"}`}>{status?.backend_state === "connected" ? "Connected" : status?.backend_state === "starting" ? "Starting…" : status?.backend_state === "failed" ? "Failed" : "Offline"}</span>
+        <span className={`settings-status-pill ${status?.backend_running ? "settings-status-pill--online" : "settings-status-pill--offline"}`}>{status?.backend_state === "connected" ? "Connected" : status?.backend_state === "starting" ? "Starting…" : status?.backend_state === "unresponsive" ? "Not responding" : status?.backend_state === "failed" ? "Failed" : "Offline"}</span>
       </div>
       <div className="settings-row">
         <div className="settings-row__icon"><Power size={16}/></div>

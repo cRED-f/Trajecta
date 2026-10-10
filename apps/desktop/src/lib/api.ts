@@ -50,6 +50,23 @@ const API_ROOT =
   import.meta.env.VITE_TRAJECTA_API_URL ??
   "http://127.0.0.1:8420/api/v1";
 
+// A rejected fetch means no HTTP response arrived. Distinguish this from a
+// provider/model error and point the user to the managed backend diagnostics.
+// Preserve AbortError so the Stop button does not display a connection error.
+async function fetchBackend(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error;
+    throw new Error(
+      `Cannot connect to Trajecta FastAPI (${new URL(url).origin}). ` +
+      "Open Settings → Desktop & Application → Backend services to check its status and log. " +
+      "If FastAPI is Connected, inspect the WebView network/CORS error.",
+      { cause: error },
+    );
+  }
+}
+
 export class ApiError extends Error {
   status: number;
   detail: unknown;
@@ -98,7 +115,7 @@ export async function request<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const response = await fetch(
+  const response = await fetchBackend(
     `${API_ROOT}${path}`,
     {
       ...init,
@@ -130,7 +147,7 @@ async function streamRequest(
     event: ChatStreamEvent,
   ) => void | Promise<void>,
 ): Promise<void> {
-  const response = await fetch(
+  const response = await fetchBackend(
     `${API_ROOT}${path}`,
     {
       method: "POST",
@@ -645,7 +662,7 @@ export const settingsApi = {
     signal: AbortSignal,
   ): Promise<void> {
     const url = `${API_ROOT}/skills/candidates/${encodeURIComponent(candidateId)}/evaluate/stream?upgrade=${upgrade}`;
-    const response = await fetch(url, {
+    const response = await fetchBackend(url, {
       method: "POST",
       headers: { Accept: "text/event-stream" },
       signal,
@@ -661,7 +678,7 @@ export const settingsApi = {
     onEvent: (event: SkillEvalEvent) => void,
     signal: AbortSignal,
   ): Promise<void> {
-    const response = await fetch(
+    const response = await fetchBackend(
       `${API_ROOT}/skills/candidates/${encodeURIComponent(candidateId)}/evaluation/live`,
       { headers: { Accept: "text/event-stream" }, signal },
     );
