@@ -50,7 +50,7 @@ export function ReflectionActivity({ status, busy, perform }: {
   return <div className="memory-center__records">
     <ReflectionConfiguration busy={busy} perform={perform} />
     <h4>Recent reviews</h4>
-    <p className="memory-center__note">Review jobs are recorded after meaningful interactions. No evaluation or skill activation happens here.</p>
+    <p className="memory-center__note">Task-level reflection happens in the background; verified candidates may be evaluated and promoted automatically.</p>
     <div className="memory-center__counts">{Object.entries(status?.counts ?? {}).map(([key, value]) => <span key={key}>{key.replaceAll("_", " ")}: <strong>{value}</strong></span>)}</div>
     {!status?.jobs.length && <FriendlyEmpty icon={Clock3} title="No background learning yet" description="Meaningful completed tasks can enter the review queue after the chat response." />}
     {status?.jobs.map((job) => <article className="memory-center__record" key={job.id}>
@@ -59,8 +59,8 @@ export function ReflectionActivity({ status, busy, perform }: {
       {job.result?.summary && <p className="memory-center__preserve">{job.result.summary}</p>}
       {job.last_error && <p role="alert" className="memory-center__warning">Review error: {job.last_error}</p>}
       {job.result?.insights?.length ? <details><summary>Extracted observations ({job.result.insights.length})</summary><ul>{job.result.insights.map((insight, index) => <li key={index}>{insight.content} — {insight.kind}, evidence events {insight.evidence_event_seqs.join(", ")}</li>)}</ul></details> : null}
-      {job.result?.procedure_draft_id && <p className="memory-center__note">Created reviewable procedure: {job.result.procedure_draft_id}</p>}
-      <details><summary>Technical details</summary><p className="memory-center__note">Source trajectory: <code>{job.trajectory_id}</code></p></details>
+      {!!job.result?.skill_candidates?.length && <p className="memory-center__note">Discovered skill candidates: {job.result.skill_candidates.length}</p>}
+      <details><summary>Technical details</summary><p className="memory-center__note">Logical task: <code>{job.task_id}</code></p></details>
     </article>)}
   </div>;
 }

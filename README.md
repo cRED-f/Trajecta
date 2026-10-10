@@ -18,8 +18,8 @@
 
 - **Act:** Run multi-step tasks using local tools, MCP integrations, and selected AI models.
 - **Remember:** Retrieve relevant preferences, facts, previous tasks, and documents.
-- **Improve:** Capture corrections and propose reusable procedures from real experience.
-- **Stay in control:** Approve sensitive actions and skill changes before they take effect.
+- **Improve:** Learn from multi-turn tasks and generate evidence-linked skill candidates automatically.
+- **Stay in control:** Approve sensitive tool actions; safe learning runs without routine approval.
 
 > **Status:** Active development.
 
@@ -27,8 +27,8 @@
 
 - **Desktop chat:** Streaming, conversation history, edit/resend/regenerate, branching, cancellation.
 - **Agent runtime:** LangChain Deep Agents, LangGraph checkpoints, subagents, resumable approvals.
-- **Knowledge Center:** Overview, Memories, Skills, and Review in one place.
-- **Learning:** Preferences, corrections, evidence-linked procedures, bounded reflection.
+- **Knowledge Center:** Overview, Memories, and Skills with optional diagnostics.
+- **Learning:** Semantic facts, task-level episodes, autonomous candidates, bounded background reflection.
 - **Memory & RAG:** Semantic, episodic, procedural, attachment search, hybrid retrieval.
 - **Local workspaces:** Select and validate a folder for each conversation.
 - **Models:** Bifrost routing for OpenAI, Anthropic, Ollama, 9Router, and compatible APIs.
@@ -39,104 +39,35 @@
 ## Architecture
 
 ```mermaid
-%%{init: {"flowchart": {"nodeSpacing": 16, "rankSpacing": 24, "padding": 6}, "themeVariables": {"fontSize": "12px"}}}%%
 flowchart TB
-    %% Compact groups retain the full architecture without one box per feature.
-    subgraph DESKTOP["01 · DESKTOP EXPERIENCE"]
-        UI["User"]
-    end
-
-    subgraph BACKEND["02 · FASTAPI APPLICATION"]
-        API["REST /api/v1 · chat / branches / regeneration<br/>attachments: extract / chunk / index · scheduler<br/>provider / MCP / policy / review APIs · SSE events"]
-    end
-
-    subgraph PREFLIGHT["03 · INPUT GUARDRAILS & PREFLIGHT"]
-        direction LR
-        INPUT["Input guardrails<br/>Prompt injection · optional jailbreak"]
-        DECIDE{"Configured<br/>action?"}
-        BLOCK["Block request"]
-        PREP["Pass / warn → preflight<br/>Model · folder · tools · checkpoint"]
-        INPUT --> DECIDE
-        DECIDE -->|Block| BLOCK
-        DECIDE -->|Pass / warn| PREP
-    end
-
-    subgraph ENGINE["04 · STATEFUL AGENT"]
-        AGENT["Deep Agents + LangGraph<br/>Planning / subagents · edit / resend / regenerate<br/>Checkpoints · human questions · HITL resume · SSE output"]
-    end
-
-    subgraph EXECUTION["05–07 · MODEL & TOOL EXECUTION"]
-        direction LR
-        subgraph MODEL_LANE["MODEL ROUTE"]
-            direction TB
-            MODEL_G["Model-context guardrails<br/>Untrusted content · secrets · PII"]
-            BIFROST["Bifrost gateway<br/>OpenAI · Anthropic · 9Router<br/>compatible APIs · Ollama + embeddings"]
-            MODEL_G --> BIFROST
-        end
-        subgraph TOOL_LANE["TOOL ROUTE"]
-            direction TB
-            POLICY{"ALLOW / ASK / DENY"}
-            APPROVAL["ASK → human approval<br/>durable interrupt / resume"]
-            TOOLSET["Enabled local + MCP tools<br/>validated workspace · optional Docker<br/>connector read-back verification"]
-            DENY["DENY → no execution"]
-            POLICY -->|ALLOW| TOOLSET
-            POLICY -->|ASK| APPROVAL
-            APPROVAL -->|Approved| TOOLSET
-            POLICY -->|DENY| DENY
-        end
-    end
-
-    subgraph KNOWLEDGE["08 · KNOWLEDGE, SEARCH & RAG"]
-        RETRIEVE["Hybrid retrieval · scope / rank / conflicts<br/>Semantic facts · episodic evidence · procedural records<br/>active versioned skills · attachment RAG · manual curator"]
-    end
-
-    subgraph LEARNING["09 · EXPERIENCE-DRIVEN LEARNING"]
-        direction TB
-        EVENTS["Append-only trajectories · tool events · metrics<br/>Completed ≠ independently verified success"]
-        LEARN["Explicit preferences → learned context<br/>corrections · durable, budgeted reflection queue<br/>Bifrost insights → evidence-linked procedure drafts"]
-        REVIEW["Human review · approve / reject / archive"]
-        SKILLS["Explicit candidate → manual replay / regression eval<br/>versioned skill activation / rollback"]
-        EVENTS --> LEARN --> REVIEW --> SKILLS
-    end
-
-    subgraph STORAGE["10 · DURABLE LOCAL DATA"]
-        STORE["SQLite · FTS5 · embedded Qdrant<br/>Chats · settings · jobs · audits · checkpoints<br/>attachment files / workspace documents"]
-    end
-
-    %% Primary request path; scheduled prompts use the same chat preflight.
-    UI --> API --> INPUT
-    PREP --> RETRIEVE --> AGENT
-    AGENT -->|Model call| MODEL_G
-    AGENT -->|Tool action| POLICY
-    AGENT -. "Events / feedback" .-> EVENTS
-    SKILLS -. "Approved versions" .-> RETRIEVE
-    LEARN -. "Explicit preferences" .-> RETRIEVE
-    RETRIEVE --> STORE
-    EVENTS --> STORE
-    API -. "Persistent records" .-> STORE
-
-    %% Amber highlights trust boundaries; other hues indicate responsibility.
-    classDef ui fill:#172033,stroke:#94A3B8,color:#F8FAFC,stroke-width:1.3px;
-    classDef api fill:#1F2937,stroke:#93C5FD,color:#F8FAFC,stroke-width:1.3px;
-    classDef critical fill:#4A2D12,stroke:#FBBF24,color:#FFFBEB,stroke-width:1.7px;
-    classDef agent fill:#312E81,stroke:#A5B4FC,color:#FFFFFF,stroke-width:1.4px;
-    classDef model fill:#164E63,stroke:#67E8F9,color:#ECFEFF,stroke-width:1.3px;
-    classDef tool fill:#1E3A5F,stroke:#60A5FA,color:#EFF6FF,stroke-width:1.3px;
-    classDef knowledge fill:#134E4A,stroke:#5EEAD4,color:#F0FDFA,stroke-width:1.3px;
-    classDef learn fill:#3B3055,stroke:#D8B4FE,color:#FAF5FF,stroke-width:1.3px;
-    classDef storage fill:#193927,stroke:#86EFAC,color:#F0FDF4,stroke-width:1.3px;
-    classDef denied fill:#522222,stroke:#FCA5A5,color:#FEF2F2,stroke-width:1.3px;
-    class UI ui;
-    class API api;
-    class INPUT,DECIDE,PREP,MODEL_G,POLICY,APPROVAL critical;
-    class BLOCK,DENY denied;
-    class AGENT agent;
-    class BIFROST model;
-    class TOOLSET tool;
-    class RETRIEVE knowledge;
-    class EVENTS,LEARN,REVIEW,SKILLS learn;
-    class STORE storage;
+    USER[Desktop UI] --> API[FastAPI Chat Service]
+    API --> RET[Unified retrieval: semantic / episodic / active skills]
+    RET --> AGENT[Deep Agent via Bifrost]
+    AGENT --> CHAT[SSE streamed response]
+    CHAT --> USER
+    AGENT --> POLICY{ALLOW / ASK / DENY}
+    POLICY -->|Authorized| TOOLS[Local and MCP tools]
+    TOOLS --> AGENT
+    API -.-> EVENTS[Append-only chat / tool events]
+    TOOLS -.-> EVENTS
+    EVENTS --> TRACK[Logical Task Tracker]
+    TRACK --> QUEUE[Durable task-learning queue]
+    QUEUE --> REF[Background Bifrost reflection]
+    REF --> SEM[Semantic knowledge]
+    REF --> EP[Multi-run episodes]
+    REF --> CAND[Procedural skill candidates]
+    CAND --> EVAL[Independent replay and safety gates]
+    EVAL -->|Verified read-only| ACTIVE[Active versioned skills]
+    EVAL -->|Not enough evidence| HOLD[Inactive candidates]
+    SEM --> SQL[(SQLite + FTS5 + Qdrant)]
+    EP --> SQL
+    ACTIVE --> SQL
+    SQL -.-> RET
 ```
+
+Chat streaming never waits for task classification LLMs, reflection or skill evaluation. Task associations use bounded SQLite heuristics; unresolved cases become new logical tasks. A chat completion is provisional, **not proof of success**. Candidates lacking independent verification remain inactive, and all tool permissions are unchanged.
+
+**Migration:** schema v22 adds logical-task linkage and durable `task_learning_jobs`. Legacy `reflection_jobs` and `procedure_drafts` records remain stored but are no longer read by active pipelines. Back up `.trajecta/data` before upgrading.
 
 ## How learning works
 

@@ -1,8 +1,7 @@
-"""Memory system — wraps LangChain Deep Agents Memory with Trajecta-specific interfaces.
+"""Trajecta memory: semantic facts, task-level episodes, versioned skills.
 
-Architecture:
-  - LangChain Deep Agents Memory handles short-term, semantic, episodic, procedural memory
-  - server/src/skills/trajectory_store/ holds raw execution data (separate from memory)
+Agent trajectory events remain independent evidence. The background learner
+links runs into logical tasks and never blocks streaming for model reflection.
 """
 
 from server.src.memory.episodic.store import EpisodicMemory

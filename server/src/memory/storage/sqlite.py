@@ -241,7 +241,65 @@ class SQLiteDatabase:
             await self._conn.execute("INSERT INTO schema_version(version) VALUES (21)")
             version = 21
 
+        if version < 22:
+            await self._migrate_v22()
+            await self._conn.execute("INSERT INTO schema_version(version) VALUES (22)")
+            version = 22
+
         await self._conn.commit()
+
+    async def _migrate_v22(self) -> None:
+        """Task-level learning. Preserve legacy rows; never destroy user history."""
+        assert self._conn is not None
+        cursor = await self._conn.execute("PRAGMA table_info(tasks)")
+        columns = {row[1] for row in await cursor.fetchall()}
+        for column, definition in (
+            ("updated_at", "TEXT"),
+            ("scope", "TEXT NOT NULL DEFAULT 'local'"),
+            ("checkpoint_seq", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            if column not in columns:
+                await self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
+        await self._conn.execute(
+            "UPDATE tasks SET updated_at=created_at WHERE updated_at IS NULL"
+        )
+        cursor = await self._conn.execute("PRAGMA table_info(episodes)")
+        columns = {row[1] for row in await cursor.fetchall()}
+        if "logical_task_id" not in columns:
+            await self._conn.execute("ALTER TABLE episodes ADD COLUMN logical_task_id TEXT")
+        await self._conn.executescript("""
+            CREATE INDEX IF NOT EXISTS idx_tasks_recent
+                ON tasks(user_id, scope, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_trajectories_task_recent
+                ON trajectories(task_id, created_at DESC);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_logical_task
+                ON episodes(logical_task_id) WHERE logical_task_id IS NOT NULL;
+            CREATE TABLE IF NOT EXISTS task_learning_jobs (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                watermark INTEGER NOT NULL,
+                reason TEXT NOT NULL DEFAULT 'completion',
+                status TEXT NOT NULL DEFAULT 'pending'
+                    CHECK(status IN ('pending','processing','completed','failed','skipped')),
+                attempts INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at TEXT NOT NULL,
+                lease_until TEXT,
+                result_json TEXT,
+                last_error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(task_id, watermark, reason)
+            );
+            CREATE INDEX IF NOT EXISTS idx_task_learning_due
+                ON task_learning_jobs(status,next_attempt_at,created_at);
+            CREATE TABLE IF NOT EXISTS learned_skill_sources (
+                task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                candidate_id TEXT NOT NULL REFERENCES skill_candidates(id) ON DELETE CASCADE,
+                fingerprint TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(task_id,fingerprint)
+            );
+        """)
 
     async def _migrate_v21(self) -> None:
         """Preserve original retrieval timestamps and count actual review claims."""
@@ -1406,93 +1464,6 @@ class SQLiteDatabase:
             cur = await self._conn.execute(sql, params)
             await self._conn.commit()
             return cur
-
-    async def insert_procedure_candidate(
-        self, *, draft_id: str, draft_version: int, candidate_id: str,
-        name: str, description: str, content: str, source_ids: str,
-        metadata: str, now: str,
-    ) -> str:
-        """Claim approved draft and create its candidate in one SQLite transaction.
-
-        BEGIN IMMEDIATE serializes competing desktop/API processes. Returning the
-        saved id makes HTTP retries idempotent, even after a committed response
-        was lost. The transaction rolls back both writes on any failure.
-        """
-        assert self._conn is not None
-        async with self._write_lock:
-            await self._conn.execute("BEGIN IMMEDIATE")
-            try:
-                cur = await self._conn.execute(
-                    "SELECT * FROM procedure_drafts WHERE id=?", (draft_id,)
-                )
-                row = await cur.fetchone()
-                if row is None:
-                    raise ValueError("procedure not found")
-                if row["status"] == "candidate_created" and row["candidate_id"]:
-                    result = str(row["candidate_id"])
-                else:
-                    if (row["status"] != "approved" or row["archived_at"] is not None
-                            or not row["user_confirmed"] or row["user_id"] != "local"
-                            or row["scope"] != "local" or row["version"] != draft_version):
-                        raise ValueError("approved procedure has changed; review again")
-                    await self._conn.execute(
-                        """INSERT INTO skill_candidates
-                           (id,name,description,content,status,source_trajectory_ids,
-                            created_at,updated_at,metadata)
-                           VALUES (?,?,?,?,'candidate',?,?,?,?)""",
-                        (candidate_id,name,description,content,source_ids,now,now,metadata),
-                    )
-                    cur = await self._conn.execute(
-                        """UPDATE procedure_drafts SET status='candidate_created',
-                           candidate_id=?,updated_at=? WHERE id=? AND status='approved'
-                           AND archived_at IS NULL AND version=?""",
-                        (candidate_id,now,draft_id,draft_version),
-                    )
-                    if cur.rowcount != 1:
-                        raise ValueError("approved procedure changed during candidate creation")
-                    result = candidate_id
-                await self._conn.commit()
-                return result
-            except BaseException:
-                await self._conn.rollback()
-                raise
-
-    async def claim_reflection_job(
-        self, *, now: str, midnight: str, max_daily: int,
-        max_attempts: int, lease_until: str,
-    ) -> dict[str, Any] | None:
-        """Atomically reserve one daily review attempt and claim a queued job."""
-        assert self._conn is not None
-        async with self._write_lock:
-            await self._conn.execute("BEGIN IMMEDIATE")
-            try:
-                cur = await self._conn.execute(
-                    "SELECT COUNT(*) FROM reflection_attempts WHERE started_at >= ?", (midnight,)
-                )
-                used = (await cur.fetchone())[0]
-                if used >= max_daily:
-                    await self._conn.commit()
-                    return None
-                cur = await self._conn.execute(
-                    """UPDATE reflection_jobs SET status='processing', attempts=attempts+1,
-                          lease_until=?, updated_at=?
-                       WHERE id = (SELECT id FROM reflection_jobs
-                         WHERE status='pending' AND attempts < ? AND next_attempt_at<=?
-                         ORDER BY created_at ASC LIMIT 1)
-                       RETURNING *""",
-                    (lease_until, now, max_attempts, now),
-                )
-                row = await cur.fetchone()
-                if row is not None:
-                    await self._conn.execute(
-                        "INSERT INTO reflection_attempts (job_id,attempt_no,started_at) VALUES (?,?,?)",
-                        (row["id"], row["attempts"], now),
-                    )
-                await self._conn.commit()
-                return dict(row) if row else None
-            except BaseException:
-                await self._conn.rollback()
-                raise
 
     async def executescript(self, sql: str) -> None:
         """Run a multi-statement SQL script (DDL with several statements)."""

@@ -44,11 +44,11 @@ export function LearningFlow({ variant }: { variant: "memory" | "skill" }) {
   const stages = variant === "memory" ? [
     ["Observe", "Trajecta records useful facts or task history."],
     ["Reflect", "Background reviews may identify patterns."],
-    ["Review", "You decide whether suggested procedures are approved."],
+    ["Consolidate", "Related turns become one task experience automatically."],
   ] : [
-    ["Learn", "A preference, correction, or workflow is recorded."],
-    ["Review", "Suggestions and skill drafts remain reviewable."],
-    ["Activate", "An eligible, approved skill can be enabled for reuse."],
+    ["Observe", "Capture multi-turn tasks and verified evidence."],
+    ["Evaluate", "Test reusable workflows without interrupting the chat."],
+    ["Activate", "Only skills passing safety and quality gates become active."],
   ];
   return <section className="knowledge-flow" aria-label="How learning works">
     <div className="knowledge-flow__heading"><Info size={16} aria-hidden="true" /><strong>How {variant === "memory" ? "memory" : "skill learning"} works</strong></div>
@@ -56,7 +56,7 @@ export function LearningFlow({ variant }: { variant: "memory" | "skill" }) {
       <span className="knowledge-flow__number">{index + 1}</span>
       <div><strong>{title}</strong><p>{description}</p></div>
     </li>)}</ol>
-    <p className="knowledge-flow__footnote"><CheckCircle2 size={14} aria-hidden="true" /> Memories and drafts do not automatically become executable skills.</p>
+    <p className="knowledge-flow__footnote"><CheckCircle2 size={14} aria-hidden="true" /> Learning is automatic; tool permissions remain enforced.</p>
   </section>;
 }
 

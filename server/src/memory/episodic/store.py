@@ -66,127 +66,103 @@ class EpisodicMemory:
         return item
 
     async def consolidate(self, trajectory_id: str) -> dict[str, Any] | None:
-        """Capture a nontrivial finished task once, using existing trajectory evidence.
+        """Consolidate linked runs into ONE task episode, including later revisions.
 
-        Lightweight deterministic extraction deliberately avoids using another
-        model or claiming a generated answer succeeded. An LLM reflection pass
-        can refine episode summaries in a later, separately reviewed pipeline.
+        Called only by the durable background worker. Never use the existence
+        of a final answer or positive rating as independent success proof.
         """
         db = self._provider.sqlite
         if db is None:
             raise RuntimeError("MemoryProvider is not open")
-        trajectory = await TrajectoryStore(db).get_with_task(trajectory_id)
-        if trajectory is None:
+        store = TrajectoryStore(db)
+        trace = await store.get_with_task(trajectory_id)
+        if trace is None:
             raise ValueError(f"Unknown trajectory {trajectory_id!r}")
-        if trajectory.get("outcome") not in {"completed", "success", "failure"}:
+        task_id = str(trace["task_id"])
+        traces = await store.for_task(task_id, limit=40)
+        finished = [run for run in traces if run.get("outcome") in {"completed", "success", "failure", "cancelled"}]
+        if not finished:
             return None
-
-        existing = await db.fetchone(
-            "SELECT * FROM episodes WHERE source_trajectory_id = ?", (trajectory_id,)
-        )
-        if existing:
-            return self._decode(existing)
-
-        events = trajectory.get("steps") or []
         tools: list[str] = []
         errors: list[str] = []
-        results = 0
-        for event in events:
-            if not isinstance(event, dict):
-                continue
-            kind = str(event.get("type") or event.get("event_type") or "")
-            data = event.get("data") or {}
-            if not isinstance(data, dict):
-                continue
-            if kind == "tool.call.delta":
-                name = self._text(data.get("name"), 100)
-                if name and name not in tools:
-                    tools.append(name)
-            elif kind == "tool.result":
-                results += 1
-                name = self._text(data.get("name"), 100)
-                if name and name not in tools:
-                    tools.append(name)
-                if data.get("status") == "error":
-                    errors.append(name or "unknown tool")
-            elif kind == "run.error":
-                errors.append("agent run")
-        # Long substantive tool-free tasks may also be useful episodes. Short
-        # conversations are already in checkpoint history and should not flood
-        # the episodic index.
-        goal_raw = trajectory.get("goal") or ""
-        answer_raw = trajectory.get("task_result") or ""
-        substantial = (len(goal_raw) >= 100 and len(answer_raw) >= 700)
-        if results == 0 and not tools and not substantial:
+        evidence_refs: list[dict[str, Any]] = []
+        total_results = 0
+        for run in finished:
+            for event in run.get("steps") or []:
+                if not isinstance(event, dict):
+                    continue
+                kind = str(event.get("type") or "")
+                data = event.get("data") or {}
+                if not isinstance(data, dict):
+                    data = {}
+                if kind in {"tool.call.delta", "tool.result", "run.error"}:
+                    seq = event.get("seq")
+                    if isinstance(seq, int) and len(evidence_refs) < 150:
+                        evidence_refs.append({"trajectory_id": run["id"], "seq": seq})
+                if kind.startswith("tool."):
+                    name = self._text(data.get("name"), 90)
+                    if name and name not in tools:
+                        tools.append(name)
+                if kind == "tool.result":
+                    total_results += 1
+                    if data.get("status") == "error":
+                        errors.append(self._text(data.get("name"), 90) or "tool error")
+                if kind == "run.error":
+                    errors.append("agent run")
+        task_goal = self._text(trace.get("task_goal") or trace.get("goal"), 800)
+        substantial = any(len(str(t.get("metadata",{}).get("user_feedback_note") or "")) > 60
+                          or len(str(t.get("goal") or "")) >= 100
+                          for t in finished)
+        if not tools and not substantial and not errors:
             return None
-
-        goal = self._text(trajectory.get("goal"), 800) or "Task with attachments"
-        result = self._text(trajectory.get("task_result"), 750)
-        outcome = str(trajectory["outcome"])
-        trace_metadata = trajectory.get("metadata") or {}
-        explicit_rating = (trace_metadata.get("user_feedback")
-                           if isinstance(trace_metadata, dict) else None)
-        if explicit_rating not in {"success", "failure"}:
-            explicit_rating = None
-        # Neither completion nor positive user rating is independent verification.
-        verified = False
-        summary_parts = [f"Task: {goal}"]
-        if tools:
-            summary_parts.append(f"Tools used: {', '.join(tools[:20])}")
-        if errors:
-            summary_parts.append(f"Reported tool errors: {', '.join(dict.fromkeys(errors))}")
-        if result:
-            summary_parts.append(f"Observed final response: {result}")
-        if explicit_rating:
-            summary_parts.append(f"Recorded outcome: {outcome} (explicit user feedback); not independently verified")
-        else:
-            summary_parts.append(f"Recorded outcome: {outcome}; not independently verified")
-        summary = "\n".join(summary_parts)[:2200]
-        task_meta = trajectory.get("task_metadata") or {}
+        last = finished[-1]
+        result = self._text(last.get("task_result"), 650)
+        outcome = str(last.get("outcome") or "unknown")
+        feedback = (last.get("metadata") or {}).get("user_feedback")
+        if feedback not in {"success", "failure"}:
+            feedback = None
+        summary = "\n".join([
+            f"Task: {task_goal or 'Task with attachments'}",
+            f"Observed runs: {len(finished)}",
+            *([f"Tools: {', '.join(tools[:20])}"] if tools else []),
+            *([f"Observed errors: {', '.join(dict.fromkeys(errors))}"] if errors else []),
+            *([f"Latest observed response: {result}"] if result else []),
+            f"Outcome: {outcome}; not independently verified",
+        ])[:2500]
+        task_meta = trace.get("task_metadata") or {}
         if not isinstance(task_meta, dict):
             task_meta = {}
         scope = self.workspace_scope(task_meta.get("workspace_path"))
-        user_id = str(trajectory.get("user_id") or "local")
-        # Deterministic ID and unique source trajectory make retries idempotent.
-        episode_id = hashlib.sha256(f"episode:{trajectory_id}".encode()).hexdigest()
-        now = datetime.now(UTC).isoformat()
-        evidence = {
-            "trajectory_id": trajectory_id,
-            "task_id": trajectory.get("task_id"),
-            "event_count": len(events),
-            "tool_result_count": results,
-            "reported_tool_errors": len(errors),
-            "source_event_seqs": [
-                event["seq"] for event in events
-                if isinstance(event, dict) and "seq" in event
-                and event.get("type") in {"tool.call.delta", "tool.result", "run.error"}
-            ][:100],
-            "verification": "unverified",
-            "user_feedback": explicit_rating,
-        }
-        await db.execute(
-            """INSERT OR IGNORE INTO episodes
-                (id, source_trajectory_id, user_id, scope, thread_id,
-                 goal, summary, outcome, outcome_verified, tool_names,
-                 evidence, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                episode_id, trajectory_id, user_id, scope,
-                trajectory.get("thread_id"), goal, summary, outcome, int(verified),
-                json.dumps(tools[:20]), json.dumps(evidence), now, now,
-            ),
-        )
-        # Only index a row after SQLite has committed it. Vector search is
-        # auxiliary; failure does not erase the authoritative episode record.
-        try:
-            await asyncio.to_thread(
-                self._provider.vector.upsert,
-                "episodes", episode_id, summary,
-                payload={"user_id": user_id, "scope": scope},
+        user_id = str(trace.get("user_id") or "local")
+        eid = hashlib.sha256(f"task-episode:{task_id}".encode()).hexdigest()
+        evidence = {"task_id": task_id, "trajectory_ids": [t["id"] for t in finished],
+                    "event_refs": evidence_refs, "tool_result_count": total_results,
+                    "reported_tool_errors": len(errors), "verification": "unverified",
+                    "user_feedback": feedback}
+        current = datetime.now(UTC).isoformat()
+        existing = await db.fetchone("SELECT * FROM episodes WHERE logical_task_id=?", (task_id,))
+        if existing:
+            await db.execute(
+                """UPDATE episodes SET summary=?,outcome=?,tool_names=?,evidence=?,updated_at=?
+                   WHERE id=?""",
+                (summary, outcome, json.dumps(tools), json.dumps(evidence), current, existing["id"]),
             )
+        else:
+            await db.execute(
+                """INSERT OR IGNORE INTO episodes
+                   (id,source_trajectory_id,logical_task_id,user_id,scope,thread_id,
+                    goal,summary,outcome,outcome_verified,tool_names,evidence,created_at,updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,0,?,?,?,?)""",
+                (eid, finished[0]["id"], task_id, user_id, scope, trace.get("thread_id"),
+                 task_goal or "Task with attachments", summary, outcome, json.dumps(tools),
+                 json.dumps(evidence), current, current),
+            )
+        try:
+            await asyncio.to_thread(self._provider.vector.upsert, "episodes", eid,
+                summary, payload={"user_id": user_id, "scope": scope})
         except Exception:
-            logger.warning("Episode vector indexing failed for %s", episode_id, exc_info=True)
-        return await self.get(episode_id, user_id=user_id, scope=scope)
+            logger.warning("Task episode vector indexing failed", exc_info=True)
+        return await self.get(eid, user_id=user_id, scope=scope)
 
     async def get(
         self, episode_id: str, *, user_id: str | None = None, scope: str = "local"

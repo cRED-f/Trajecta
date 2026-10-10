@@ -234,22 +234,6 @@ async def promote_candidate(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.post("/candidates/{candidate_id}/approve")
-async def approve_read_only_candidate(candidate_id: str, request: Request) -> dict[str, Any]:
-    """Human-approved low-risk skill: no costly baseline/candidate replay."""
-    try:
-        result = await _service(request).promoter.promote_with_user_approval(candidate_id)
-        return {
-            "skill_name": result.skill_name,
-            "version": result.version,
-            "version_id": result.version_id,
-            "previous_version": result.previous_version,
-            "approval_method": "explicit_user_review",
-        }
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
 @router.post("/candidates/{candidate_id}/experiment")
 async def experiment_candidate(
     candidate_id: str,
@@ -369,17 +353,6 @@ async def stop_skill_experiment(
 @router.get("/graph")
 async def skill_dependency_graph(request: Request) -> dict[str, Any]:
     return await _service(request).dependencies.graph()
-
-
-@router.get("/learning/status")
-@router.post("/learning/run")
-async def retired_skill_learning() -> dict[str, Any]:
-    # Keep explicit 410s for stale clients; never restart the retired loop.
-    raise HTTPException(
-        status_code=410,
-        detail="Automatic skill mining has been retired. Use /learning for "
-               "feedback-driven experiences, or explicit skill evaluation APIs.",
-    )
 
 
 @router.patch("/{skill_name}/enabled")

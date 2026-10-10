@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.src.memory.storage.sqlite import SQLiteDatabase
+from server.src.memory.learning.tracker import TaskTracker
 
 
 def _now() -> str:
@@ -32,6 +33,7 @@ def _loads(value: str | None, default: Any) -> Any:
 class TrajectoryStore:
     def __init__(self, db: SQLiteDatabase) -> None:
         self._db = db
+        self.tracker = TaskTracker(db)
 
     async def begin(
         self,
@@ -41,16 +43,12 @@ class TrajectoryStore:
         user_id: str = "local",
         metadata: dict[str, Any] | None = None,
     ) -> tuple[str, str]:
-        task_id = uuid.uuid4().hex
+        task_id = await self.tracker.resolve(
+            goal=goal, thread_id=thread_id, user_id=user_id,
+            metadata=metadata or {},
+        )
         trajectory_id = uuid.uuid4().hex
         created = _now()
-        await self._db.execute(
-            """
-            INSERT INTO tasks(id, user_id, thread_id, created_at, status, goal, metadata)
-            VALUES (?, ?, ?, ?, 'running', ?, ?)
-            """,
-            (task_id, user_id, thread_id, created, goal, json.dumps(metadata or {}, ensure_ascii=False)),
-        )
         await self._db.execute(
             """
             INSERT INTO trajectories(id, task_id, created_at, steps, outcome, metadata)
@@ -94,6 +92,12 @@ class TrajectoryStore:
             await self._events_for(str(value["id"]))
         )
         value["steps"] = value["steps"][-5000:]
+        # Individual run goals are stored in user.task events. Logical task
+        # goals in the tasks table are not necessarily the latest user turn.
+        user_steps = [item for item in value["steps"]
+                      if item.get("type") == "user.task"]
+        if user_steps:
+            value["run_goal"] = str((user_steps[-1].get("data") or {}).get("content") or "")
         value["metadata"] = _loads(value.get("metadata"), {})
         if "task_metadata" in value:
             value["task_metadata"] = _loads(value.get("task_metadata"), {})
@@ -120,10 +124,9 @@ class TrajectoryStore:
             "UPDATE trajectories SET outcome = ?, metadata = ? WHERE id = ?",
             (outcome, json.dumps(current_meta, ensure_ascii=False, default=str), trajectory_id),
         )
-        await self._db.execute(
-            "UPDATE tasks SET status = ?, result = ? WHERE id = ?",
-            ("complete" if outcome == "success" else outcome, result, row["task_id"]),
-        )
+        # An assistant response is NOT independent verification of task success.
+        # Tasks can be reopened or extended by future turns and sessions.
+        await self.tracker.finish_run(row["task_id"], outcome=outcome, result=result)
 
     async def get(self, trajectory_id: str) -> dict[str, Any] | None:
         row = await self._db.fetchone("SELECT * FROM trajectories WHERE id = ?", (trajectory_id,))
@@ -172,10 +175,7 @@ class TrajectoryStore:
         outcome: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        """Return trajectories together with their original task goal.
-
-        SkillMiner needs the goal, not only raw event steps.
-        """
+        """Return trajectories with their shared logical task goal."""
         limit = max(1, min(limit, 500))
 
         if outcome:
@@ -225,3 +225,21 @@ class TrajectoryStore:
             return None
 
         return await self._decode(rows[0])
+
+    async def for_task(self, task_id: str, *, limit: int = 40) -> list[dict[str, Any]]:
+        """Chronological runs with provenance; bounded for model input budgets."""
+        rows = await self._db.fetch(
+            """SELECT tr.*, t.goal AS task_goal, t.thread_id AS thread_id,
+                      t.user_id AS user_id, t.scope AS scope,
+                      t.metadata AS task_metadata
+               FROM trajectories tr JOIN tasks t ON t.id=tr.task_id
+               WHERE tr.task_id=? ORDER BY tr.created_at DESC LIMIT ?""",
+            (task_id, max(1, min(limit, 80))),
+        )
+        return [await self._decode(row) for row in reversed(rows)]
+
+    async def task_for_trajectory(self, trajectory_id: str) -> dict[str, Any] | None:
+        return await self._db.fetchone(
+            """SELECT t.* FROM tasks t JOIN trajectories tr ON tr.task_id=t.id
+               WHERE tr.id=?""", (trajectory_id,),
+        )

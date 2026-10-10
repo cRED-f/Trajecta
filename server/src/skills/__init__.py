@@ -1,1 +1,1 @@
-"""Skill Learning System — trajectory store, miner, representation, evaluation, versioning, promotion."""
+"""Versioned skill repository, task trajectories, evaluation and promotion."""

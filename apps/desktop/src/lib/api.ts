@@ -915,7 +915,7 @@ export const settingsApi = {
 };
 export interface LearnedExperience {
   id: string;
-  kind: "preference" | "correction" | "procedure";
+  kind: "preference" | "correction" | "procedure" | "lesson";
   status: "active" | "needs_review" | "rejected";
   content: string;
   confidence: number;
@@ -939,13 +939,6 @@ export const learningApi = {
   list(): Promise<{ items: LearnedExperience[] }> {
     return request("/learning/experiences");
   },
-  review(id: string, decision: "approve" | "reject"): Promise<LearnedExperience> {
-    return request(`/learning/experiences/${encodeURIComponent(id)}/review`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ decision }),
-    });
-  },
   feedback(trajectoryId: string, rating: "success" | "failure", note = "") {
     return request("/learning/feedback", {
       method: "POST",
@@ -953,9 +946,5 @@ export const learningApi = {
       body: JSON.stringify({ trajectory_id: trajectoryId, rating, note }),
     });
   },
-  approveCandidate(id: string) {
-    return request(`/skills/candidates/${encodeURIComponent(id)}/approve`, {
-      method: "POST",
-    });
-  },
+
 };

@@ -1,1 +1,1 @@
-"""Experience-first learning; retired automatic skill mining is not exported."""
+"""Evidence-linked learned preferences, corrections and task observations."""

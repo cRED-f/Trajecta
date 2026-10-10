@@ -14,38 +14,13 @@ export interface Episode {
   created_at: string;
 }
 
-export interface ProcedureStep {
-  tool: string;
-  event_seq: number;
-  result_seq: number | null;
-  outcome: string;
-}
-export interface ProcedureDraft {
-  id: string;
-  title: string;
-  rationale: string;
-  scope: string;
-  kind: "revision" | "new";
-  target_skill_name: string | null;
-  base_skill_version: string | null;
-  status: "needs_review" | "approved" | "rejected" | "candidate_created";
-  version: number;
-  source_trajectory_id: string;
-  candidate_id: string | null;
-  user_confirmed: boolean;
-  archived_at: string | null;
-  steps: ProcedureStep[];
-  evidence: { source_event_seqs?: number[]; feedback?: string; risk_review_required?: boolean };
-  updated_at: string;
-}
-export interface ProcedureRevision {
-  version: number;
-  snapshot: ProcedureDraft;
-  created_at: string;
+export interface LogicalTask {
+  id: string; goal: string; status: string; thread_id: string;
+  created_at: string; updated_at: string; scope: string;
 }
 export interface ReflectionJob {
   id: string;
-  trajectory_id: string;
+  task_id: string;
   reason: string;
   status: string;
   attempts: number;
@@ -55,7 +30,7 @@ export interface ReflectionJob {
     summary?: string;
     model?: string;
     scope?: string;
-    procedure_draft_id?: string;
+    skill_candidates?: string[];
     insights?: { kind: string; content: string; confidence: number; evidence_event_seqs: number[] }[];
   };
 }
@@ -104,18 +79,7 @@ export const learningMemoryApi = {
   episodes: (workspacePath: string | null) => request<Episode[]>(`/memory/episodic${params({ workspace_path: workspacePath, limit: 100 })}`),
   deleteEpisode: (id: string, workspacePath: string | null) =>
     request<{ ok: boolean }>(`/memory/episodic/${encodeURIComponent(id)}${params({ workspace_path: workspacePath })}`, { method: "DELETE" }),
-  procedures: (workspacePath: string | null, status?: string) =>
-    request<{ items: ProcedureDraft[] }>(`/learning/procedures${params({ workspace_path: workspacePath, status, limit: 100 })}`),
-  history: (id: string, workspacePath: string | null) =>
-    request<{ items: ProcedureRevision[] }>(`/learning/procedures/${encodeURIComponent(id)}/history${params({ workspace_path: workspacePath })}`),
-  review: (id: string, decision: "approve" | "reject", workspacePath: string | null) =>
-    post<ProcedureDraft>(`/learning/procedures/${encodeURIComponent(id)}/review${params({ workspace_path: workspacePath })}`, { decision }),
-  candidate: (id: string, name: string | null, workspacePath: string | null) =>
-    post<{ id: string }>(`/learning/procedures/${encodeURIComponent(id)}/candidate${params({ workspace_path: workspacePath })}`, { name }),
-  archive: (id: string, workspacePath: string | null) =>
-    post<{ ok: boolean }>(`/memory/curator/procedures/${encodeURIComponent(id)}/archive${params({ workspace_path: workspacePath })}`),
-  restore: (id: string, workspacePath: string | null) =>
-    post<{ ok: boolean }>(`/memory/curator/procedures/${encodeURIComponent(id)}/restore${params({ workspace_path: workspacePath })}`),
+  tasks: () => request<{ items: LogicalTask[] }>("/learning/tasks"),
   reflection: () => request<ReflectionStatus>("/learning/reflection/status"),
   reflectionSettings: () => request<ReflectionSettings>("/learning/reflection/settings"),
   setReflectionSettings: (patch: Partial<ReflectionSettings>) =>

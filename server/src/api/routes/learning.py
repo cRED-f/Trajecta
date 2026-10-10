@@ -1,4 +1,4 @@
-"""Low-cost experience learning and human review APIs."""
+"""Automatic task learning, user feedback and diagnostics APIs."""
 from __future__ import annotations
 
 import logging
@@ -17,10 +17,6 @@ class FeedbackRequest(BaseModel):
     trajectory_id: str = Field(min_length=1)
     rating: Literal["success", "failure"]
     note: str = Field(default="", max_length=1000)
-
-
-class ReviewRequest(BaseModel):
-    decision: Literal["approve", "reject"]
 
 
 def _learner(request: Request):
@@ -47,14 +43,6 @@ async def feedback(body: FeedbackRequest, request: Request):
                 await worker.enqueue(body.trajectory_id, reason="feedback")
             except Exception:
                 logger.warning("feedback reflection enqueue failed", exc_info=True)
-        # Procedural proposals never become active skills here. They remain
-        # reviewable even after explicit positive feedback.
-        procedures = getattr(request.app.state, "procedure_refinement", None)
-        if procedures is not None:
-            try:
-                await procedures.propose(body.trajectory_id, trigger="feedback")
-            except Exception:
-                logger.warning("procedure refinement failed after feedback", exc_info=True)
         skills = request.app.state.skills_service
         trajectory = await skills.trajectories.get(body.trajectory_id)
         if trajectory is not None:
@@ -81,21 +69,12 @@ async def experiences(request: Request, status: str | None = None, limit: int = 
     }}
 
 
-@router.post("/experiences/{item_id}/review")
-async def review_experience(item_id: str, body: ReviewRequest, request: Request):
-    try:
-        return await _learner(request).review(item_id, decision=body.decision)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
 @router.get("/overview")
 async def learning_overview(request: Request):
     """Single inexpensive read for the new Skills screen.
 
-    Preserve old records without fetching experiments, mining status, or
-    triggering any generation/evaluation work. Candidates created by the old
-    engine are reviewable here but never automatically evaluated.
+    Preserve old records without initiating generation/evaluation work.
+    Inactive candidates never change tool permissions.
     """
     service = request.app.state.skills_service
     return {
@@ -146,62 +125,11 @@ async def reflection_status(request: Request, limit: int = 20):
     return await worker.status(limit=limit)
 
 
-class ProcedureReviewRequest(BaseModel):
-    decision: Literal["approve", "reject"]
 
-
-class ProcedureCandidateRequest(BaseModel):
-    name: str | None = Field(default=None, max_length=64)
-
-
-@router.get("/procedures")
-async def list_procedures(request: Request, status: str | None = None,
-                          limit: int = 100, workspace_path: str | None = None):
+@router.get("/tasks")
+async def list_learning_tasks(request: Request, limit: int = 50, workspace_path: str | None = None):
+    """Task lifecycle and evidence, no approval decisions required."""
     from server.src.memory.episodic.store import EpisodicMemory
+    store = request.app.state.skills_service.trajectories
     scope = EpisodicMemory.workspace_scope(workspace_path)
-    try:
-        items = await request.app.state.procedure_refinement.list(
-            status=status, limit=limit, user_id="local", scope=scope)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"items": items}
-
-
-async def _procedure_for_request(request: Request, draft_id: str,
-                                 workspace_path: str | None):
-    from server.src.memory.episodic.store import EpisodicMemory
-    item = await request.app.state.procedure_refinement.get(draft_id)
-    if item is None or item["user_id"] != "local" or item["scope"] != EpisodicMemory.workspace_scope(workspace_path):
-        raise HTTPException(status_code=404, detail="procedure not found")
-    return item
-
-
-@router.get("/procedures/{draft_id}")
-async def get_procedure(draft_id: str, request: Request, workspace_path: str | None = None):
-    return await _procedure_for_request(request, draft_id, workspace_path)
-
-
-@router.get("/procedures/{draft_id}/history")
-async def procedure_history(draft_id: str, request: Request, workspace_path: str | None = None):
-    await _procedure_for_request(request, draft_id, workspace_path)
-    return {"items": await request.app.state.procedure_refinement.history(draft_id)}
-
-
-@router.post("/procedures/{draft_id}/review")
-async def review_procedure(draft_id: str, body: ProcedureReviewRequest,
-                           request: Request, workspace_path: str | None = None):
-    await _procedure_for_request(request, draft_id, workspace_path)
-    try:
-        return await request.app.state.procedure_refinement.review(draft_id, decision=body.decision)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-@router.post("/procedures/{draft_id}/candidate")
-async def create_procedure_candidate(draft_id: str, body: ProcedureCandidateRequest,
-                                     request: Request, workspace_path: str | None = None):
-    await _procedure_for_request(request, draft_id, workspace_path)
-    try:
-        return await request.app.state.procedure_refinement.create_candidate(draft_id, name=body.name)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"items": await store.tracker.list(scope=scope,limit=limit)}

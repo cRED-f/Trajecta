@@ -1,157 +1,23 @@
-# Memory System Requirements
+# Trajecta memory architecture
 
-## Overview
+## Storage and retrieval
 
-Trajecta uses **LangChain Deep Agents Memory** for agent context, plus SQLite,
-FTS5 and embedded Qdrant for application records and retrieval. The Trajectory
-Store (in `server/src/skills/trajectory_store/`) is separate: it holds raw
-execution evidence for attribution, experience learning, and optional evaluation.
+- **Semantic:** explicit user preferences and facts (`SemanticMemory` and active learned experiences). Memory isolation is enforced by user/workspace. Untrusted retrieved content is context, not an instruction.
+- **Episodic:** one evolving `episodes` record per logical task; includes observable outcomes, tool names, and event references. A completed answer is _not_ independently verified success.
+- **Procedural:** versioned skills with replay evaluation, safety gates, activation, regression monitoring and rollback. Candidate instructions never expand tool permissions.
 
-**Current implementation:** Completed, tool-using task trajectories are
-consolidated into durable, evidence-linked episodes in SQLite, with an FTS5
-index and optional embedded Qdrant retrieval. This is deterministic extraction,
-not an LLM reflection or a guarantee of task success. Simple chats and interrupted
-runs are skipped. Automatic capture respects the `automatic_memory` setting.
-Feedback-backed procedure suggestions remain in `learned_experiences` and do
-not automatically become executable skills in `/skills/`.
+SQLite is authoritative; Qdrant is a rebuildable semantic index. FTS5 offers lexical retrieval. Old `reflection_jobs` and `procedure_drafts` tables are retained as read-only historical data for safe upgrades. They have **no active worker or review endpoints**.
 
-## Memory Architecture
+## Task-level background pipeline
 
-Deep Agents Memory provides four memory tiers:
+`memory/learning/tracker.py` resolves logical tasks through bounded, deterministic heuristics. Each agent run is still stored as an immutable trajectory and can be associated with an existing task, including explicit continuation across sessions. Uncertain matches create a new task rather than merge unrelated data.
 
-### Short-Term Memory
-- Current task/thread state
-- Current goal, plan, active files, recent tool outputs
-- Temporary reasoning state, execution errors, subagent state
-- Belongs to the active task — not long-term knowledge
+`memory/learning/worker.py` uses `task_learning_jobs`: durable, deduplicated jobs keyed by task and event watermark with leases, retries, settings and bounded Bifrost reflection. All model-based reflection, episodic indexing, candidate synthesis, and evaluation run **outside the streaming response path**. A task is checkpointed after meaningful turns and can be reopened; inactivity marks it paused, not verified.
 
-### Semantic Memory
-- User preferences
-- Project structure and repository information
-- Environment details
-- Frequently used tools
-- Discovered system facts
-- Persistent configuration knowledge
+A reflection returns small evidence-linked insights only. `memory/learning/skills.py` converts observed tool sequences and a cited procedural insight into a candidate automatically, deduplicates candidates, and permits promotion only after independent verified held-out cases pass the existing evaluator and read-only policy. Because existing history does not automatically supply verified outcome assertions, generated candidates normally remain inactive until stronger evidence is available.
 
-### Episodic Memory
-- Selected useful experiences from previous tasks
-- Successful and failed approaches
-- Corrections and outcomes
-- Important execution events
-- Curated — not every raw event
+`GET /api/v1/learning/tasks`, `GET /api/v1/learning/reflection/status` and the reflection settings APIs expose diagnostics; normal chat does not require approvals for knowledge writes. User consent is still required for sensitive actions through the existing `ALLOW/ASK/DENY` gate.
 
-### Procedural Memory
-- Verified skills promoted through Trajecta's evaluation pipeline
-- Debugging procedures, project-specific workflows
-- Tool-use strategies, reusable instructions
-- Learned execution patterns
+## Current limitations
 
-## Key Separation
-
-```
-Deep Agents Memory  = what the agent should remember and reuse
-Trajectory Store    = raw execution history used to determine what to learn
-```
-
-## Data Flow
-
-```
-User Task → Deep Agent → Memory (all 4 tiers)
-  → Plan + Execute → Tools / MCP / Subagents
-  → Verification → Final Outcome
-      ├──→ Selected useful knowledge → Deep Agents Memory
-      └──→ Raw Trajectory → Trajectory Store → Skill Miner
-           → Candidate Skill → Evaluation
-              ├── FAIL → Reject / Improve
-              └── PASS → Procedural Memory
-```
-
-## Storage
-
-| Backend | Purpose | Location |
-|---------|---------|----------|
-| LangGraph checkpointer (SQLite) | Short-term conversation state and checkpoints | `.trajecta/data/langgraph.db` |
-| LangGraph long-term store (SQLite) | `/memories/` + `/skills/` (Deep Agents memory files) | `.trajecta/data/langgraph.db` |
-| SQLite (Trajecta's own) | `tasks`, `trajectories`, `episodes`, `skills`, `memories` | `.trajecta/data/trajecta.db` |
-| SQLite FTS5 | `memories_fts` (manual sync), `episodes_fts` (triggers) | `.trajecta/data/trajecta.db` |
-| Qdrant (embedded) | Vector embeddings for memory + episode retrieval | `.trajecta/data/qdrant` |
-
-Two aiosqlite connections to `langgraph.db`: the checkpointer (`AsyncSqliteSaver`) keeps default isolation_level; the store (`AsyncSqliteStore`) uses `isolation_level=None` so LangGraph controls `BEGIN`/`COMMIT` explicitly (matching how LangGraph constructs it internally) — this avoids the "cannot start a transaction within a transaction" failure that `setup()` otherwise triggers.
-
-## Implementation Notes
-
-- **Semantic memory** writes durable facts to `/memories/<key>` via the store backend (source of truth for the agent), then **mirrors** each fact into FTS5 + embedded Qdrant for offline retrieval. `adelete` removes all three copies.
-- **FTS5 is kept in sync manually** (not via triggers) because FTS5 requires integer rowids while `memories.id` is TEXT. A deterministic 63-bit rowid is derived from the memory id via SHA-256. `add`/`update`/`remove` each run `memories` + `memories_fts` in a single transaction.
-- **Episodic memory** extracts bounded summaries from meaningful finished trajectories, stores them in the `episodes` table, maintains `episodes_fts` with SQLite triggers, and optionally indexes summaries in the Qdrant `episodes` collection. Search uses FTS5 + vector candidates and checks authorization in SQLite. Every episode references its source trajectory and remains **unverified** until independent evidence is added. Tool outputs/arguments are not copied into the index.
-- **Procedural memory** promotes verified skills to `/skills/<name>/SKILL.md` in the store (the Deep Agents `skills=` path). `alist` reads `LsResult.entries` from `backend.als()`.
-- **Qdrant** runs in embedded mode (`QdrantClient(path=...)`, in-process, no server) and is resilient: if unavailable, memory still works via FTS + SQLite (a class latch `RESILIENT_BROKEN` keeps it a no-op).
-
-## File Map
-
-```
-server/src/memory/
-├── REQUIREMENTS.md
-├── __init__.py
-├── provider.py           # Deep Agents Memory provider setup and config
-├── short_term/
-│   ├── __init__.py
-│   └── store.py          # Short-term memory per task/thread
-├── semantic/
-│   ├── __init__.py
-│   └── store.py          # Semantic memory wrapper
-├── episodic/
-│   ├── __init__.py
-│   └── store.py          # Episodic memory wrapper
-├── procedural/
-│   ├── __init__.py
-│   └── store.py          # Procedural memory (skill integration)
-└── storage/
-    ├── __init__.py
-    ├── sqlite.py          # SQLite connection + migrations
-    ├── fts.py             # FTS5 search helpers (manual sync, 63-bit rowids)
-    └── vector.py          # Qdrant client wrapper (embedded, resilient)
-```
-
-## Verify
-
-```bash
-python -m server.src.memory.verify
-```
-
-Checks opening the provider, short-term threads, semantic CRUD, trajectory-backed episodic consolidation and retrieval, procedural skills, and `agent_kwargs()` without a separate graph server.
-
-## Key Interfaces
-
-Each memory wrapper exposes async methods:
-- `ShortTermStore`: `new_thread()`, `save_thread_state(state, thread_id)`, `get_thread_state(thread_id)`, `list_recent(limit)`
-- `SemanticMemory`: `aput(key, content)`, `aget(key)`, `adelete(key)`, `asearch(query, limit)`
-- `EpisodicMemory`: `consolidate(trajectory_id)`, `list(limit, user_id, scope)`, `get(id, user_id, scope)`, `search(query, limit, user_id, scope)`, `delete(id, user_id, scope)`, `as_tool(name)`
-- `ProceduralMemory`: `apromote(name, content)`, `alist()`, `aload(name)`, `asearch(query, limit)`
-- `MemoryProvider`: `open()`/`close()` (async), `agent_kwargs()`, module-level `get_memory_provider()` / `reset_memory_provider()`
-
-## Bounded background reflection (migration v18)
-
-The experience-first reflection worker queues meaningful completed trajectories and
-explicit feedback in `reflection_jobs`. Atomic leases, retry/backoff, and recovery
-protect the queue across restarts. It uses a configured Bifrost model to produce
-strictly structured, event-grounded lessons and procedure suggestions. The
-`automatic_memory` switch applies; model calls have daily, input and output limits.
-Suggested experiences remain `needs_review` and never grant tool permissions,
-activate executable skills, or trigger replay evaluation. Workspace-scoped and
-non-local user insights stay in the audit job record until scoped learning is
-implemented. `GET /api/v1/learning/reflection/status` reports queue activity.
-
-## Unified retrieval (schema v20)
-
-- `memory/retrieval.py` fuses global semantic FTS/Qdrant results, workspace-scoped
-  episodes, approved global experience notes and active, registry-version-matched
-  skill descriptors. Qdrant IDs are re-checked in SQLite and never grant access.
-- `agent/context/manager.py` wraps the unified reader; the chat preflight
-  supplies a fixed char/item/time budget and respects `automatic_memory`.
-- `memory_usage` counts context retrieval, **not successful tool use**.
-- `memory_conflicts` records conservative, explicit contradictory instructions;
-  unresolved pairs are suppressed until a user resolves them.
-- `memory/curator.py` records review findings about stale drafts and unused
-  skills. It cannot auto-promote or deactivate skills. Explicit archive/restore
-  applies only to pending procedure drafts via the `archived_at` flag.
-- This patch adds no automatic scheduled curation or unsafe LLM consolidation.
+Task association is conservative lexical matching rather than semantic cross-session clustering. A chat containing unrelated concurrent goals may split them imperfectly. LLM insights and historical tool outputs are never treated as ground truth; automatic skill activation requires separately verified evaluation evidence. Real-time retrieval still adds its existing bounded timeout to chat.

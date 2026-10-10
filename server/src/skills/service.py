@@ -1,9 +1,7 @@
-"""Skills service — wires mining/evaluation/promotion persistence for the API.
+"""Skill persistence, task trajectories, replay evaluation and promotion.
 
-Owns the skill repository, trajectory store, replay fixtures, evaluator,
-versioner, and promoter. The standalone skill miner is not instantiated here;
-experience learning is separate.
-REST routes reach this service through ``request.app.state.skills_service``.
+Automatic discovery is managed separately by the durable task-learning worker;
+this service retains verification and permission-safe version lifecycle.
 """
 
 from __future__ import annotations

@@ -18,9 +18,9 @@ def test_one_knowledge_entry_in_sidebar():
     assert 'sidebar-nav-icon' in sidebar
 
 
-def test_four_primary_sections_and_legacy_navigation():
+def test_three_primary_sections_and_legacy_navigation():
     hub = read("components/KnowledgeCenter.tsx")
-    assert all(f'id: "{view}"' in hub for view in ("overview", "memories", "skills", "review"))
+    assert all(f'id: "{view}"' in hub for view in ("overview", "memories", "skills"))
     page = read("components/TopLevelPages.tsx")
     assert '<KnowledgeCenter backendOnline=' in page
     assert 'page === "skills" ? "skills"' in page  # legacy destination stays functional
@@ -34,15 +34,14 @@ def test_memory_editing_is_preserved_after_removing_duplicate_panel():
     assert not (ROOT / "components/MemoryPanel.tsx").exists()
 
 
-def test_proposed_workflows_and_skill_approvals_still_separate():
+def test_autonomous_skill_flow_without_review_inbox():
     hub = read("components/KnowledgeCenter.tsx")
-    procedures = read("components/memory/ProceduralMemories.tsx")
     experience = read("components/skills/ExperiencePanel.tsx")
-    assert 'reviewOnly />' in hub
-    assert 'draft.status === "needs_review"' in procedures
-    assert 'I have reviewed the complete instructions' in experience
+    assert 'reviewOnly' not in hub
+    assert not (ROOT / "components/memory/ProceduralMemories.tsx").exists()
     assert 'setSkillEnabled' in experience
     assert 'VersionHistory' in experience
+    assert 'Pending' not in hub
 
 
 def test_diagnostics_available_without_extra_sidebar_destination():

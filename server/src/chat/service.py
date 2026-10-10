@@ -934,23 +934,13 @@ class ChatService:
             )
 
     async def _consolidate_episode(self, trajectory_id: str | None) -> None:
-        """Best effort: memory failures never invalidate a completed chat."""
-        if self._episodic is None or trajectory_id is None:
+        """Durably queue task-level consolidation; no embeddings or LLM on chat."""
+        if trajectory_id is None or self._reflection is None:
             return
         try:
-            if self._permission_policy is not None and not await self._permission_policy.get_setting(
-                "automatic_memory", True
-            ):
-                return
-            await self._episodic.consolidate(trajectory_id)
+            await self._reflection.enqueue(trajectory_id)
         except Exception:
-            logger.warning("episodic consolidation failed", exc_info=True)
-        # Enqueue only after the run is durable. Never wait for LLM review.
-        if self._reflection is not None:
-            try:
-                await self._reflection.enqueue(trajectory_id)
-            except Exception:
-                logger.warning("reflection enqueue failed", exc_info=True)
+            logger.warning("task-level learning enqueue failed", exc_info=True)
 
     async def _attribute_skill_execution(self, trajectory_id: str | None) -> None:
         """Turn the finished trajectory into skill execution metrics.

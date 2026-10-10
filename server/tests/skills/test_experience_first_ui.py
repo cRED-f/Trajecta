@@ -16,10 +16,10 @@ def test_skills_screen_does_not_mount_old_dashboard():
     assert 'SkillEvaluationWorkbench' not in code
 
 
-def test_startup_does_not_boot_background_mining_worker():
+def test_startup_runs_durable_task_learning_worker():
     code = (ROOT / "server/src/api/app.py").read_text()
-    assert 'skills.learning.start()' not in code
-    assert 'skills.learning.stop()' not in code
+    assert 'await reflection.start()' in code
+    assert 'await reflection.stop()' in code
 
 
 def test_retired_mining_coordinator_is_not_attached_to_chat_or_skills():
@@ -34,18 +34,18 @@ def test_retired_mining_coordinator_is_not_attached_to_chat_or_skills():
     assert "SkillMiner(" not in (
         ROOT / "server/src/skills/service.py"
     ).read_text()
-    assert (ROOT / "server/src/skills/skill_miner/miner.py").exists()
+    assert not (ROOT / "server/src/skills/skill_miner/miner.py").exists()
+    assert "promote_with_user_approval" not in (ROOT / "server/src/skills/promotion/promoter.py").read_text()
     assert "class SkillLearningConfig" not in (
         ROOT / "server/src/config/__init__.py"
     ).read_text()
 
 
-def test_stale_learning_routes_are_explicitly_retired():
+def test_stale_learning_routes_removed_entirely():
     code = (ROOT / "server/src/api/routes/skills.py").read_text()
-    assert '@router.get("/learning/status")' in code
-    assert '@router.post("/learning/run")' in code
-    assert 'async def retired_skill_learning()' in code
-    assert 'status_code=410' in code
+    assert '@router.get("/learning/status")' not in code
+    assert '@router.post("/learning/run")' not in code
+    assert 'async def retired_skill_learning()' not in code
     assert '"learning": await service.learning.status()' not in code
 
 

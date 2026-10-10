@@ -384,24 +384,6 @@ async def curator_dismiss(finding_id: int, request: Request,
     return {"ok": True}
 
 
-@router.post("/curator/procedures/{draft_id}/archive")
-async def curator_archive(draft_id: str, request: Request, workspace_path: str | None = None):
-    from server.src.memory.episodic.store import EpisodicMemory
-    if not await request.app.state.memory_curator.archive_proposal(
-        draft_id, scope=EpisodicMemory.workspace_scope(workspace_path)):
-        raise HTTPException(409, "Only pending proposals can be archived")
-    return {"ok": True}
-
-
-@router.post("/curator/procedures/{draft_id}/restore")
-async def curator_restore(draft_id: str, request: Request, workspace_path: str | None = None):
-    from server.src.memory.episodic.store import EpisodicMemory
-    if not await request.app.state.memory_curator.restore_proposal(
-        draft_id, scope=EpisodicMemory.workspace_scope(workspace_path)):
-        raise HTTPException(409, "Archived proposal not found")
-    return {"ok": True}
-
-
 @router.get("/{memory_type}")
 async def list_memories(
     memory_type: str,

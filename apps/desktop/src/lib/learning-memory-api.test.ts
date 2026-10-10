@@ -18,12 +18,9 @@ describe("learning-memory HTTP contracts", () => {
     expect(mocked).toHaveBeenLastCalledWith("/memory/episodic?limit=100");
   });
 
-  it("does not omit scoped identifiers from review and deletion", async () => {
-    await learningMemoryApi.review("draft/one", "reject", "/one two");
-    expect(mocked).toHaveBeenLastCalledWith(
-      "/learning/procedures/draft%2Fone/review?workspace_path=%2Fone+two",
-      { method: "POST", body: JSON.stringify({ decision: "reject" }) },
-    );
+  it("loads logical tasks and retains scoped episode deletion", async () => {
+    await learningMemoryApi.tasks();
+    expect(mocked).toHaveBeenLastCalledWith("/learning/tasks");
     await learningMemoryApi.deleteEpisode("a/b", "/one two");
     expect(mocked).toHaveBeenLastCalledWith(
       "/memory/episodic/a%2Fb?workspace_path=%2Fone+two", { method: "DELETE" },

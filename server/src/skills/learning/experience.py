@@ -1,8 +1,8 @@
 """Evidence-linked learning from real interactions.
 
 Nothing recorded here changes permission policy, invokes a tool, or changes
-an active skill version. Unconfirmed corrections require review, and learned
-procedures are suggestions, not executable instructions.
+an active skill version. Background insights become non-executable knowledge; independently verified
+procedures follow the automatic skill evaluation path.
 """
 from __future__ import annotations
 
@@ -73,9 +73,8 @@ class ExperienceLearningService:
     async def observe_user(self, text: str, *, trajectory_id: str | None = None) -> dict[str, Any] | None:
         """Record explicitly stated style preferences or corrections.
 
-        Other user turns aren't assumed to be facts. Corrections stay in review
-        until explicitly approved; current-turn user instructions still apply
-        naturally through the agent's normal user message.
+        Other user turns aren't assumed to be facts. Explicit corrections
+        apply as knowledge, never as privileged tool permissions.
         """
         text = " ".join(text.strip().split())
         if not (8 <= len(text) <= 400) or _SECRET.search(text):
@@ -91,8 +90,8 @@ class ExperienceLearningService:
             )
         if _CORRECTION.match(text):
             return await self._upsert(
-                kind="correction", status="needs_review", content=text,
-                confidence=0.4, evidence={"source": "user_correction"},
+                kind="correction", status="active", content=text,
+                confidence=0.7, evidence={"source": "user_correction"},
                 source_trajectory_id=trajectory_id,
             )
         return None
@@ -201,23 +200,9 @@ class ExperienceLearningService:
             if not note:
                 return {"status": "feedback_recorded", "trajectory_id": trajectory_id}
             item = await self._upsert(
-                kind="correction", status="needs_review", content=note,
+                kind="correction", status="active", content=note,
                 confidence=0.7, evidence={"source": "negative_feedback", "goal": goal},
                 source_trajectory_id=trajectory_id,
-            )
-        elif names and goal and len(goal) <= 1000:
-            # Only record observed tool names; never replay arguments or trust
-            # unverified output as authority. Risky procedures are review-only.
-            risky = any(_is_risky_tool(name) for name in names)
-            content = (f"For tasks like: {goal[:250]}\n"
-                       f"Previously used tools: {', '.join(names[:12])}.\n"
-                       "Check current conditions and tool permissions before reuse.")
-            item = await self._upsert(
-                kind="procedure", status="needs_review",
-                content=content, confidence=0.85 if not risky else 0.55,
-                evidence={"source": "confirmed_task", "tools": names[:12], "note": note},
-                source_trajectory_id=trajectory_id,
-                fingerprint=_fingerprint(goal),
             )
         else:
             return {"status": "feedback_recorded", "trajectory_id": trajectory_id}
@@ -227,15 +212,14 @@ class ExperienceLearningService:
         self, *, trajectory_id: str, kind: str, content: str,
         confidence: float, evidence_event_seqs: list[int], reason: str,
     ) -> dict[str, Any] | None:
-        """Store reviewer suggestions for human review; never activate them."""
+        """Store evidence-linked insights autonomously (not executable skills)."""
         if kind not in {"lesson", "correction", "procedure"} or not evidence_event_seqs:
             return None
         content = " ".join(content.strip().split())[:450]
         if len(content) < 16 or _SECRET.search(content):
             return None
-        # The present UI understands correction/procedure; lessons are a
-        # non-executable procedural suggestion until the next refinement step.
-        target_kind = "correction" if kind == "correction" else "procedure"
+        # Preserve semantic distinction: general lessons are not procedures.
+        target_kind = kind
         fingerprint = _fingerprint(content)
         old = await self._db.fetchone(
             """SELECT * FROM learned_experiences
@@ -246,7 +230,7 @@ class ExperienceLearningService:
         if old is not None and old["status"] in {"active", "rejected"}:
             return _decode(old)
         return await self._upsert(
-            kind=target_kind, status="needs_review", content=content,
+            kind=target_kind, status="active", content=content,
             confidence=min(float(confidence), 0.7),
             source_trajectory_id=trajectory_id,
             fingerprint=fingerprint,
@@ -269,25 +253,6 @@ class ExperienceLearningService:
                    ORDER BY updated_at DESC LIMIT ?""", (limit,),
             )
         return [_decode(row) for row in rows]
-
-    async def review(self, item_id: str, *, decision: str) -> dict[str, Any]:
-        if decision not in {"approve", "reject"}:
-            raise ValueError("decision must be approve or reject")
-        row = await self._db.fetchone(
-            "SELECT * FROM learned_experiences WHERE id = ?", (item_id,),
-        )
-        if row is None:
-            raise ValueError("experience not found")
-        if row["status"] != "needs_review":
-            raise ValueError("experience is not waiting for review")
-        new_status = "active" if decision == "approve" else "rejected"
-        await self._db.execute(
-            "UPDATE learned_experiences SET status = ?, updated_at = ? WHERE id = ?",
-            (new_status, _now(), item_id),
-        )
-        return _decode((await self._db.fetchone(
-            "SELECT * FROM learned_experiences WHERE id = ?", (item_id,),
-        )) or {})
 
     async def context(self, task_text: str, *, max_chars: int = 2400) -> str:
         """Small, bounded context read; no embedding or additional LLM calls."""

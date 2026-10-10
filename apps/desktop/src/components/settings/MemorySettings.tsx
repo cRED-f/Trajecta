@@ -4,29 +4,27 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity, AlertCircle, BookOpenText, Check, FolderOpen, History,
-  Lightbulb, ListTodo, Plus, RefreshCw, Search, ShieldCheck, X,
+  Lightbulb, Plus, RefreshCw, Search, ShieldCheck, X,
   type LucideIcon,
 } from "lucide-react";
 import { useMemoryActions, useMemoryCatalog } from "../../hooks/use-settings";
 import { learningMemoryApi } from "../../lib/learning-memory-api";
 import { FriendlyEmpty } from "../LearningSurface";
 import { EpisodicMemories } from "../memory/EpisodicMemories";
-import { ProceduralMemories } from "../memory/ProceduralMemories";
 import { ReflectionActivity } from "../memory/ReflectionActivity";
 import { MemoryMaintenance } from "../memory/MemoryMaintenance";
 import { ExperiencePanel } from "../skills/ExperiencePanel";
 
-type View = "semantic" | "learned" | "episodic" | "procedural" | "activity" | "maintenance";
+type View = "semantic" | "learned" | "episodic" | "activity" | "maintenance";
 const SECTIONS: { key: View; label: string; icon: LucideIcon }[] = [
   { key: "semantic", label: "Saved facts", icon: BookOpenText },
   { key: "learned", label: "Learnings", icon: Lightbulb },
   { key: "episodic", label: "Past tasks", icon: History },
-  { key: "procedural", label: "Workflows", icon: ListTodo },
 ];
 
-/** A reusable slice of the Knowledge page; nondefault views serve Review and Diagnostics. */
-export function MemorySettings({ enabled, backendOnline, view, reviewOnly = false }: {
-  enabled: boolean; backendOnline: boolean; view?: View; reviewOnly?: boolean;
+/** Memory management and optional diagnostics with no routine review inbox. */
+export function MemorySettings({ enabled, backendOnline, view }: {
+  enabled: boolean; backendOnline: boolean; view?: View;
 }) {
   const [localView, setLocalView] = useState<View>("semantic");
   const [search, setSearch] = useState("");
@@ -47,16 +45,6 @@ export function MemorySettings({ enabled, backendOnline, view, reviewOnly = fals
     queryFn: () => learningMemoryApi.episodes(workspacePath),
     enabled: canFetch && tab === "episodic",
   });
-  const procedures = useQuery({
-    queryKey: ["memory-center", "procedures", workspacePath],
-    queryFn: () => learningMemoryApi.procedures(workspacePath),
-    enabled: canFetch && tab === "procedural",
-  });
-  const archived = useQuery({
-    queryKey: ["memory-center", "archived", workspacePath],
-    queryFn: () => learningMemoryApi.procedures(workspacePath, "archived"),
-    enabled: canFetch && tab === "procedural" && !reviewOnly,
-  });
   const reflection = useQuery({
     queryKey: ["memory-center", "reflection"],
     queryFn: learningMemoryApi.reflection,
@@ -74,7 +62,7 @@ export function MemorySettings({ enabled, backendOnline, view, reviewOnly = fals
     enabled: canFetch && tab === "maintenance" && !workspacePath,
   });
   const currentQuery = tab === "semantic" ? semantic : tab === "episodic" ? episodes
-    : tab === "procedural" ? procedures : tab === "activity" ? reflection : findings;
+    : tab === "activity" ? reflection : findings;
   const loading = tab !== "learned" && (currentQuery.isLoading || (tab === "maintenance" && !workspacePath && conflicts.isLoading));
   const queryError = tab === "learned" ? null : currentQuery.error ?? (tab === "maintenance" ? conflicts.error : null);
 
@@ -116,7 +104,7 @@ export function MemorySettings({ enabled, backendOnline, view, reviewOnly = fals
   }
 
   if (!backendOnline) return <FriendlyEmpty icon={AlertCircle} title="Knowledge is unavailable" description="Reconnect to Trajecta to browse and manage knowledge." />;
-  return <section className="knowledge-embedded memory-center" aria-label={reviewOnly ? "Workflow suggestions" : "Memories"}>
+  return <section className="knowledge-embedded memory-center" aria-label="Memories">
     {!view && <nav className="knowledge-subnav" aria-label="Types of memory">
       {SECTIONS.map(({ key: section, label, icon: Icon }) => <button key={section} type="button"
         className={tab === section ? "knowledge-subnav__item is-active" : "knowledge-subnav__item"}
@@ -126,7 +114,7 @@ export function MemorySettings({ enabled, backendOnline, view, reviewOnly = fals
       </button>)}
     </nav>}
 
-    {(tab === "episodic" || tab === "procedural" || tab === "maintenance") && !reviewOnly && <div className="knowledge-scope">
+    {(tab === "episodic" || tab === "maintenance") && <div className="knowledge-scope">
       <div className="knowledge-scope__description"><FolderOpen size={18} /><div>
         <strong>{workspacePath ? "Workspace" : "All workspaces"}</strong>
         <span title={workspacePath ?? undefined}>{workspacePath ?? "Showing general memory"}</span>
@@ -146,7 +134,7 @@ export function MemorySettings({ enabled, backendOnline, view, reviewOnly = fals
       <div className="knowledge-editor__actions"><button type="button" className="knowledge-button" onClick={resetEditor}>Cancel</button>
         <button type="submit" className="knowledge-button knowledge-button--primary" disabled={busy || !key.trim() || !content.trim()}>{busy ? <RefreshCw size={15} className="settings-spin"/> : <Check size={15}/>} Save fact</button></div>
     </form>}
-    {(tab === "semantic" || tab === "episodic" || tab === "procedural") && <label className="knowledge-search knowledge-search--full"><Search size={17} />
+    {(tab === "semantic" || tab === "episodic") && <label className="knowledge-search knowledge-search--full"><Search size={17} />
       <input aria-label="Search memories" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search records…" /></label>}
     {error && <div role="alert" className="settings-error-card"><AlertCircle size={17} /> {error}</div>}
     {queryError && <div role="alert" className="settings-error-card"><AlertCircle size={17} /> {queryError instanceof Error ? queryError.message : "Could not load memory."}</div>}
@@ -163,7 +151,6 @@ export function MemorySettings({ enabled, backendOnline, view, reviewOnly = fals
     </div>}
     {tab === "learned" && <ExperiencePanel enabled={canFetch} view="learned" compact />}
     {!loading && !queryError && tab === "episodic" && <EpisodicMemories items={episodes.data ?? []} search={search} busy={busy} workspacePath={workspacePath} perform={perform} />}
-    {!loading && !queryError && tab === "procedural" && <ProceduralMemories items={procedures.data?.items ?? []} archived={archived.data?.items ?? []} search={search} busy={busy} workspacePath={workspacePath} perform={perform} reviewOnly={reviewOnly} />}
     {!loading && !queryError && tab === "activity" && <><div className="knowledge-diagnostic-heading"><Activity size={18}/><strong>Background learning</strong></div><ReflectionActivity status={reflection.data} busy={busy} perform={perform} /></>}
     {!loading && !queryError && tab === "maintenance" && <><div className="knowledge-diagnostic-heading"><ShieldCheck size={18}/><strong>Memory health</strong></div><MemoryMaintenance findings={findings.data?.items ?? []} conflicts={workspacePath ? [] : conflicts.data?.items ?? []} workspacePath={workspacePath} busy={busy} perform={perform} /></>}
   </section>;

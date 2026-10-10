@@ -17,7 +17,6 @@ from server.src.memory.retrieval import UnifiedMemoryRetriever
 from server.src.memory.storage.fts import FTSIndex
 from server.src.memory.storage.sqlite import SQLiteDatabase
 from server.src.skills.repository import SkillRepository
-from server.src.skills.learning.procedures import ProcedureRefinementService
 from server.src.skills.representation.skill import Skill, SkillWorkflow
 from server.src.skills.trajectory_store.store import TrajectoryStore
 
@@ -88,13 +87,13 @@ async def env(tmp_path):
 
 @pytest.mark.asyncio
 async def test_schema_migration_survives_reopen(env):
-    assert (await env.db.fetchone("SELECT MAX(version) AS version FROM schema_version"))["version"] == 21
+    assert (await env.db.fetchone("SELECT MAX(version) AS version FROM schema_version"))["version"] == 22
     for table in ("memory_usage", "memory_conflicts", "memory_curator_findings"):
         assert await env.db.fetchone("SELECT name FROM sqlite_master WHERE name=?", (table,))
     await env.db.close()
     env.db._conn = AsyncConn(env.db.path)
     await env.db._migrate()
-    assert (await env.db.fetchone("SELECT MAX(version) AS version FROM schema_version"))["version"] == 21
+    assert (await env.db.fetchone("SELECT MAX(version) AS version FROM schema_version"))["version"] == 22
 
 
 @pytest.mark.asyncio
@@ -170,56 +169,6 @@ async def test_only_active_versioned_skills_are_loaded(env):
 
 
 @pytest.mark.asyncio
-async def test_curator_finds_stale_archives_only_on_explicit_action(env):
-    store = TrajectoryStore(env.db)
-    _, tid = await store.begin(goal="Research university documents", thread_id="x")
-    await store.finish(tid, outcome="completed", result="done")
-    old = (datetime.now(UTC) - timedelta(days=55)).isoformat()
-    await env.db.execute(
-        """INSERT INTO procedure_drafts
-           (id,source_trajectory_id,trigger,user_id,scope,kind,title,steps_json,
-            rationale,fingerprint,evidence_json,status,version,user_confirmed,created_at,updated_at)
-           VALUES ('d1',?,'feedback','local','local','new','University documents','[]',
-                   'Manual review','one','{}','needs_review',1,0,?,?)""",
-        (tid, old, old),
-    )
-    findings = await env.curator.scan(stale_days=30)
-    assert any(item["finding_type"] == "stale_proposal" for item in findings)
-    assert (await env.db.fetchone("SELECT archived_at FROM procedure_drafts WHERE id='d1'"))["archived_at"] is None
-    assert not await env.curator.archive_proposal("d1", scope="workspace:other")
-    assert await env.curator.archive_proposal("d1")
-    assert (await env.db.fetchone("SELECT status FROM procedure_drafts WHERE id='d1'"))["status"] == "needs_review"
-    assert not await env.curator.archive_proposal("d1")
-    assert await env.curator.restore_proposal("d1")
-    assert (await env.db.fetchone("SELECT archived_at FROM procedure_drafts WHERE id='d1'"))["archived_at"] is None
-
-
-@pytest.mark.asyncio
-async def test_archived_proposal_is_not_reviewable_and_can_be_listed(env):
-    store = TrajectoryStore(env.db)
-    _, tid = await store.begin(goal="Review reference sources", thread_id="t")
-    await store.finish(tid, outcome="completed", result="response")
-    now = datetime.now(UTC).isoformat()
-    await env.db.execute(
-        """INSERT INTO procedure_drafts
-           (id,source_trajectory_id,trigger,user_id,scope,kind,title,steps_json,
-            rationale,fingerprint,evidence_json,status,version,user_confirmed,created_at,updated_at)
-           VALUES ('d2',?,'feedback','local','local','new','References','[]',
-                   'Review before use','two','{}','needs_review',1,0,?,?)""",
-        (tid, now, now),
-    )
-    service = ProcedureRefinementService(env.db, store, SkillRepository(env.db))
-    assert await env.curator.archive_proposal("d2")
-    assert not await service.list()
-    assert [item["id"] for item in await service.list(status="archived")] == ["d2"]
-    with pytest.raises(ValueError, match="review"):
-        await service.review("d2", decision="approve")
-    assert await env.curator.restore_proposal("d2")
-    assert (await service.review("d2", decision="approve"))["status"] == "approved"
-    assert not await env.curator.archive_proposal("d2")
-
-
-@pytest.mark.asyncio
 async def test_unified_api_lists_scoped_results_and_requires_valid_resolution(env):
     import importlib.util
     api_path = Path(__file__).parents[2] / "src/api/routes/memory.py"
@@ -264,7 +213,7 @@ async def test_v21_partial_migration_is_safe_to_retry(env):
     # the new schema_version row. The next startup must not fail.
     await env.db.execute("DELETE FROM schema_version WHERE version=21")
     await env.db._migrate()
-    assert (await env.db.fetchone("SELECT MAX(version) AS v FROM schema_version"))["v"] == 21
+    assert (await env.db.fetchone("SELECT MAX(version) AS v FROM schema_version"))["v"] == 22
     columns = await env.db.fetch("PRAGMA table_info(memory_usage)")
     assert {row["name"] for row in columns} >= {
         "first_retrieved_at", "last_retrieved_at", "retrieval_count"
