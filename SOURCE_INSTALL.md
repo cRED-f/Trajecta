@@ -47,6 +47,12 @@ working tree. On update failure, review `%LOCALAPPDATA%\\ai.trajecta.desktop\\up
   install.json           # original Git-clone location
 ```
 
+The installer also checks imports for the separately distributed `langgraph-checkpoint-sqlite`
+package before replacing the existing Python environment. If Settings reports FastAPI
+**Offline**, inspect `%LOCALAPPDATA%\ai.trajecta.desktop\logs\backend.log`; a missing
+`langgraph.checkpoint.sqlite` module means the installed environment is incomplete.
+Re-run `pnpm trajecta:install` after updating the source to repair it.
+
 The installed FastAPI backend runs at `127.0.0.1:8420`. If that port is occupied,
 Trajecta **fails closed** rather than attaching to an unknown backend. Data is
 separated from build artifacts so updates don't delete conversations or memories.

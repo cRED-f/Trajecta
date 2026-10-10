@@ -11,6 +11,8 @@ type DesktopPrefs = {
 type DesktopStatus = {
   installed: boolean;
   backend_running: boolean;
+  backend_state: "connected" | "starting" | "failed" | "offline";
+  backend_log_path: string | null;
   bifrost_reachable: boolean;
   managed_bifrost: boolean;
   error: string | null;
@@ -41,7 +43,16 @@ export function DesktopSettings() {
     setPrefs(settings);
     setStatus(current);
   }
-  useEffect(() => { refresh().catch((e) => setError(readableError(e))); }, []);
+  useEffect(() => {
+    if (!isDesktop) return;
+    void refresh().catch((e) => setError(readableError(e)));
+    // Keep service status fresh while the user has Settings open. Status also
+    // detects crashed processes and reports recovery without manual refresh.
+    const timer = window.setInterval(() => {
+      void invoke<DesktopStatus>("desktop_status").then(setStatus).catch(() => {});
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   async function perform(task: () => Promise<void>) {
     setBusy(true); setError(null); setMessage(null);
@@ -84,18 +95,21 @@ export function DesktopSettings() {
     <div className="settings-group-card">
       <div className="settings-row">
         <div className="settings-row__icon"><HardDrive size={16}/></div>
-        <div className="settings-row__body"><strong>FastAPI</strong><span>Managed production backend · local port 8420</span></div>
-        <span className={`settings-status-pill ${status?.backend_running ? "settings-status-pill--online" : "settings-status-pill--offline"}`}>{status?.backend_running ? "Connected" : "Offline"}</span>
+        <div className="settings-row__body"><strong>FastAPI</strong><span>{status?.installed ? "Managed production backend" : "Development backend"} · local port {status?.installed ? "8420" : "8421"}</span></div>
+        <span className={`settings-status-pill ${status?.backend_running ? "settings-status-pill--online" : "settings-status-pill--offline"}`}>{status?.backend_state === "connected" ? "Connected" : status?.backend_state === "starting" ? "Starting…" : status?.backend_state === "failed" ? "Failed" : "Offline"}</span>
       </div>
       <div className="settings-row">
         <div className="settings-row__icon"><Power size={16}/></div>
         <div className="settings-row__body"><strong>Bifrost</strong><span>{status?.managed_bifrost ? "Managed local gateway" : "External or optional gateway"} · port 8080</span></div>
         <span className={`settings-status-pill ${status?.bifrost_reachable ? "settings-status-pill--online" : "settings-status-pill--offline"}`}>{status?.bifrost_reachable ? "Reachable" : "Not detected"}</span>
       </div>
-      {status?.error && <div className="desktop-feedback desktop-feedback--error"><ShieldAlert size={15}/>{status.error}</div>}
+      {status?.error && <div className="desktop-feedback desktop-feedback--error" role="alert"><ShieldAlert size={15}/>{status.error}</div>}
+      {status?.installed && !status.backend_running && status.backend_log_path && (
+        <div className="desktop-feedback" role="status">Backend diagnostic log: <code>{status.backend_log_path}</code></div>
+      )}
       <div className="desktop-actions">
         <button type="button" className="desktop-action-button" disabled={!isDesktop || !status?.installed || busy}
-          onClick={() => void perform(async () => { await invoke("desktop_restart_services"); await refresh(); setMessage("Services restarted."); })}>
+          onClick={() => void perform(async () => { await invoke("desktop_restart_services"); await refresh(); setMessage("Backend restart requested. Waiting for health check…"); })}>
           <RefreshCcw size={15}/> Restart services
         </button>
         <button type="button" className="desktop-action-button" disabled={!isDesktop || busy}

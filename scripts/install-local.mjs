@@ -47,6 +47,12 @@ if (!existsSync(built)) throw new Error(`Tauri did not create expected executabl
 if (existsSync(stagingVenv)) rmSync(stagingVenv,{recursive:true,force:true});
 call('uv',['venv','--python','3.11',stagingVenv]);
 call('uv',['pip','install','--python',python,root]);
+// Reject a Python installation that resolves but cannot load the FastAPI entrypoint.
+// Run from the same data directory as the installed desktop launcher.
+// Check the optional LangGraph SQLite backend explicitly before replacing the active venv.
+call(python,['-X','utf8','-c',
+  'from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver; from langgraph.store.sqlite.aio import AsyncSqliteStore; import server.src.main',
+],data);
 mkdirSync(join(runtime,'backend','config'),{recursive:true});
 copyFileSync(join(root,'config','default.yaml'),join(runtime,'backend','config','default.yaml'));
 copyFileSync(join(root,'config','guardrail-rules.yaml'),join(runtime,'backend','config','guardrail-rules.yaml'));
