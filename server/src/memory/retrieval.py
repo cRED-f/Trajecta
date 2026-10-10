@@ -15,6 +15,7 @@ from typing import Any
 from server.src.memory.episodic.store import EpisodicMemory
 from server.src.memory.storage.fts import _fts_query
 from server.src.skills.repository import SkillRepository
+from server.src.output_safety import contains_internal_context
 
 logger = logging.getLogger(__name__)
 _WORDS = re.compile(r"[\w-]{4,}", re.UNICODE)
@@ -244,6 +245,10 @@ class UnifiedMemoryRetriever:
         lines = []
         kept = []
         for item in items:
+            # Historical messages created before output filtering may contain
+            # a provider-generated prompt/compaction dump. Never reinject it.
+            if contains_internal_context(str(item.get('content') or '')):
+                continue
             label = f"{item['tier']}:{item['id'][:40]}"
             if item["tier"] == "skill":
                 label += f"@{item['version']}"

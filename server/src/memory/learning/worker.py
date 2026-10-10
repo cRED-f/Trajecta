@@ -21,6 +21,7 @@ from server.src.memory.episodic.store import EpisodicMemory
 from server.src.memory.storage.sqlite import SQLiteDatabase
 from server.src.skills.learning.experience import ExperienceLearningService
 from server.src.skills.trajectory_store.store import TrajectoryStore
+from server.src.output_safety import contains_internal_context
 
 log = logging.getLogger(__name__)
 
@@ -266,7 +267,8 @@ class ContinuousLearningWorker:
                       'outcome':t.get('outcome'),'feedback':(t.get('metadata') or {}).get('user_feedback')}
                      for t in traces[-12:]],
             'outcome_verified':False,
-            'latest_response_excerpt':EpisodicMemory._text(latest.get('task_result'),350),
+            'latest_response_excerpt':('' if contains_internal_context(str(latest.get('task_result') or ''))
+                                       else EpisodicMemory._text(latest.get('task_result'),350)),
             'events':events[-120:],
         }
         return payload,allowed

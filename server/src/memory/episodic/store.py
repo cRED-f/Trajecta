@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from server.src.memory.storage.fts import _fts_query
+from server.src.output_safety import contains_internal_context
 from server.src.skills.trajectory_store import TrajectoryStore
 
 if TYPE_CHECKING:
@@ -116,7 +117,9 @@ class EpisodicMemory:
         if not tools and not substantial and not errors:
             return None
         last = finished[-1]
-        result = self._text(last.get("task_result"), 650)
+        raw_result = str(last.get("task_result") or "")
+        result = ("[internal-context response omitted]" if contains_internal_context(raw_result)
+                  else self._text(raw_result, 650))
         outcome = str(last.get("outcome") or "unknown")
         feedback = (last.get("metadata") or {}).get("user_feedback")
         if feedback not in {"success", "failure"}:
