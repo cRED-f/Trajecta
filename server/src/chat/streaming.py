@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import aclosing
 
 from collections.abc import (
     AsyncIterator,
@@ -44,8 +45,11 @@ async def sse_stream(
 
     async def produce() -> None:
         try:
-            async for event in source:
-                await queue.put(event)
+            # Canceling the producer must close the nested source generator,
+            # otherwise its run-registry finally block can be skipped.
+            async with aclosing(source) as events:
+                async for event in events:
+                    await queue.put(event)
 
         except BaseException as exc:
             await queue.put(exc)

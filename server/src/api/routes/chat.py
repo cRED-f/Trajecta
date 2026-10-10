@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
@@ -78,11 +79,17 @@ def _response_for_prepared(
     prepared: PreparedTurn,
 ) -> StreamingResponse:
     async def source() -> AsyncIterator:
-        async for event in service.stream_prepared(prepared):
-            if await request.is_disconnected():
-                await service.cancel(prepared.conversation.id)
-                break
-            yield event
+        if not await service.bind_stream(prepared.conversation.id, prepared.run_id):
+            return
+        try:
+            async with aclosing(service.stream_prepared(prepared)) as stream:
+                async for event in stream:
+                    if await request.is_disconnected():
+                        await service.cancel(prepared.conversation.id)
+                        break
+                    yield event
+        finally:
+            await service.release_stream(prepared.conversation.id, prepared.run_id)
 
     return StreamingResponse(
         sse_stream(
@@ -106,11 +113,17 @@ def _response_for_resume(
     prepared: PreparedResume,
 ) -> StreamingResponse:
     async def source() -> AsyncIterator:
-        async for event in service.stream_resume(prepared):
-            if await request.is_disconnected():
-                await service.cancel(prepared.conversation.id)
-                break
-            yield event
+        if not await service.bind_stream(prepared.conversation.id, prepared.run_id):
+            return
+        try:
+            async with aclosing(service.stream_resume(prepared)) as stream:
+                async for event in stream:
+                    if await request.is_disconnected():
+                        await service.cancel(prepared.conversation.id)
+                        break
+                    yield event
+        finally:
+            await service.release_stream(prepared.conversation.id, prepared.run_id)
 
     return StreamingResponse(
         sse_stream(
@@ -341,8 +354,13 @@ async def cancel_run(
     conversation_id: str,
     request: Request,
 ) -> CancelRunResponse:
-    cancelled = await _service(request).cancel(conversation_id)
-    return CancelRunResponse(cancelled=cancelled)
+    released = await _service(request).stop_and_wait(conversation_id)
+    if not released:
+        # If cancellation timed out, do not claim success or permit a new
+        # overlapping run. 409 also applies when there was no active run.
+        if await _service(request).has_active_run(conversation_id):
+            raise HTTPException(status_code=503, detail="Stopping the previous run; retry shortly")
+    return CancelRunResponse(cancelled=released)
 
 
 @router.get(

@@ -1055,6 +1055,12 @@ select:disabled {
   overscroll-behavior: contain;
 }
 
+/* The activity viewport controls its own scroll; the transcript only
+   auto-pins when new activity starts or another tool is added. */
+.chat-scroll--activity {
+  overflow-anchor: none;
+}
+
 .conversation-column {
   width: min(100%, 768px);
 
@@ -2128,279 +2134,272 @@ select:disabled {
 }
 
 /* -------------------------------- */
-/* Agent run timeline               */
+/* Compact assistant activity       */
 /* -------------------------------- */
 
-.thinking-disclosure {
-  margin: 0 0 12px;
+.agent-activity {
+  min-width: 0;
+  max-width: 100%;
+  margin: 3px 0 12px;
+  color: var(--color-mid-ash);
 }
 
-.thinking-disclosure__trigger {
+.agent-activity__toggle {
   display: inline-flex;
   align-items: center;
+  min-width: 0;
+  max-width: 100%;
   gap: 7px;
-  padding: 6px 2px;
+  padding: 6px 8px;
+  margin-left: -8px;
+  border-radius: 8px;
   color: var(--color-mid-ash);
+  background: transparent;
   font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  list-style: none;
-  user-select: none;
+  text-align: left;
+  transition: background 150ms ease, color 150ms ease;
 }
 
-.thinking-disclosure__trigger::-webkit-details-marker {
-  display: none;
+.agent-activity__toggle:hover {
+  background: var(--color-hover-veil);
+  color: var(--color-graphite-ink);
 }
 
-.thinking-disclosure__trigger:focus-visible {
+.agent-activity__toggle:focus-visible,
+.agent-activity__tool-summary:focus-visible {
   outline: 2px solid var(--color-mid-ash);
-  outline-offset: 3px;
-  border-radius: 4px;
+  outline-offset: 2px;
 }
 
-.thinking-disclosure__chevron {
+.agent-activity__symbol {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.agent-activity--working .agent-activity__symbol,
+.agent-activity--working .agent-activity__heading {
+  color: var(--color-graphite-ink);
+}
+
+.agent-activity__heading {
+  min-width: 0;
+  max-width: min(45vw, 330px);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 550;
+}
+
+.agent-activity__summary {
+  color: var(--color-hollow);
+  white-space: nowrap;
+}
+
+.agent-activity__chevron {
+  flex: 0 0 auto;
+  color: var(--color-hollow);
   transition: transform 160ms ease;
 }
 
-.thinking-disclosure[open] .thinking-disclosure__chevron {
+.agent-activity__chevron--open {
   transform: rotate(180deg);
 }
 
-.thinking-disclosure__body {
-  margin: 7px 0 3px 3px;
-  padding: 5px 0 0 12px;
+.agent-activity__body {
+  max-width: 100%;
+  margin: 4px 0 2px 4px;
+  padding: 4px 0 3px 15px;
   border-left: 1px solid var(--color-hairline);
 }
 
-.thinking-disclosure__empty {
-  color: var(--color-hollow);
-  font-size: 12px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .thinking-disclosure__chevron {
-    transition: none;
-  }
-}
-
-.run-timeline {
+.agent-activity__section-label {
   display: flex;
-  flex-direction: column;
-
-  margin: 2px 0 14px;
-
+  align-items: center;
+  gap: 6px;
+  margin: 3px 0 6px;
   color: var(--color-mid-ash);
-
-  font-size: 13px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
-.run-timeline__item {
-  display: grid;
-  grid-template-columns:
-    22px
-    minmax(0, 1fr);
-
-  min-height: 38px;
+.agent-activity__reasoning {
+  min-width: 0;
+  padding: 1px 10px 10px 2px;
 }
 
-.run-timeline__rail {
+.agent-activity__reasoning-text {
+  max-height: 220px;
+  overflow: auto;
+  /* JS follows new reasoning while at bottom; this disables browser anchoring
+     from fighting that behavior when the reader scrolls back. */
+  overflow-anchor: none;
+  overscroll-behavior-y: contain;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--color-mid-ash);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* Reserve a stable viewport while streaming so the outer chat does not
+   jump down a line every time the model adds another reasoning token. */
+.agent-activity--working .agent-activity__reasoning-text {
+  height: min(172px, 28vh);
+}
+
+.agent-activity__reasoning-text:focus-visible {
+  outline: 2px solid var(--color-mid-ash);
+  outline-offset: 2px;
+}
+
+.agent-activity__tools {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  gap: 1px;
+  min-width: 0;
 }
 
-.run-timeline__dot {
+.agent-activity__tool {
+  min-width: 0;
+  border-radius: 8px;
+}
+
+.agent-activity__tool-summary {
   display: flex;
   align-items: center;
-  justify-content: center;
-
-  width: 18px;
-  height: 18px;
-
-  flex: 0 0 auto;
-
-  color: var(--color-hollow);
-
-  background: var(--color-sidebar-mist);
-
-  border: 1px solid var(--color-hairline);
-
-  border-radius: 999px;
+  gap: 8px;
+  min-height: 34px;
+  padding: 5px 8px 5px 2px;
+  border-radius: 8px;
+  cursor: pointer;
+  list-style: none;
 }
 
-.run-timeline__dot--active {
-  color: var(--color-ink);
-
-  border-color: var(--color-mid-ash);
+.agent-activity__tool-summary--static {
+  cursor: default;
 }
 
-.run-timeline__dot--complete {
-  color: var(--color-ink);
-}
-
-.run-timeline__dot--error {
-  color: #e25750;
-
-  border-color: #e25750;
-}
-
-.run-timeline__line {
-  width: 1px;
-
-  flex: 1;
-
-  min-height: 20px;
-
-  margin: 3px 0;
-
-  background: var(--color-hairline);
-}
-
-.run-timeline__item--last .run-timeline__line {
+.agent-activity__tool-summary::-webkit-details-marker {
   display: none;
 }
 
-.run-timeline__content {
-  min-width: 0;
-
-  /* Long tool names, payloads, and meta lines wrap inside the column
-     instead of stretching the timeline past the window. */
-  overflow-wrap: anywhere;
-
-  padding: 1px 0 12px 7px;
+.agent-activity__tool-summary:not(.agent-activity__tool-summary--static):hover {
+  background: var(--color-hover-veil);
 }
 
-.run-timeline__title-row {
-  display: flex;
+.agent-activity__tool-icon {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-
-  gap: 10px;
+  justify-content: center;
+  width: 16px;
+  flex: 0 0 16px;
+  color: var(--color-hollow);
 }
 
-.run-timeline__title {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-
-  gap: 6px;
-
-  min-width: 0;
-  min-height: 18px;
-
+.agent-activity__tool--complete .agent-activity__tool-icon {
   color: var(--color-mid-ash);
+}
 
+.agent-activity__tool--running .agent-activity__tool-icon {
+  color: var(--color-graphite-ink);
+}
+
+.agent-activity__tool--error .agent-activity__tool-icon,
+.agent-activity__tool--error .agent-activity__tool-status {
+  color: #c6514c;
+}
+
+.agent-activity__tool-name {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-graphite-ink);
+  font-size: 12px;
   font-weight: 500;
 }
 
-.run-timeline__status {
-  flex: none;
-
+.agent-activity__tool-source {
+  overflow: hidden;
+  max-width: 30%;
   color: var(--color-hollow);
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 
+.agent-activity__tool-status {
+  margin-left: auto;
+  flex: 0 0 auto;
+  color: var(--color-hollow);
   font-size: 11px;
 }
 
-.run-timeline__status--active {
-  color: var(--color-ink);
-}
-
-.run-timeline__status--complete {
-  color: var(--color-mid-ash);
-}
-
-.run-timeline__status--error {
-  color: #e25750;
-}
-
-.run-timeline__source {
-  margin-top: 2px;
-
+.agent-activity__tool-chevron {
+  flex: 0 0 auto;
   color: var(--color-hollow);
-
-  font-size: 11px;
-
-  overflow-wrap: anywhere;
+  transition: transform 150ms ease;
 }
 
-.run-timeline__tool-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
-
-  gap: 8px;
-
-  margin-top: 8px;
+.agent-activity__tool[open] .agent-activity__tool-chevron {
+  transform: rotate(180deg);
 }
 
-.run-timeline__payload {
+.agent-activity__tool-details {
   min-width: 0;
-
-  padding: 8px 10px;
-
-  background: var(--color-sidebar-mist);
-
-  border: 1px solid var(--color-hairline);
-
-  border-radius: 10px;
+  padding: 3px 8px 11px 26px;
 }
 
-.run-timeline__payload-label {
-  display: flex;
-  align-items: center;
+.agent-activity__payload + .agent-activity__payload {
+  margin-top: 10px;
+}
 
-  gap: 6px;
-
-  margin-bottom: 6px;
-
-  color: var(--color-mid-ash);
-
+.agent-activity__payload-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--color-hollow);
   font-size: 11px;
   font-weight: 600;
 }
 
-.run-timeline__payload pre {
-  max-height: 240px;
-
+.agent-activity__payload pre {
   margin: 0;
-
+  padding: 0;
+  max-height: 200px;
   overflow: auto;
-
-  /* Payloads are single-line JSON from the tool call; wrap them so the
-     timeline never scrolls the window sideways. */
+  background: transparent;
+  border: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-
-  color: var(--color-graphite-ink);
-
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.run-timeline__dot--active ~ .run-timeline__content .run-timeline__title {
-  color: var(--color-ink);
-}
-
-.run-timeline__meta {
-  margin-top: 3px;
-
-  color: var(--color-hollow);
-
+  color: var(--color-mid-ash);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
+  line-height: 1.55;
 }
 
-.run-timeline__reasoning {
-  margin-top: 10px;
-  padding: 10px 12px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  max-height: 420px;
-  overflow-y: auto;
-  color: var(--color-graphite-ink);
-  background: var(--surface-conversation-canvas);
-  border: 1px solid var(--color-hairline);
-  border-radius: 9px;
+.agent-activity__waiting {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 0;
+  color: var(--color-hollow);
   font-size: 12px;
-  line-height: 1.65;
+}
+
+.agent-activity__spinner {
+  animation: agent-activity-spin 1s linear infinite;
+}
+
+@keyframes agent-activity-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-activity__spinner { animation: none; }
+  .agent-activity__toggle, .agent-activity__chevron,
+  .agent-activity__tool-chevron { transition: none; }
 }
 
 .approval-question-options {
@@ -2440,16 +2439,6 @@ select:disabled {
 
 .message-interactions__item p {
   margin: 4px 0 0;
-}
-
-.run-timeline__spinner {
-  animation: run-timeline-spin 0.9s linear infinite;
-}
-
-@keyframes run-timeline-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 /* -------------------------------- */

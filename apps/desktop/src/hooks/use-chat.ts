@@ -14,6 +14,8 @@ import type {
 } from "../types/chat";
 
 const controllers = new Map<string, AbortController>();
+// Stop must finish on the server before the next run may be prepared.
+const pendingStops = new Map<string, Promise<void>>();
 
 export const queryKeys = {
   conversations: ["conversations"] as const,
@@ -362,6 +364,11 @@ export function useChatActions() {
       preserveStream?: boolean;
     },
   ) {
+    // A UI Stop hides the spinner immediately, but the server may still be
+    // shutting down its model/tool stream. Wait for that acknowledgement.
+    const pendingStop = pendingStops.get(conversationId);
+    if (pendingStop) await pendingStop;
+
     const existing = controllers.get(conversationId);
 
     if (existing) {
@@ -390,6 +397,11 @@ export function useChatActions() {
         reasoningFrame = null;
       }
       if (!pendingReasoning) return;
+      // Ignore buffered tokens from a stream that was stopped/replaced.
+      if (controllers.get(conversationId) !== controller || controller.signal.aborted) {
+        pendingReasoning = "";
+        return;
+      }
       const text = pendingReasoning;
       pendingReasoning = "";
       consumeEvent(conversationId, {
@@ -406,6 +418,10 @@ export function useChatActions() {
         frame = null;
       }
       if (!pendingText) return;
+      if (controllers.get(conversationId) !== controller || controller.signal.aborted) {
+        pendingText = "";
+        return;
+      }
       const text = pendingText;
       pendingText = "";
       consumeEvent(conversationId, {
@@ -421,6 +437,9 @@ export function useChatActions() {
         controller.signal,
 
         async (event) => {
+          if (controllers.get(conversationId) !== controller || controller.signal.aborted) {
+            return;
+          }
           if (event.type === "message.delta") {
             flushReasoning();
             if (typeof event.data.text === "string") {
@@ -515,7 +534,10 @@ export function useChatActions() {
     } finally {
       flushReasoning();
       flushText();
-      controllers.delete(conversationId);
+      // An older aborted stream must not remove a newer run's controller.
+      if (controllers.get(conversationId) === controller) {
+        controllers.delete(conversationId);
+      }
     }
   }
 
@@ -765,29 +787,45 @@ export function useChatActions() {
   }
 
   async function cancel() {
-    if (!activeConversationId) {
-      return;
+    const conversationId = activeConversationId;
+    if (!conversationId) return;
+
+    // Respond to Stop immediately without mistaking UI state for backend
+    // completion. Keep the old HTTP stream alive so it can exit gracefully.
+    stopStream(conversationId);
+
+    const ongoing = pendingStops.get(conversationId);
+    if (ongoing) return ongoing;
+
+    const controller = controllers.get(conversationId);
+    const stop = (async () => {
+      try {
+        // The cancel endpoint only acknowledges after the conversation's
+        // run lock has been released (or reports a stop failure).
+        await chatApi.cancel(conversationId);
+      } finally {
+        // Close the old SSE after asking the server to stop; never before.
+        controller?.abort();
+        if (controllers.get(conversationId) === controller) {
+          controllers.delete(conversationId);
+        }
+      }
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.conversation(conversationId),
+      });
+    })();
+
+    pendingStops.set(conversationId, stop);
+    try {
+      await stop;
+    } catch (error) {
+      failStream(conversationId, "Unable to stop the previous run. Please retry Stop.");
+      throw error;
+    } finally {
+      if (pendingStops.get(conversationId) === stop) {
+        pendingStops.delete(conversationId);
+      }
     }
-
-    // Flip `running` off first so the UI reacts to Stop on this tick,
-    // even if the backend call or the SSE abort takes a moment.
-    stopStream(activeConversationId);
-
-    const cancelRequest = chatApi.cancel(activeConversationId).catch(
-      (error) => {
-        console.error("Failed to cancel backend run:", error);
-      },
-    );
-
-    controllers.get(activeConversationId)?.abort();
-
-    controllers.delete(activeConversationId);
-
-    await cancelRequest;
-
-    await queryClient.invalidateQueries({
-      queryKey: queryKeys.conversation(activeConversationId),
-    });
   }
 
   async function activateBranch(branchId: string) {

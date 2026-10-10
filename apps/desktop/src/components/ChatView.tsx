@@ -5,6 +5,7 @@ import {
 import {
   Fragment,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -39,6 +40,11 @@ import {
 import {
   StreamActivity,
 } from "./StreamActivity";
+
+import {
+  isLiveActivityGrowing,
+  shouldPinChat,
+} from "./chat-scroll-policy";
 
 import {
   VersionSwitcher,
@@ -178,6 +184,15 @@ export function ChatView({
     stream?.running ??
     false;
 
+  // A live activity panel has an independent, user-scrollable reasoning viewport.
+  // Keep the transcript stable between activity milestones, not each token.
+  const activityGrowing = isLiveActivityGrowing(stream);
+
+  // A queued ResizeObserver callback can fire after an activity update.
+  // Keep the latest pause state available even to that stale callback.
+  const activityGrowingRef = useRef(activityGrowing);
+  activityGrowingRef.current = activityGrowing;
+
 const approval =
     approvalQuery.data ??
     null;
@@ -192,14 +207,10 @@ const approval =
   const messages =
     detail?.messages ?? [];
 
-  // Keep pinned to the latest text while at the bottom; once the user
-  // scrolls up, stop following and surface a jump-to-latest button.
-  // Pin the container's scrollTop directly — scrollIntoView can land
-  // short while the message is still streaming and re-laying out.
-  // While scrolledUp is true (including during the button's smooth
-  // scroll) this stays out of the way so the animation can finish.
+  // Follow the final answer; growing reasoning is scrolled inside StreamActivity.
+  // A manually scrolled-up transcript must never be pulled back to the bottom.
   useEffect(() => {
-    if (!scrolledUp) {
+    if (shouldPinChat(scrolledUp, activityGrowing)) {
       const el = scrollRef.current;
 
       if (el) {
@@ -213,17 +224,28 @@ const approval =
     running,
     approval?.id,
     scrolledUp,
+    activityGrowing,
   ]);
 
-  // Sending is an explicit request to watch the answer. A run that starts
-  // therefore re-enters follow mode: a reader parked higher up would
-  // otherwise stay parked and never see the reply arrive.
+  // Reveal the activity panel when it first appears, and each newly started
+  // tool, but not on every reasoning token. The fixed-height reasoning pane
+  // then follows its OWN live text, without bouncing the full transcript.
+  useLayoutEffect(() => {
+    if (!activityGrowing || scrolledUp) return;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [activityGrowing, stream?.tools.length]);
+
+  // Reveal the new run once, before reasoning begins, without following
+  // every subsequent activity update. The user can scroll freely afterward.
   useEffect(() => {
     if (!running) {
       return;
     }
 
     setScrolledUp(false);
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [running]);
 
   // A switched conversation starts at the top, so drop the stale
@@ -232,22 +254,19 @@ const approval =
     setScrolledUp(false);
   }, [activeId]);
 
-  // The composer sits under the transcript, so growing it (a long
-  // draft, a quote, attachments) shrinks this viewport without firing a
-  // scroll event. Re-pin to the newest content while the reader is
-  // already at the bottom, or the tail would slip out of view mid-type.
-  // The transcript is observed too: reasoning, activity steps and
-  // warnings all grow it, and none of them are in the pin effect's
-  // dependency list above.
+  // The transcript ResizeObserver must not chase reasoning tokens.
+  // The reasoning pane handles its own bottom-follow while activity streams.
   useEffect(() => {
     const el = scrollRef.current;
 
-    if (!el || scrolledUp) {
+    if (!el || !shouldPinChat(scrolledUp, activityGrowing)) {
       return;
     }
 
     const observer = new ResizeObserver(() => {
-      el.scrollTop = el.scrollHeight;
+      if (shouldPinChat(false, activityGrowingRef.current)) {
+        el.scrollTop = el.scrollHeight;
+      }
     });
 
     observer.observe(el);
@@ -259,7 +278,7 @@ const approval =
     }
 
     return () => observer.disconnect();
-  }, [scrolledUp]);
+  }, [scrolledUp, activityGrowing]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -467,7 +486,10 @@ const approval =
         }
       />
 
-      <div className="chat-scroll" ref={scrollRef}>
+      <div
+        className={`chat-scroll${activityGrowing ? " chat-scroll--activity" : ""}`}
+        ref={scrollRef}
+      >
         <div className="conversation-column" ref={columnRef}>
           {empty && (
             <ChatWelcome
@@ -556,6 +578,7 @@ const approval =
               {stream && (
                 <StreamActivity
                   stream={stream}
+                  variant="live"
                 />
               )}
 

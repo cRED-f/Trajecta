@@ -1,7 +1,5 @@
 import {
-  Brain,
   Check,
-  ChevronDown,
   Copy,
   Pencil,
   RefreshCcw,
@@ -279,29 +277,7 @@ export function MessageItem({
 
       <div className="message__content">
         {!user && savedActivity && (
-          <details className="thinking-disclosure">
-            <summary className="thinking-disclosure__trigger">
-              <Brain size={14} aria-hidden="true" />
-              <span>Thinking</span>
-              <ChevronDown
-                size={14}
-                className="thinking-disclosure__chevron"
-                aria-hidden="true"
-              />
-            </summary>
-
-            <div className="thinking-disclosure__body">
-              {savedActivity.steps.length === 0 &&
-              savedActivity.tools.length === 0 &&
-              !savedActivity.reasoning ? (
-                <p className="thinking-disclosure__empty">
-                  No additional activity details recorded.
-                </p>
-              ) : (
-                <StreamActivity stream={savedActivity} />
-              )}
-            </div>
-          </details>
+          <StreamActivity stream={savedActivity} variant="saved" />
         )}
 
         {attachmentUrls.length >

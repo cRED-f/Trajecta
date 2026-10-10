@@ -164,3 +164,19 @@ async def test_crash_recovery_and_settings(learning_env):
     assert not config['enabled']
     assert not await env.worker.enqueue(tid)
     assert not await env.worker.run_once()
+
+
+@pytest.mark.asyncio
+async def test_reflection_model_and_budget_survive_new_worker_instance(learning_env):
+    """Configuration is stored in SQLite, not just in a mounted UI component."""
+    env = learning_env
+    expected = await env.worker.update_config({
+        'enabled': False, 'model': '9router/meta-llama/llama-3.3-70b',
+        'max_daily_reviews': 8, 'max_output_tokens': 850, 'timeout_seconds': 60,
+    })
+    restored_worker = ContinuousLearningWorker(
+        env.db, env.traces, env.experiences, env.episodes, Settings(),
+        PermissionPolicyStore(env.db), env.worker.llm_settings,
+    )
+    assert await restored_worker.get_config() == expected
+    assert expected['model'] == '9router/meta-llama/llama-3.3-70b'

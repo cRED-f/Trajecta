@@ -850,8 +850,14 @@ class ChatService:
                 pass
             raise
         finally:
-            await self._attribute_skill_execution(trajectory_id)
+            # Release the chat slot before optional metrics attribution. An
+            # attribution failure or slow DB must never strand the run lock.
             await self._runs.unregister(turn.conversation.id, turn.run_id)
+            if trajectory_id is not None:
+                try:
+                    await self._attribute_skill_execution(trajectory_id)
+                except Exception:
+                    logger.warning("skill attribution failed after run", exc_info=True)
 
     async def _capture_replay_fixture(
         self,
@@ -1173,11 +1179,30 @@ class ChatService:
                 pass
             raise
         finally:
-            await self._attribute_skill_execution(trajectory_id)
+            # Release the chat slot before optional metrics attribution. An
+            # attribution failure or slow DB must never strand the run lock.
             await self._runs.unregister(turn.conversation.id, turn.run_id)
+            if trajectory_id is not None:
+                try:
+                    await self._attribute_skill_execution(trajectory_id)
+                except Exception:
+                    logger.warning("skill attribution failed after run", exc_info=True)
 
     async def cancel(self, conversation_id: str) -> bool:
         return await self._runs.cancel(conversation_id)
+
+    async def stop_and_wait(self, conversation_id: str) -> bool:
+        return await self._runs.cancel_and_wait(conversation_id)
+
+    async def bind_stream(self, conversation_id: str, run_id: str) -> bool:
+        return await self._runs.bind_owner(conversation_id, run_id)
+
+    async def release_stream(self, conversation_id: str, run_id: str) -> None:
+        # Also handles failures before the service generator enters its try.
+        await self._runs.unregister(conversation_id, run_id)
+
+    async def has_active_run(self, conversation_id: str) -> bool:
+        return await self._runs.is_active(conversation_id)
 
     # ------------------------------------------------------------------
     # Helpers
