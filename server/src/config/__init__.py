@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 from typing import Any, Literal
 
 import yaml
@@ -408,11 +409,29 @@ class Settings(BaseSettings):
         section (e.g. `llm.providers.bifrost.base_url`) doesn't clobber the
         whole section, then validates once.
         """
-        data = cls.from_yaml(cls().yaml_defaults_path).model_dump()
+        # The installed desktop backend runs with its working directory inside
+        # app-local data. Resources remain in a separately updatable runtime.
+        resource_dir = os.environ.get("TRAJECTA_RESOURCE_DIR")
+        defaults = (
+            Path(resource_dir) / "default.yaml"
+            if resource_dir else cls().yaml_defaults_path
+        )
+        data = cls.from_yaml(defaults).model_dump()
         if cls().local_config_path.exists():
-            local = cls.from_yaml(cls().local_config_path).model_dump()
+            local = yaml.safe_load(
+                cls().local_config_path.read_text(encoding="utf-8")
+            ) or {}
             _deep_merge(data, local)
+        if resource_dir:
+            data.setdefault("guardrails", {})["rules_path"] = str(
+                Path(resource_dir) / "guardrail-rules.yaml"
+            )
+        # This field must be applied explicitly: model_validate() does not run
+        # BaseSettings' environment-source loader on an already merged dict.
+        if os.environ.get("TRAJECTA_SERVER_PORT"):
+            data.setdefault("server", {})["port"] = int(os.environ["TRAJECTA_SERVER_PORT"])
         return cls.model_validate(data)
+
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> None:

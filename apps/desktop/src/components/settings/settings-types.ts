@@ -1,4 +1,5 @@
 export type SettingsPage =
+  | "desktop"
   | "general"
   | "llm-providers"
   | "memory"

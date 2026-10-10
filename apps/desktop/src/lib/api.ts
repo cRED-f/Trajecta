@@ -48,7 +48,7 @@ import type {
 
 const API_ROOT =
   import.meta.env.VITE_TRAJECTA_API_URL ??
-  "http://127.0.0.1:8000/api/v1";
+  "http://127.0.0.1:8420/api/v1";
 
 export class ApiError extends Error {
   status: number;

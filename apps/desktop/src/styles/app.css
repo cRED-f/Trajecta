@@ -6388,3 +6388,13 @@ select:disabled {
   .top-page__body > section > .settings-page-header { margin-right: 44px; }
   .knowledge-hub__hero { padding: 15px; }
 }
+
+/* Desktop runtime controls: compact rows integrated with existing Settings UI. */
+.desktop-section { margin-top: 24px; }
+.desktop-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px; }
+.desktop-action-button { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--color-border, #9994); border-radius: 8px; padding: 9px 12px; background: transparent; color: inherit; font-size: 12px; cursor: pointer; }
+.desktop-action-button:hover:not(:disabled) { background: var(--color-hover-veil, #8881); }
+.desktop-action-button:disabled { opacity: .45; cursor: not-allowed; }
+.desktop-action-button--danger { color: #bd4e4e; }
+.desktop-feedback { display: flex; align-items: center; gap: 8px; margin: 10px 0; padding: 10px 12px; border-radius: 8px; background: var(--color-hover-veil, #8881); font-size: 12px; }
+.desktop-feedback--error { color: #bd4e4e; }

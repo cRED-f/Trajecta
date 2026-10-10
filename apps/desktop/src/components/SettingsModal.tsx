@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import {
+  DesktopSettings,
   EmbeddingSettings,
   GeneralSettings,
   GuardrailsSettings,
@@ -78,6 +79,8 @@ export function SettingsModal({
           onClose={onClose}
           mcpEnabledCount={mcpQuery.data?.enabled_count}
         >
+          {page === "desktop" && <DesktopSettings />}
+
           {page === "general" && (
             <GeneralSettings
               theme={theme}

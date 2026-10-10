@@ -3,14 +3,12 @@
   "productName": "Trajecta",
   "version": "0.1.0",
   "identifier": "ai.trajecta.desktop",
-
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://127.0.0.1:1420",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
-
   "app": {
     "windows": [
       {
@@ -24,14 +22,12 @@
         "fullscreen": false
       }
     ],
-
     "security": {
       "csp": null
     }
   },
-
   "bundle": {
-    "active": true,
+    "active": false,
     "targets": "all",
     "icon": [
       "icons/icon.ico"

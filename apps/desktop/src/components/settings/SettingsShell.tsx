@@ -1,5 +1,6 @@
 import {
   DatabaseZap,
+  MonitorCog,
   Blocks,
   ServerCog,
   Settings2,
@@ -74,6 +75,14 @@ export function SettingsShell({
           current={page}
           icon={<Settings2 size={17} strokeWidth={1.8} />}
           label="General"
+          onSelect={onPageChange}
+        />
+
+        <SettingsNavItem
+          page="desktop"
+          current={page}
+          icon={<MonitorCog size={17} strokeWidth={1.8} />}
+          label="Desktop & Application"
           onSelect={onPageChange}
         />
 
