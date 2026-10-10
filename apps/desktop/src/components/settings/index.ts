@@ -12,3 +12,4 @@ export { SettingsToggle } from "./SettingsToggle";
 export { SkillsSettings } from "./SkillsSettings";
 
 export type { SettingsPage, ThemeValue } from "./settings-types";
+export { SandboxSettings } from "./SandboxSettings";

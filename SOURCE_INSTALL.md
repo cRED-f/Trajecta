@@ -1,6 +1,6 @@
 # Trajecta source installation — Windows (experimental)
 
-Install directly from a Git clone; no npm publication, Docker, MSI, or GitHub release required.
+Install directly from a Git clone; no npm publication, container runtime, MSI, or GitHub release required.
 This workflow builds a **native executable locally**. Windows 10/11 with WebView2,
 Node.js 22+, pnpm, Git, Rust + MSVC C++ build tools, uv, and internet access for
 first-time dependency downloads are required. `uv` provisions Python 3.11 for the backend.
@@ -64,15 +64,17 @@ window: stop them explicitly to restart or completely shut down their backend.
 Backends installed before this fix do not report an instance identity and must
 be stopped once before the new runtime can manage the port. Data is
 separated from build artifacts so updates don't delete conversations or memories.
-The built-in embedded Qdrant mode needs no Docker service.
+The built-in embedded Qdrant mode needs no external database service.
 
 **Bifrost:** Trajecta can launch a local gateway executable placed at
 `runtime\\bifrost\\bifrost.exe` (if compatible with the project's Bifrost
 configuration). Otherwise it connects to a separately running Bifrost gateway
 at its configured endpoint. **Bifrost is not downloaded or built automatically**
 by this patch; Ollama and 9Router also remain externally managed. Confirm they
-are reachable in Settings before relying on chat. Docker-dependent sandbox
-features still require Docker if enabled; native desktop use itself does not.
+are reachable in Settings before relying on chat. Command execution uses a Windows AppContainer sandbox built with MSVC during source installation.
+Without a successfully built native helper, the execute tool is intentionally unavailable.
+Build and isolation behavior must be tested on real Windows before claiming production security;
+see [native security tests](native/windows/README.md).
 
 **Existing data:** The installer does not overwrite or silently migrate your
 old checkout's `.trajecta` folder. Close the old backend and make a consistent

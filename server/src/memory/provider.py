@@ -30,14 +30,14 @@ from deepagents.backends import (
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.store.sqlite.aio import AsyncSqliteStore
 
-from server.src.config import Settings
+from server.src.config import Settings, SandboxConfig
 from server.src.memory.embeddings import DEFAULT_OLLAMA_URL
 from server.src.memory.episodic.store import EpisodicMemory
 from server.src.memory.procedural.store import ProceduralMemory
 from server.src.memory.semantic.store import SemanticMemory
 from server.src.memory.short_term.store import ShortTermStore
 from server.src.memory.storage import SQLiteDatabase, FTSIndex, VectorStore
-from server.src.tools.sandbox import DockerSandboxBackend
+from server.src.tools.sandbox import NativeWindowsSandboxBackend, NativeSandboxUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -55,14 +55,14 @@ class MemoryProvider:
         self.checkpointer: AsyncSqliteSaver | None = None
         self.store: AsyncSqliteStore | None = None
         self.backend: CompositeBackend | None = None
-        self.sandbox: DockerSandboxBackend | None = None
+        self.sandbox: NativeWindowsSandboxBackend | None = None
 
         # Host folders pinned per conversation. Backends and sandbox
         # containers are derived from these instead of mutating settings,
         # so two conversations can point at different projects at once.
         self._default_workspace_root: str | None = None
         self._uploads_root: Path | None = None
-        self._sandboxes: dict[str, DockerSandboxBackend] = {}
+        self._sandboxes: dict[str, NativeWindowsSandboxBackend] = {}
 
         self.db_path = cfg.db_path
         self.langgraph_db_path = cfg.langgraph_db_path
@@ -109,7 +109,7 @@ class MemoryProvider:
         # Deep Agents backend routing. Persistent memories/skills live in the
         # LangGraph Store, user-selected host files are exposed at /workspace/,
         # chat uploads are read-only at /uploads/, and arbitrary execution goes
-        # to an isolated Docker sandbox when available.
+        # to a restricted native Windows AppContainer when available.
         ns_local = ("trajecta-local",)
 
         uploads_root = Path(self._settings.chat.uploads_path).resolve()
@@ -120,9 +120,6 @@ class MemoryProvider:
         workspace_root.mkdir(parents=True, exist_ok=True)
         self._default_workspace_root = str(workspace_root)
 
-        self.sandbox = self._sandbox_for(str(workspace_root))
-        self.backend = self._build_backend(str(workspace_root), allow_execute=True)
-
         # Trajecta's own stores: SQLite + FTS always on (even with Qdrant off);
         # Qdrant is embedded and resilient (no-op if unavailable).
         self.sqlite = SQLiteDatabase(self.db_path)
@@ -130,12 +127,40 @@ class MemoryProvider:
         self.fts = FTSIndex(self.sqlite)
         await self.fts.open()
 
+        # Runtime sandbox controls survive a backend restart, like permission settings.
+        await self._restore_sandbox_settings()
+        self.sandbox = self._sandbox_for(str(workspace_root))
+        self.backend = self._build_backend(str(workspace_root), allow_execute=True)
+
         # Restore the persisted Ollama embedding model BEFORE Qdrant
         # creates/opens collections, so collection dimension matches.
         await self._restore_embedding_configuration()
 
         if self._settings.memory.vector_store.enabled:
             self.vector.open()
+
+    async def _restore_sandbox_settings(self) -> None:
+        if self.sqlite is None:
+            return
+        row = await self.sqlite.fetchone(
+            "SELECT value_json FROM agent_settings WHERE key = ?", ("tools.native_sandbox",)
+        )
+        if row is not None:
+            try:
+                self._settings.sandbox = SandboxConfig.model_validate(json.loads(row["value_json"]))
+            except (ValueError, TypeError):
+                logger.warning("Invalid saved sandbox settings; using safe defaults")
+
+    def reconfigure_sandbox(self, config: SandboxConfig) -> None:
+        """Apply newly persisted settings to subsequent agent turns; revoke old ACLs."""
+        self._settings.sandbox = config
+        for sandbox in list(self._sandboxes.values()):
+            sandbox.close()
+        self._sandboxes.clear()
+        self.sandbox = None
+        if self._default_workspace_root is not None and self.store is not None:
+            self.sandbox = self._sandbox_for(self._default_workspace_root)
+            self.backend = self._build_backend(self._default_workspace_root, allow_execute=True)
 
     # -- embedding configuration -----------------------------------------
 
@@ -343,7 +368,7 @@ class MemoryProvider:
     async def close(self) -> None:
         self.vector.close()
         # Every conversation's sandbox, not just the default folder's: a
-        # workspace-specific container outlives its run until shutdown.
+        # workspace-specific sandbox outlives its run until shutdown.
         for sandbox in list(self._sandboxes.values()):
             sandbox.close()
         self._sandboxes.clear()
@@ -429,43 +454,32 @@ class MemoryProvider:
 
         return self._build_backend(root, allow_execute=allow_execute)
 
-    def _sandbox_for(self, workspace_root: str) -> DockerSandboxBackend | None:
-        """Container mounted for this host folder, starting one if needed.
+    def _sandbox_for(self, workspace_root: str) -> NativeWindowsSandboxBackend | None:
+        """Secure Windows process sandbox per selected workspace; fail closed.
 
-        Containers are keyed by their mount: a sandbox created for Project A
-        must never execute Project B's commands, so reuse only ever happens
-        when the mounted folder matches. Failure leaves the chat usable
-        without a built-in ``execute`` tool instead of failing the run.
+        A missing helper must never enable unrestricted host execution.
+        The chat remains available without the execute tool and surfaces a
+        descriptive error in logs/Settings until the native helper is installed.
         """
         if not self._settings.sandbox.enabled:
             return None
-
         existing = self._sandboxes.get(workspace_root)
         if existing is not None:
             return existing
-
-        uploads_root = self._uploads_root
-        if uploads_root is None:
+        if self._uploads_root is None:
             return None
-
         try:
-            sandbox = DockerSandboxBackend(
-                image=self._settings.sandbox.image,
+            sandbox = NativeWindowsSandboxBackend(
                 workspace_root=workspace_root,
-                uploads_root=str(uploads_root),
+                uploads_root=str(self._uploads_root),
                 timeout_seconds=self._settings.sandbox.timeout_seconds,
                 memory_limit=self._settings.sandbox.memory_limit,
                 cpu_limit=self._settings.sandbox.cpu_limit,
                 network_enabled=self._settings.sandbox.network_enabled,
-                auto_remove=self._settings.sandbox.auto_remove,
             )
-        except Exception:
-            # Chat must remain usable when Docker is unavailable or the
-            # sandbox image has not been built yet. In that case Deep
-            # Agents simply omits its built-in `execute` tool.
-            logger.exception("Docker sandbox unavailable; using StateBackend")
+        except (NativeSandboxUnavailable, OSError, ValueError) as exc:
+            logger.error("Native execution disabled (fail closed): %s", exc)
             return None
-
         self._sandboxes[workspace_root] = sandbox
         return sandbox
 

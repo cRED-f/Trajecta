@@ -173,7 +173,7 @@ async def test_upsert_without_a_key_leaves_existing_keys_alone(
                 json={
                     "name": "9router",
                     "network_config": {
-                        "base_url": "http://host.docker.internal:20128",
+                        "base_url": "http://127.0.0.1:20128",
                         "allow_private_network": True,
                         "extra_headers": {"Accept": "application/json"},
                     },
@@ -191,7 +191,7 @@ async def test_upsert_without_a_key_leaves_existing_keys_alone(
                 "Accept": "application/json"
             }
             assert body["network_config"]["base_url"] == (
-                "http://host.docker.internal:20128"
+                "http://127.0.0.1:20128"
             )
             return httpx.Response(200, json={"name": "9router"})
 
@@ -270,12 +270,12 @@ async def test_ollama_key_receives_url(monkeypatch) -> None:
     _patch_transport(monkeypatch, handler)
     admin = BifrostAdminClient("http://bifrost.test")
 
-    # No base_url from the caller — the Docker-safe default applies to
+    # No base_url from the caller — the native default applies to
     # both the provider's network config and the key itself.
     await admin.upsert_provider(provider="ollama", provider_type="ollama")
 
     assert provider_bodies[0]["network_config"]["base_url"] == (
-        "http://host.docker.internal:11434"
+        "http://127.0.0.1:11434"
     )
     assert key_bodies == [
         {
@@ -284,7 +284,7 @@ async def test_ollama_key_receives_url(monkeypatch) -> None:
             "models": ["*"],
             "weight": 1.0,
             "ollama_key_config": {
-                "url": "http://host.docker.internal:11434"
+                "url": "http://127.0.0.1:11434"
             },
         }
     ]
@@ -378,7 +378,7 @@ async def test_ollama_key_url_is_backfilled_when_stale(
                 "models": ["*"],
                 "weight": 1.0,
                 "ollama_key_config": {
-                    "url": "http://host.docker.internal:11434"
+                    "url": "http://127.0.0.1:11434"
                 },
             },
         )

@@ -167,12 +167,10 @@ guardrails:
 
 sandbox:
   enabled: true
-  image: "trajecta-sandbox:latest"
   timeout_seconds: 300
   memory_limit: "512m"
   cpu_limit: 1.0
   network_enabled: false
-  auto_remove: true
 
 chat:
   uploads_path: ".trajecta/uploads"

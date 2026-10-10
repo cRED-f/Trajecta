@@ -2,7 +2,7 @@
 
 ## Overview
 
-Two categories of tools: built-in tools (filesystem, shell, git, etc.) and external tools via MCP (Model Context Protocol). All tool execution passes through the guardrail layer. Sensitive tools run in Docker sandboxes.
+Two categories of tools: built-in tools (filesystem, shell, git, etc.) and external tools via MCP (Model Context Protocol). All tool execution passes through the guardrail layer. Command execution is restricted by a Windows AppContainer and Job Object; normal host processes still require explicit human approval.
 
 ## Built-in Tools
 
@@ -29,10 +29,10 @@ Integrations via Model Context Protocol:
 
 ## Sandboxed Execution
 
-Sensitive tools execute inside Docker containers:
+Deep Agents execute commands use native Windows AppContainer isolation:
 - Isolated filesystem
-- Resource limits (CPU, memory, disk)
-- Temporary workspaces (created per task, destroyed after)
+- Job Object CPU, memory and timeout controls (no disk quota)
+- Per-workspace AppContainer identity; selected project remains mounted for edits
 - Restricted network access where configured
 
 ## File Map
@@ -57,12 +57,12 @@ server/src/tools/
 │   └── adapter.py        # Adapt MCP tools to agent tool interface
 └── sandbox/
     ├── __init__.py
-    └── docker.py         # Docker sandbox lifecycle management
+    └── native_windows.py # AppContainer adapter for native helper
 ```
 
 ## Key Interfaces
 
 - `execute_tool(name, args, context) -> ToolResult` — unified tool execution
 - `list_tools() -> list[ToolDef]` — all available tools (built-in + MCP)
-- `sandbox_exec(command, config) -> SandboxResult` — run in Docker container
+- `sandbox_exec(command, config) -> SandboxResult` — run as restricted native subprocess
 - `mcp_connect(server_config) -> MCPClient` — connect to an MCP server

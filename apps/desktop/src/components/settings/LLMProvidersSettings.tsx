@@ -661,7 +661,7 @@ function ProviderFormFields({
               type="text"
               placeholder={
                 form.type === "ollama"
-                  ? "http://host.docker.internal:11434"
+                  ? "http://127.0.0.1:11434"
                   : "https://api.example.com/v1"
               }
               value={form.baseUrl}
@@ -690,8 +690,7 @@ function ProviderFormFields({
 
       <p className="llm-form__note">
         {form.type === "ollama"
-          ? "Ollama runs locally — no API key needed. When Bifrost runs " +
-            "in Docker, use http://host.docker.internal:11434."
+          ? "Ollama runs locally — no API key needed. Default: http://127.0.0.1:11434."
           : "The key is forwarded to Bifrost and never stored in Trajecta."}
         {!form.isNew && showBaseUrl && form.type === "openai_compat"
           ? " The base URL replaces the stored one."

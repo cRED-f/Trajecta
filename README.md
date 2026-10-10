@@ -16,7 +16,7 @@
 
 Trajecta is a Tauri 2 desktop application with a Python/FastAPI agent backend. It can execute multi-step tasks, search stored knowledge, and learn from prior interactions while keeping sensitive tool actions behind explicit permissions.
 
-- **Act:** LangChain Deep Agents, local tools, MCP integrations, optional sandboxing, and user-selected models.
+- **Act:** LangChain Deep Agents, local tools, MCP integrations, native Windows sandboxed execution, and user-selected models.
 - **Remember:** Saved facts, prior task experiences, document context, and reusable skills.
 - **Learn:** A durable background worker links related chat runs into logical tasks and generates evidence-backed insights and skill candidates.
 - **Protect:** Guardrails AI checks prompt injection, untrusted tool content, and sensitive context before cloud-model calls.
@@ -54,12 +54,15 @@ flowchart TB
         MODEL["Bifrost gateway<br/>Configured LLM"]
         POLICY{"Tool policy<br/>ALLOW / ASK / DENY"}
         TOOLS["Local · Web · Files · MCP tools"]
+        SANDBOX["Native Windows sandbox<br/>AppContainer · Filesystem & network isolation<br/>Job Object · CPU / RAM / timeout"]
         STREAM["SSE response stream"]
 
         API --> INPUT --> RET --> AGENT
         AGENT --> CONTEXT --> MODEL --> AGENT
         AGENT --> POLICY
-        POLICY -->|Authorized action| TOOLS
+        POLICY -->|Approved shell / Python| SANDBOX
+        POLICY -->|Other authorized actions| TOOLS
+        SANDBOX -->|Execution result| AGENT
         TOOLS -->|Result| AGENT
         AGENT --> STREAM
     end
@@ -91,6 +94,7 @@ flowchart TB
 
     API -.-> EVENTS
     TOOLS -.-> EVENTS
+    SANDBOX -.-> EVENTS
 
     subgraph STORAGE["04 · PERSISTENT KNOWLEDGE"]
         direction LR
@@ -114,7 +118,7 @@ The chat response **does not wait for task classification, reflection, or skill 
 
 - Windows 10/11 and Microsoft Edge WebView2.
 - Git, Node.js 22+, pnpm, and [uv](https://docs.astral.sh/uv/).
-- Rust toolchain with the MSVC target and Windows C++ build tools; see [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/).
+- Rust toolchain with the MSVC target, Visual Studio C++ build tools and Windows SDK (required to compile the native AppContainer helper); see [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/).
 - Internet access to download dependencies on first installation. `uv` provisions Python 3.11 for the managed backend.
 - A reachable **Bifrost** gateway and configured model credentials for AI chat. It is **not bundled/downloaded automatically** by the source installer.
 
@@ -136,6 +140,7 @@ The installed application uses an isolated writable directory rather than storin
 ```text
 %LOCALAPPDATA%\ai.trajecta.desktop\
 ├── runtime\Trajecta.exe         # Locally compiled desktop executable
+├── runtime\trajecta-native-sandbox.exe  # AppContainer + Job Object command launcher
 ├── runtime\venv\                # Managed Python backend
 ├── data\.trajecta\              # Conversations, SQLite, Qdrant, skills and uploads
 ├── logs\backend.log             # FastAPI startup/runtime diagnostics
@@ -163,8 +168,7 @@ Trajecta/
 │   ├── tools/               # Local tools and MCP integrations
 │   └── llm_gateway/         # Bifrost integration
 ├── config/                  # Defaults and guardrail rules
-├── infra-docker/            # Optional supporting services and sandbox
-├── docker-compose.yaml
+├── native/windows/          # Windows AppContainer + Job Object helper
 ├── pyproject.toml
 └── SOURCE_INSTALL.md
 ```
@@ -176,7 +180,7 @@ Trajecta/
 - [Memory](server/src/memory/REQUIREMENTS.md) · [Skills](server/src/skills/REQUIREMENTS.md)
 - [Guardrails](server/src/guardrails/REQUIREMENTS.md) · [Tools](server/src/tools/REQUIREMENTS.md)
 - [LLM gateway](server/src/llm_gateway/REQUIREMENTS.md) · [Observability](server/src/observability/REQUIREMENTS.md)
-- [Infrastructure](infra-docker/REQUIREMENTS.md)
+- [Native sandbox](native/windows/README.md)
 
 ## License
 

@@ -6,6 +6,7 @@ import {
   Settings2,
   ShieldAlert,
   ShieldCheck,
+  Terminal,
   X,
 } from "lucide-react";
 
@@ -111,6 +112,14 @@ export function SettingsShell({
           current={page}
           icon={<ShieldAlert size={17} strokeWidth={1.8} />}
           label="Guardrails"
+          onSelect={onPageChange}
+        />
+
+        <SettingsNavItem
+          page="sandbox"
+          current={page}
+          icon={<Terminal size={17} strokeWidth={1.8} />}
+          label="Sandbox Execution"
           onSelect={onPageChange}
         />
 

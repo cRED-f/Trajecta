@@ -70,10 +70,8 @@ STANDARD_PROVIDER_IDS = frozenset(
     }
 )
 
-# Bifrost runs in Docker (docker-compose.yaml maps host.docker.internal to
-# the host gateway), so "localhost" would point at the Bifrost container
-# itself rather than the Ollama process on the host.
-DEFAULT_OLLAMA_BASE_URL = "http://host.docker.internal:11434"
+# Bifrost and Ollama run as native local processes. No container host alias.
+DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 
 # The seeded Trajecta virtual key. It must allow every provider so a
 # provider added from Settings immediately works for chat.
@@ -317,7 +315,7 @@ class BifrostAdminClient:
             body["network_config"] = {
                 "base_url": base_url,
                 # Settings accepts LAN/local endpoints (localhost Ollama,
-                # host.docker.internal relays), so private IPs must pass.
+                # local service communication), so loopback/private IPs must pass.
                 "allow_private_network": True,
                 **(
                     {"extra_headers": extra_headers}

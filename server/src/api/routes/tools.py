@@ -21,6 +21,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from server.src.chat.mcp import MCPToolProvider
+from server.src.config import SandboxConfig
+from server.src.tools.sandbox import native_status
 
 
 router = APIRouter(prefix="/tools", tags=["tools"])
@@ -116,3 +118,37 @@ async def get_action_receipt(receipt_id: str, request: Request) -> dict:
         )
 
     return receipt
+
+@router.get("/sandbox")
+async def sandbox_status(request: Request) -> dict[str, Any]:
+    """Expose actual native execution readiness, never report simulated isolation."""
+    settings = request.app.state.settings
+    status = native_status()
+    status["config"] = settings.sandbox.model_dump()
+    status["active"] = bool(
+        settings.sandbox.enabled
+        and request.app.state.memory_provider.sandbox is not None
+    )
+    if status["available"] and not status["active"] and settings.sandbox.enabled:
+        status["message"] = (
+            "Launcher found, but AppContainer setup or workspace permissions failed. "
+            "Check backend logs; unisolated execution is blocked."
+        )
+    return status
+
+
+@router.patch("/sandbox")
+async def update_sandbox(body: SandboxConfig, request: Request) -> dict[str, Any]:
+    """Persist safe resource controls; all command execution remains HITL-governed."""
+    if body.cpu_limit <= 0 or body.cpu_limit > 64:
+        raise HTTPException(status_code=422, detail="CPU limit must be within (0, 64] cores")
+    if body.timeout_seconds < 1 or body.timeout_seconds > 3600:
+        raise HTTPException(status_code=422, detail="Timeout must be 1-3600 seconds")
+    try:
+        from server.src.tools.sandbox.native_windows import _memory_bytes
+        _memory_bytes(body.memory_limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await request.app.state.permission_policy.set_setting("tools.native_sandbox", body.model_dump())
+    request.app.state.memory_provider.reconfigure_sandbox(body)
+    return await sandbox_status(request)

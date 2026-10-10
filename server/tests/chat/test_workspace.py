@@ -498,31 +498,33 @@ async def test_virtual_paths_cannot_escape_the_selected_folder(tmp_path: Path) -
 
 
 # ---------------------------------------------------------------------------
-# Docker sandbox
+# Native sandbox isolation and workspace binding
 # ---------------------------------------------------------------------------
 
 
-def _sandbox_image_available(image: str) -> bool:
-    """Checked inside the test, never at import time.
+async def test_native_execute_uses_selected_workspace(monkeypatch: pytest.MonkeyPatch,
+                                                       tmp_path: Path) -> None:
+    """Simulate a ready native helper; real isolation needs Windows acceptance tests."""
+    from server.src.memory import provider as provider_module
 
-    A module-level ``skipif`` would open the Docker socket while pytest is
-    still collecting, and a daemon that accepts the connection but never
-    answers would stall the whole suite.
-    """
-    try:
-        import docker
+    created: list[Any] = []
 
-        client = docker.from_env(timeout=5)
-        client.images.get(image)
-    except Exception:
-        return False
-    return True
+    class FakeNativeSandbox:
+        def __init__(self, *, workspace_root: str, **_: Any) -> None:
+            self.workspace_root = workspace_root
+            self.id = f"test-{len(created)}"
+            created.append(self)
 
+        def execute(self, command: str, *, timeout: int | None = None) -> Any:
+            from deepagents.backends.protocol import ExecuteResponse
+            if command == "Get-ChildItem -Name":
+                return ExecuteResponse(output="\n".join(p.name for p in Path(self.workspace_root).iterdir()), exit_code=0)
+            return ExecuteResponse(output="unknown command", exit_code=1)
 
-async def test_execute_runs_inside_the_selected_project(tmp_path: Path) -> None:
-    if not _sandbox_image_available("trajecta-sandbox:latest"):
-        pytest.skip("trajecta-sandbox image is not built on this host")
+        def close(self) -> None:
+            pass
 
+    monkeypatch.setattr(provider_module, "NativeWindowsSandboxBackend", FakeNativeSandbox)
     project_a = tmp_path / "project-a"
     project_b = tmp_path / "project-b"
     project_a.mkdir()
@@ -530,34 +532,40 @@ async def test_execute_runs_inside_the_selected_project(tmp_path: Path) -> None:
     _marker(project_a, "marker-a.txt", "a")
     _marker(project_b, "marker-b.txt", "b")
 
-    settings = _settings(tmp_path, sandbox={"enabled": True})
-    provider = MemoryProvider(settings)
+    provider = MemoryProvider(_settings(tmp_path, sandbox={"enabled": True}))
     await provider.open()
-
     try:
-        backend_a = provider.agent_kwargs(allow_execute=True, workspace_root=str(project_a))[
-            "backend"
-        ]
-        backend_b = provider.agent_kwargs(allow_execute=True, workspace_root=str(project_b))[
-            "backend"
-        ]
+        backend_a = provider.agent_kwargs(allow_execute=True, workspace_root=str(project_a))["backend"]
+        backend_b = provider.agent_kwargs(allow_execute=True, workspace_root=str(project_b))["backend"]
+        assert backend_a.default is not backend_b.default
+        assert backend_a.default.workspace_root == str(project_a.resolve())
+        assert backend_b.default.workspace_root == str(project_b.resolve())
+        again = provider.agent_kwargs(allow_execute=True, workspace_root=str(project_a))["backend"]
+        assert again.default is backend_a.default
+        assert "marker-a.txt" in backend_a.default.execute("Get-ChildItem -Name").output
+        assert "marker-b.txt" not in backend_a.default.execute("Get-ChildItem -Name").output
+        denied = provider.agent_kwargs(allow_execute=False, workspace_root=str(project_a))["backend"]
+        assert denied.default is not backend_a.default
+    finally:
+        await provider.close()
 
-        sandbox_a = backend_a.default
-        sandbox_b = backend_b.default
 
-        assert sandbox_a is not sandbox_b, "one container must not serve two projects"
-        assert sandbox_a.workspace_root == str(project_a.resolve())
-        assert sandbox_b.workspace_root == str(project_b.resolve())
+async def test_missing_native_launcher_never_falls_back_to_host_execution(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    from server.src.memory import provider as provider_module
+    from server.src.tools.sandbox import NativeSandboxUnavailable
 
-        # Same folder again reuses the container rather than forking it.
-        again = provider.agent_kwargs(
-            allow_execute=True, workspace_root=str(project_a)
-        )["backend"]
-        assert again.default is sandbox_a
+    def unavailable(**_: Any) -> Any:
+        raise NativeSandboxUnavailable("test: Windows launcher unavailable")
 
-        listing = sandbox_a.execute("ls /workspace").output
-        assert "marker-a.txt" in listing
-        assert "marker-b.txt" not in listing
+    monkeypatch.setattr(provider_module, "NativeWindowsSandboxBackend", unavailable)
+    provider = MemoryProvider(_settings(tmp_path, sandbox={"enabled": True}))
+    await provider.open()
+    try:
+        backend = provider.agent_kwargs(allow_execute=True)["backend"]
+        from deepagents.backends import StateBackend
+        assert isinstance(backend.default, StateBackend)
     finally:
         await provider.close()
 

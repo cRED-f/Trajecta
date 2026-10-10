@@ -222,18 +222,18 @@ async def check_procedural(p: MemoryProvider) -> None:
         """
 # Deploy
 
-Deploy the current project using Docker.
+Deploy the current native project.
 
 ## Process
 
-1. Inspect the Dockerfile.
-2. Build the Docker image.
-3. Run the container.
+1. Inspect the launch script.
+2. Build the native application.
+3. Run the native process.
 4. Verify the health endpoint.
 """,
         description=(
-            "Deploy Docker-based projects and verify "
-            "that the resulting container is healthy."
+            "Deploy native projects and verify "
+            "that the resulting application is healthy."
         ),
     )
 
@@ -253,7 +253,7 @@ Deploy the current project using Docker.
     assert "# Deploy" in content
 
     hits = await proc.asearch(
-        "docker",
+        "deploy",
         limit=5,
     )
 

@@ -85,7 +85,8 @@ from server.src.tools.personal import (
 )
 
 from server.src.tools.sandbox import (
-    DockerSandboxBackend,
+    NativeSandboxUnavailable,
+    NativeWindowsSandboxBackend,
 )
 
 
@@ -999,7 +1000,7 @@ class DeepAgentReplayExecutor:
         )
 
         sandbox: (
-            DockerSandboxBackend
+            NativeWindowsSandboxBackend
             | None
         ) = None
 
@@ -1148,120 +1149,35 @@ class DeepAgentReplayExecutor:
             # Default isolated backend
             # -----------------------------------
 
-            docker_available = False
+            native_available = False
 
-            if (
-                self
-                ._settings
-                .sandbox
-                .enabled
-            ):
+            if self._settings.sandbox.enabled:
                 try:
-                    sandbox = (
-                        DockerSandboxBackend(
-                            image=(
-                                self
-                                ._settings
-                                .sandbox
-                                .image
-                            ),
-
-                            workspace_root=(
-                                str(
-                                    workspace
-                                )
-                            ),
-
-                            uploads_root=(
-                                str(
-                                    uploads
-                                )
-                            ),
-
-                            timeout_seconds=(
-                                self
-                                ._settings
-                                .sandbox
-                                .timeout_seconds
-                            ),
-
-                            memory_limit=(
-                                self
-                                ._settings
-                                .sandbox
-                                .memory_limit
-                            ),
-
-                            cpu_limit=(
-                                self
-                                ._settings
-                                .sandbox
-                                .cpu_limit
-                            ),
-
-                            network_enabled=False,
-
-                            auto_remove=True,
-                        )
+                    sandbox = NativeWindowsSandboxBackend(
+                        workspace_root=str(workspace),
+                        uploads_root=str(uploads),
+                        timeout_seconds=self._settings.sandbox.timeout_seconds,
+                        memory_limit=self._settings.sandbox.memory_limit,
+                        cpu_limit=self._settings.sandbox.cpu_limit,
+                        network_enabled=False,  # replay fixtures must remain offline
                     )
-
-                    default_backend: Any = (
-                        sandbox
-                    )
-
-                    docker_available = True
-
-                except Exception:
-                    default_backend = (
-                        FilesystemBackend(
-                            root_dir=str(
-                                root
-                            ),
-
-                            virtual_mode=True,
-                        )
-                    )
-
+                    default_backend: Any = sandbox
+                    native_available = True
+                except (NativeSandboxUnavailable, ValueError, OSError):
+                    default_backend = FilesystemBackend(root_dir=str(root), virtual_mode=True)
             else:
-                default_backend = (
-                    FilesystemBackend(
-                        root_dir=str(
-                            root
-                        ),
+                default_backend = FilesystemBackend(root_dir=str(root), virtual_mode=True)
 
-                        virtual_mode=True,
-                    )
-                )
-
-            if (
-                "execute"
-                in case.allowed_tools
-                and not docker_available
-            ):
+            if "execute" in case.allowed_tools and not native_available:
                 if sandbox:
                     sandbox.close()
-
                 return ReplayResult(
                     case_id=case.id,
-
-                    repetition=(
-                        repetition
-                    ),
-
+                    repetition=repetition,
                     variant=variant,
-
                     skipped=True,
-
-                    error=(
-                        "case requires execute "
-                        "but isolated Docker "
-                        "sandbox is unavailable"
-                    ),
-
-                    duration_seconds=(
-                        time.perf_counter()
-                        - started
-                    ),
+                    error="case requires execute but native isolated Windows sandbox is unavailable",
+                    duration_seconds=time.perf_counter() - started,
                 )
 
             store = (

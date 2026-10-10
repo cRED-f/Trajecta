@@ -100,14 +100,14 @@ llm:
 ```
 
 Bifrost's own config lives in `config/bifrost/config.yaml` (providers ▲ keys,
-virtual keys). Start it with `docker compose up bifrost`.
+virtual keys). Run Bifrost as a local executable or use an external gateway.
 
 ## Bifrost Integration ("HTTP sidecar")
 
 ### 1. Start Bifrost
 
 ```bash
-docker compose up bifrost       # or: docker run -p 8080:8080 maximhq/bifrost
+bifrost serve                # if Bifrost is installed and the CLI provides serve
 ```
 
 - Bifrost UI:     `http://localhost:8080`

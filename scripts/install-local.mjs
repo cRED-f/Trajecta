@@ -18,6 +18,8 @@ const stagingVenv = join(runtime, 'venv.new');
 const python = join(stagingVenv, 'Scripts', 'python.exe');
 const built = join(root, 'apps','desktop','src-tauri','target','release','trajecta-desktop.exe');
 const target = join(runtime, 'Trajecta.exe');
+const nativeSandbox = join(root, 'native', 'windows', 'bin', 'trajecta-native-sandbox.exe');
+const installedSandbox = join(runtime, 'trajecta-native-sandbox.exe');
 
 function call(program, args, cwd = root) {
   console.log(`> ${program} ${args.join(' ')}`);
@@ -37,13 +39,17 @@ function requireCommand(cmd,args=['--version']) {
   catch (error) { throw new Error(`Cannot run ${cmd} ${args.join(' ')}: ${error.message}`); }
 }
 requireCommand('git'); requireCommand('node'); requireCommand('pnpm'); requireCommand('uv'); requireCommand('cargo');
+// The native sandbox is mandatory for a full source installation. Fail rather
+// than silently shipping a desktop without restricted execute support.
+call('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(root, 'scripts', 'build-native-sandbox.ps1')]);
+if (!existsSync(nativeSandbox)) throw new Error('Native sandbox helper was not built');
 if (!existsSync(join(root,'.git'))) throw new Error('Install from a Git clone, not a downloaded source archive.');
 mkdirSync(runtime,{recursive:true}); mkdirSync(data,{recursive:true}); mkdirSync(backups,{recursive:true});
 // Keep an existing working installation in place until the build succeeds.
 call('pnpm',['install','--frozen-lockfile'],join(root,'apps','desktop'));
 call('pnpm',['tauri','build','--no-bundle'],join(root,'apps','desktop'));
 if (!existsSync(built)) throw new Error(`Tauri did not create expected executable: ${built}`);
-// Python packages live outside the checkout; no Docker/Python command needed to launch daily.
+// Python packages live outside the checkout; no external container runtime needed daily.
 if (existsSync(stagingVenv)) rmSync(stagingVenv,{recursive:true,force:true});
 call('uv',['venv','--python','3.11',stagingVenv]);
 call('uv',['pip','install','--python',python,root]);
@@ -64,9 +70,12 @@ if (existsSync(venv)) renameSync(venv,oldVenv);
 renameSync(stagingVenv,venv);
 if (existsSync(target)) copyFileSync(target,join(backups,'Trajecta.previous.exe'));
 copyFileSync(built,target + '.new');
+copyFileSync(nativeSandbox,installedSandbox + '.new');
 try {
   if (existsSync(target)) rmSync(target);
   renameSync(target + '.new',target);
+  if (existsSync(installedSandbox)) rmSync(installedSandbox);
+  renameSync(installedSandbox + '.new',installedSandbox);
 } catch (error) {
   if (!existsSync(target) && existsSync(join(backups,'Trajecta.previous.exe')))
     copyFileSync(join(backups,'Trajecta.previous.exe'),target);

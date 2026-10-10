@@ -4,6 +4,7 @@ export type SettingsPage =
   | "llm-providers"
   | "memory"
   | "guardrails"
+  | "sandbox"
   | "permissions"
   | "mcp-tools";
 

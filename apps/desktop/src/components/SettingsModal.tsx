@@ -10,6 +10,7 @@ import {
   PermissionsSettings,
   SettingsHeader,
   SettingsShell,
+  SandboxSettings,
 } from "./settings";
 
 import { useMcpCatalog } from "../hooks/use-tools";
@@ -102,6 +103,10 @@ export function SettingsModal({
 
           {page === "guardrails" && (
             <GuardrailsSettings enabled={open} backendOnline={backendOnline} />
+          )}
+
+          {page === "sandbox" && (
+            <SandboxSettings backendOnline={backendOnline} />
           )}
 
           {page === "permissions" && (

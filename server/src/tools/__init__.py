@@ -1,1 +1,1 @@
-"""Tool Runtime — built-in tools, MCP integrations, and Docker sandbox execution."""
+"""Tool Runtime — built-in tools, MCP integrations, and native Windows sandbox execution."""

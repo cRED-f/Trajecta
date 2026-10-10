@@ -244,12 +244,10 @@ class SkillsConfig(BaseModel):
 
 class SandboxConfig(BaseModel):
     enabled: bool = True
-    image: str = "trajecta-sandbox:latest"
     timeout_seconds: int = 300
     memory_limit: str = "512m"
     cpu_limit: float = 1.0
     network_enabled: bool = False
-    auto_remove: bool = True
 
 
 class ContentGuardrailsConfig(BaseModel):

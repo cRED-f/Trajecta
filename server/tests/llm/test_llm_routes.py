@@ -130,7 +130,7 @@ def _seed_9router(admin: FakeAdmin) -> None:
     admin.providers["9router"] = {
         "name": "9router",
         "network_config": {
-            "base_url": "http://host.docker.internal:20128",
+            "base_url": "http://127.0.0.1:20128",
         },
     }
     admin.keys["9router"] = [{"id": "k9", "status": "success"}]
@@ -263,7 +263,7 @@ def test_upsert_saves_even_when_discovery_is_down() -> None:
     assert admin.upserts and admin.vk_flips == 1
 
 
-def test_ollama_defaults_to_the_docker_safe_base_url() -> None:
+def test_ollama_defaults_to_the_local_base_url() -> None:
     client, admin, _ = _client()
 
     response = client.put(
@@ -272,9 +272,9 @@ def test_ollama_defaults_to_the_docker_safe_base_url() -> None:
     )
 
     assert response.status_code == 200
-    # Bifrost runs in Docker, where localhost is the container itself.
+    # Bifrost is a local native process; localhost is the host machine.
     assert admin.upserts[0]["base_url"] == (
-        "http://host.docker.internal:11434"
+        "http://127.0.0.1:11434"
     )
     assert admin.upserts[0]["api_key"] is None
     assert admin.vk_flips == 1

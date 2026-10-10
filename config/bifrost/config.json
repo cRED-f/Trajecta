@@ -16,7 +16,7 @@
         }
       ],
       "network_config": {
-        "base_url": "http://host.docker.internal:20128",
+        "base_url": "http://127.0.0.1:20128",
         "allow_private_network": true,
         "extra_headers": {
           "Accept": "application/json"
