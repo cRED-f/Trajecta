@@ -28,9 +28,9 @@ tauri = {
 
 tauri-plugin-single-instance = "2"
 
-tauri-plugin-opener = "2"
+tauri-plugin-opener = "=2.5.5"
 
-tauri-plugin-dialog = "2"
+tauri-plugin-dialog = "=2.7.3"
 
 serde = {
     version = "1",

@@ -86,11 +86,10 @@ export function VersionSwitcher({
         }
         aria-label="Show previous version"
         title="Previous version"
-        onClick={() =>
-          onSelect(
-            versions[activeIndex - 1].id,
-          )
-        }
+        onClick={() => {
+          const previous = versions[activeIndex - 1];
+          if (previous) onSelect(previous.id);
+        }}
       >
         <ChevronLeft size={14} />
       </button>
@@ -110,11 +109,10 @@ export function VersionSwitcher({
         }
         aria-label="Show next version"
         title="Next version"
-        onClick={() =>
-          onSelect(
-            versions[activeIndex + 1].id,
-          )
-        }
+        onClick={() => {
+          const next = versions[activeIndex + 1];
+          if (next) onSelect(next.id);
+        }}
       >
         <ChevronRight size={14} />
       </button>

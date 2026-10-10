@@ -21,7 +21,11 @@ export function MemoryMaintenance({ findings, conflicts, workspacePath, busy, pe
         <p className="memory-center__note">Select the preferred evidence reference; conflicting records remain available for audit.</p>
         <label className="memory-center__choice"><input type="radio" name={`preferred-${conflict.id}`} checked={(preferred[conflict.id] ?? "") === conflict.left_ref} onChange={() => setPreferred((state) => ({ ...state, [conflict.id]: conflict.left_ref }))} />{conflict.left_ref}</label>
         <label className="memory-center__choice"><input type="radio" name={`preferred-${conflict.id}`} checked={(preferred[conflict.id] ?? "") === conflict.right_ref} onChange={() => setPreferred((state) => ({ ...state, [conflict.id]: conflict.right_ref }))} />{conflict.right_ref}</label>
-        <button type="button" className="memory-center__button memory-center__button--primary" disabled={busy || !preferred[conflict.id]} onClick={() => void perform(() => learningMemoryApi.resolve(conflict.id, preferred[conflict.id]))}>Resolve conflict</button>
+        <button type="button" className="memory-center__button memory-center__button--primary" disabled={busy || !preferred[conflict.id]} onClick={() => {
+          const preferredRef = preferred[conflict.id];
+          if (!preferredRef) return;
+          void perform(() => learningMemoryApi.resolve(conflict.id, preferredRef));
+        }}>Resolve conflict</button>
       </article>)}
   </div>;
 }

@@ -33,7 +33,9 @@ opentelemetry-api = "^1.44.0"
 opentelemetry-sdk = "^1.44.0"
 opentelemetry-exporter-otlp = "^1.44.0"
 opentelemetry-instrumentation-fastapi = "^0.65b0"
-openai = "^3.13.0"
+# Guardrails AI 0.11.x requires OpenAI <3, while langchain-openai 1.6.x needs >=2.45.
+# Keep the compatible intersection until both integrations support OpenAI 3.
+openai = ">=2.45.0,<3.0.0"
 anthropic = "^1.5.0"
 httpx = "^0.28.1"
 aiosqlite = "^0.22.1"
@@ -41,8 +43,11 @@ qdrant-client = "^1.19.0"
 docker = "^7.2.0"
 deepeval = "^4.2.2"
 langchain-openai = "^1.6.2"
-python-multipart = "^0.0.12"
-python-docx = "^1.2.2"
+# LangChain MCP/FastMCP 4 requires python-multipart >=0.0.26.
+# Poetry ^0.0.12 restricts resolution to <0.0.13 and prevents installation.
+python-multipart = ">=0.0.26,<1.0.0"
+# Latest published python-docx is 1.2.0; do not require non-existent 1.2.2.
+python-docx = "^1.2.0"
 pypdf = "^5.9.0"
 # Free/local personal-agent tool dependencies
 beautifulsoup4 = "*"

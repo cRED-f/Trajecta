@@ -194,12 +194,16 @@ struct DesktopStatus {
 #[tauri::command]
 fn desktop_status(app: tauri::AppHandle) -> DesktopStatus {
     let state = app.state::<DesktopProcesses>();
+    // Drop the mutex guards before returning; keeping them in the tail
+    // expression can outlive the borrowed managed state (E0597).
+    let managed_bifrost = state.bifrost.lock().unwrap().is_some();
+    let error = state.error.lock().unwrap().clone();
     DesktopStatus {
         installed: !cfg!(debug_assertions),
         backend_running: service_online(8420),
         bifrost_reachable: service_online(8080),
-        managed_bifrost: state.bifrost.lock().unwrap().is_some(),
-        error: state.error.lock().unwrap().clone(),
+        managed_bifrost,
+        error,
     }
 }
 #[tauri::command]
