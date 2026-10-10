@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, copyFileSync, writeFileSync, renameSync, rmSync 
 import { join, resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { packageManagerCommand } from './windows-package-manager.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 if (process.platform !== 'win32') throw new Error('Local source installation currently supports Windows only.');
@@ -20,12 +21,11 @@ const target = join(runtime, 'Trajecta.exe');
 
 function call(program, args, cwd = root) {
   console.log(`> ${program} ${args.join(' ')}`);
-  // Windows does not execute pnpm.cmd/npm.cmd reliably via execFile.
-  const cmdScript = program === 'pnpm' || program === 'npm';
-  const result = cmdScript
-    ? spawnSync('cmd.exe', ['/d','/s','/c', `${program} ${args.map(a => '"'+a.replaceAll('"','\\"')+'"').join(' ')}`],
-      {cwd, stdio:'inherit', windowsHide:true})
-    : spawnSync(program, args, {cwd, stdio:'inherit', windowsHide:true});
+  // Prefer pnpm's actual Node entrypoint; Windows cmd shims may mangle quoted flags.
+  const command = program === 'pnpm' || program === 'npm'
+    ? packageManagerCommand(program, args)
+    : { program, args };
+  const result = spawnSync(command.program, command.args, { cwd, stdio: 'inherit', windowsHide: true });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${program} failed with exit code ${result.status}`);
 }
@@ -34,7 +34,7 @@ function requireCommand(cmd,args=['--version']) {
     if (cmd === 'pnpm') call('pnpm', args);
     else execFileSync(cmd,args,{stdio:'ignore', windowsHide:true});
   }
-  catch { throw new Error(`Missing required build tool: ${cmd}. Install it and retry.`); }
+  catch (error) { throw new Error(`Cannot run ${cmd} ${args.join(' ')}: ${error.message}`); }
 }
 requireCommand('git'); requireCommand('node'); requireCommand('pnpm'); requireCommand('uv'); requireCommand('cargo');
 if (!existsSync(join(root,'.git'))) throw new Error('Install from a Git clone, not a downloaded source archive.');
