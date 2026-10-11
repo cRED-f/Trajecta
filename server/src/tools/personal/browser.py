@@ -30,8 +30,18 @@ class BrowserManager:
         self._page: Any | None = None
 
     async def _ensure(self) -> Any:
+        # An existing Python page proxy may outlive its browser process or
+        # context. Never return a known-closed page to a new tool call.
         if self._page is not None:
-            return self._page
+            page_closed = self._page.is_closed()
+            browser_connected = (
+                self._browser is not None and self._browser.is_connected()
+            )
+            if not page_closed and browser_connected:
+                return self._page
+            await self.reset()
+        elif any(obj is not None for obj in (self._context, self._browser, self._playwright)):
+            await self.reset()
         try:
             from playwright.async_api import async_playwright
         except ImportError as exc:
@@ -123,16 +133,12 @@ class BrowserManager:
 
         locator = page.locator(f'[data-trajecta-id="{element_id}"]')
 
-        try:
-            async with page.expect_navigation(
-                timeout=timeout,
-                wait_until="domcontentloaded",
-            ):
-                await locator.click()
-        except Exception:
-            # SPA forms often update without navigation.
-            await locator.click()
-            await page.wait_for_timeout(min(1000, timeout))
+        # Click exactly once. The old expect_navigation timeout handler clicked
+        # again, potentially submitting a form or committing a purchase twice.
+        # Playwright's locator.click already waits for triggered navigations;
+        # SPAs can update their DOM without a traditional navigation.
+        await locator.click()
+        await page.wait_for_timeout(min(500, timeout))
 
         after_url = page.url
 
@@ -288,14 +294,20 @@ class BrowserManager:
         )
         return {"page": entries, "note": "Use browser_snapshot for DOM state."}
 
-    async def close(self) -> None:
-        if self._context is not None:
-            await self._context.close()
-        if self._browser is not None:
-            await self._browser.close()
-        if self._playwright is not None:
-            await self._playwright.stop()
+    async def reset(self) -> None:
+        """Discard stale handles even when Playwright's cleanup itself fails."""
+        context, browser, playwright = self._context, self._browser, self._playwright
         self._page = None
         self._context = None
         self._browser = None
         self._playwright = None
+        for owner, method in ((context, "close"), (browser, "close"), (playwright, "stop")):
+            if owner is not None:
+                try:
+                    await getattr(owner, method)()
+                except Exception:
+                    # It is normal for these handles to be dead after a crash.
+                    pass
+
+    async def close(self) -> None:
+        await self.reset()

@@ -25,6 +25,7 @@ from server.src.guardrails.policy import (
 )
 from server.src.memory.provider import MemoryProvider
 from server.src.tools.personal.browser import BrowserManager
+from server.src.tools.personal.browser_recovery import call_browser_tool
 from server.src.tools.personal.computer import ComputerManager
 from server.src.tools.personal.database import DatabaseTools
 from server.src.tools.personal.documents import DocumentTools
@@ -850,17 +851,26 @@ class PersonalToolProvider:
             @tool
             async def browser_navigate(url: str, wait_until: str = "domcontentloaded") -> dict[str, Any]:
                 """Open a web page in Trajecta's local Playwright browser."""
-                return await browser.navigate(url, wait_until=wait_until)
+                return await call_browser_tool(
+                    browser,
+                    "browser_navigate",
+                    lambda: browser.navigate(url, wait_until=wait_until),
+                    retry_navigation_on_closed=True,
+                )
 
             @tool
             async def browser_snapshot(max_text_chars: int = 30_000) -> dict[str, Any]:
                 """Read current browser page text plus stable interactive element ids."""
-                return await browser.snapshot(max_text_chars=max_text_chars)
+                return await call_browser_tool(
+                    browser, "browser_snapshot", lambda: browser.snapshot(max_text_chars=max_text_chars)
+                )
 
             @tool
             async def browser_click(element_id: str) -> dict[str, Any]:
                 """Click an element id from browser_snapshot. Approval-gated."""
-                return await browser.click(element_id)
+                return await call_browser_tool(
+                    browser, "browser_click", lambda: browser.click(element_id)
+                )
 
             @tool
             async def browser_submit_and_verify(
@@ -869,76 +879,105 @@ class PersonalToolProvider:
                 expected_text: str | None = None,
             ) -> dict[str, Any]:
                 """Submit/click a browser form action and verify the resulting page state."""
-                return await browser.submit_and_verify(
-                    element_id,
-                    expected_url_contains=expected_url_contains,
-                    expected_text=expected_text,
+                return await call_browser_tool(
+                    browser, "browser_submit_and_verify",
+                    lambda: browser.submit_and_verify(
+                        element_id,
+                        expected_url_contains=expected_url_contains,
+                        expected_text=expected_text,
+                    ),
                 )
 
             @tool
             async def browser_type(element_id: str, text: str, submit: bool = False) -> dict[str, Any]:
                 """Fill an input from browser_snapshot; optionally press Enter. Approval-gated."""
-                return await browser.type(element_id, text, submit=submit)
+                return await call_browser_tool(
+                    browser, "browser_type", lambda: browser.type(element_id, text, submit=submit)
+                )
 
             @tool
             async def browser_press(key: str) -> dict[str, Any]:
                 """Send a keyboard key/chord to the browser. Approval-gated."""
-                return await browser.press(key)
+                return await call_browser_tool(
+                    browser, "browser_press", lambda: browser.press(key)
+                )
 
             @tool
             async def browser_scroll(x: int = 0, y: int = 700) -> dict[str, Any]:
                 """Scroll the current browser page."""
-                return await browser.scroll(x=x, y=y)
+                return await call_browser_tool(
+                    browser, "browser_scroll", lambda: browser.scroll(x=x, y=y)
+                )
 
             @tool
             async def browser_back() -> dict[str, Any]:
                 """Navigate browser history backward."""
-                return await browser.back()
+                return await call_browser_tool(
+                    browser, "browser_back", lambda: browser.back()
+                )
 
             @tool
             async def browser_forward() -> dict[str, Any]:
                 """Navigate browser history forward."""
-                return await browser.forward()
+                return await call_browser_tool(
+                    browser, "browser_forward", lambda: browser.forward()
+                )
 
             @tool
             async def browser_tabs() -> list[dict[str, Any]]:
                 """List open browser tabs."""
-                return await browser.tabs()
+                return await call_browser_tool(
+                    browser, "browser_tabs", lambda: browser.tabs()
+                )
 
             @tool
             async def browser_select_tab(index: int) -> dict[str, Any]:
                 """Select an existing browser tab by index."""
-                return await browser.select_tab(index)
+                return await call_browser_tool(
+                    browser, "browser_select_tab", lambda: browser.select_tab(index)
+                )
 
             @tool
             async def browser_new_tab(url: str | None = None) -> dict[str, Any]:
                 """Open a new browser tab, optionally at a URL."""
-                return await browser.new_tab(url)
+                return await call_browser_tool(
+                    browser, "browser_new_tab", lambda: browser.new_tab(url)
+                )
 
             @tool
             async def browser_close_tab(index: int | None = None) -> dict[str, Any]:
                 """Close the current or selected browser tab."""
-                return await browser.close_tab(index)
+                return await call_browser_tool(
+                    browser, "browser_close_tab", lambda: browser.close_tab(index)
+                )
 
             @tool
             async def browser_screenshot(full_page: bool = False) -> dict[str, Any]:
                 """Capture browser screenshot to /workspace; use read_file on returned path for vision."""
-                return await browser.screenshot(full_page=full_page)
+                return await call_browser_tool(
+                    browser, "browser_screenshot", lambda: browser.screenshot(full_page=full_page)
+                )
 
             @tool
             async def browser_download(element_id: str) -> dict[str, Any]:
                 """Click a download element and save its file under /workspace. Approval-gated."""
-                return await browser.download(element_id)
+                return await call_browser_tool(
+                    browser, "browser_download", lambda: browser.download(element_id)
+                )
 
             @tool
             async def browser_upload(element_id: str, paths: list[str]) -> dict[str, Any]:
                 """Upload local /workspace or /uploads files through a browser file input. Approval-gated."""
-                return await browser.upload(element_id, paths)
+                return await call_browser_tool(
+                    browser, "browser_upload", lambda: browser.upload(element_id, paths)
+                )
 
             @tool
             async def browser_cookies() -> list[dict[str, Any]]:
                 """List browser cookie metadata without exposing secret cookie values."""
-                return await browser.cookies()
+                return await call_browser_tool(
+                    browser, "browser_cookies", lambda: browser.cookies()
+                )
 
             custom.extend([
                 browser_navigate, browser_snapshot, browser_click, browser_type, browser_press,

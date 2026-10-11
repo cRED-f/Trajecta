@@ -205,3 +205,131 @@ async def test_recoverable_web_404_is_activity_error_not_run_error() -> None:
     )
     finished = next(event for event in collected if event.type == "run.finished")
     assert finished.data["tool_errors"] == 1
+
+class RecoveryGuardrails:
+    """Simulate the existing input/observations model safety boundary."""
+
+    async def protect_model_context(self, text: str, *, model_name: str):
+        from types import SimpleNamespace
+        return SimpleNamespace(text=text)
+
+    async def guard_untrusted_text(self, text: str):
+        from types import SimpleNamespace
+        return SimpleNamespace(text=text)
+
+
+class RecoveryModel:
+    def __init__(self, chunks: list[str]):
+        self.chunks = chunks
+        self.calls = 0
+        self.messages = None
+
+    async def astream(self, messages):
+        self.calls += 1
+        self.messages = messages
+        for part in self.chunks:
+            yield AIMessageChunk(content=part)
+
+
+class RecoveryModelFactory:
+    def __init__(self, model):
+        self.model = model
+
+    def create(self, model_name: str):
+        assert model_name == "test-model"
+        return self.model
+
+
+class CountingAgent(FakeAgent):
+    def __init__(self, events):
+        super().__init__(events)
+        self.calls = 0
+
+    async def astream(self, *args, **kwargs):
+        self.calls += 1
+        async for event in super().astream(*args, **kwargs):
+            yield event
+
+
+async def test_internal_summary_in_provider_reasoning_does_not_abort_chat() -> None:
+    """The reasoning channel is distinct from the user-facing answer."""
+    agent = CountingAgent([
+        {"type": "messages", "ns": (), "data": (
+            AIMessageChunk(content="", id="message-1", additional_kwargs={
+                "reasoning_content": "## SESSION INTENT\nSome internal notes"
+            }), {},
+        )},
+        {"type": "messages", "ns": (), "data": (
+            AIMessageChunk(content="Here are the universities.", id="message-1"), {},
+        )},
+    ])
+    collected = []
+    await _consume(_runtime(), _prepared(agent), asyncio.Event(), collected)
+    assert any(e.type == "run.finished" for e in collected)
+    assert not any(e.type == "run.error" for e in collected)
+    assert "Here are the universities." == "".join(
+        e.data["text"] for e in collected if e.type == "message.delta"
+    )
+    assert not any(e.type == "reasoning.delta" for e in collected)
+
+
+async def test_blocked_answer_recovers_without_repeating_any_tools() -> None:
+    """Only a fresh tool-free model response is allowed after a blocked draft."""
+    from langchain_core.messages import ToolMessage
+
+    agent = CountingAgent([
+        {"type": "messages", "ns": (), "data": (
+            ToolMessage(name="web_search", tool_call_id="s1", content="Official university page found."), {},
+        )},
+        {"type": "messages", "ns": (), "data": (
+            AIMessageChunk(content="## SESSION INTENT\nprivate details"), {},
+        )},
+    ])
+    model = RecoveryModel(["Italy, France, Sweden and Norway each have AI programmes."])
+    runtime = _runtime()
+    runtime._content_guardrails = RecoveryGuardrails()
+    runtime._models = RecoveryModelFactory(model)
+    events = []
+    await _consume(runtime, _prepared(agent), asyncio.Event(), events)
+
+    assert agent.calls == 1  # the tool graph is never replayed
+    assert model.calls == 1
+    assert events[-1].type == "run.finished"
+    assert events[-1].data["recovery_mode"] == "model_only_no_tools"
+    assert "## SESSION INTENT" not in repr(events)
+    assert "AI programmes" in "".join(
+        e.data["text"] for e in events if e.type == "message.delta"
+    )
+    assert "Official university page found." in model.messages[-1].content
+
+
+async def test_recovery_suppresses_second_internal_preamble() -> None:
+    agent = CountingAgent([
+        {"type": "messages", "ns": (), "data": (
+            AIMessageChunk(content="## SESSION INTENT\nprivate details"), {},
+        )},
+    ])
+    model = RecoveryModel(["## INTERNAL SESSION SUMMARY\nprivate details again"])
+    runtime = _runtime()
+    runtime._content_guardrails = RecoveryGuardrails()
+    runtime._models = RecoveryModelFactory(model)
+    events = []
+    await _consume(runtime, _prepared(agent), asyncio.Event(), events)
+
+    assert agent.calls == model.calls == 1
+    assert events[-1].type == "run.error"
+    assert events[-1].data["code"] == "internal_context_output_blocked"
+    assert all(e.type != "message.delta" for e in events)
+    assert "private details" not in repr(events)
+
+
+async def test_missing_request_does_not_invent_recovery_context() -> None:
+    """A HITL resume without a user request must fail safely, not guess."""
+    runtime = _runtime()
+    runtime._content_guardrails = RecoveryGuardrails()
+    runtime._models = RecoveryModelFactory(RecoveryModel(["ignored"]))
+    answer = await runtime._recover_safe_answer(
+        model_name="test-model", agent_input={"messages": []},
+        tool_observations=[], cancel_event=asyncio.Event(),
+    )
+    assert answer is None
