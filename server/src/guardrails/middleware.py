@@ -18,6 +18,7 @@ from langchain_core.messages import (
 from server.src.guardrails.content import (
     ContentGuardrailService,
 )
+from server.src.config import ContentGuardrailsConfig
 
 
 logger = logging.getLogger(__name__)
@@ -50,13 +51,15 @@ class GuardrailsModelMiddleware(
             Awaitable[Any],
         ],
     ) -> Any:
+        # One durable SQLite read per model call, not per text block.
+        cfg = await self._guardrails.get_settings()
         messages: list[BaseMessage] = []
 
         changed = False
 
         for message in request.messages:
             guarded = await self._guard_message(
-                message
+                message, cfg=cfg
             )
 
             messages.append(guarded)
@@ -83,7 +86,7 @@ class GuardrailsModelMiddleware(
             SystemMessage,
         ):
             guarded_system = await self._guard_message(
-                system_message
+                system_message, cfg=cfg
             )
 
             if guarded_system is not system_message:
@@ -101,6 +104,8 @@ class GuardrailsModelMiddleware(
     async def _guard_message(
         self,
         message: BaseMessage,
+        *,
+        cfg: ContentGuardrailsConfig,
     ) -> BaseMessage:
         content = message.content
 
@@ -113,6 +118,7 @@ class GuardrailsModelMiddleware(
             guarded = await self._guard_text(
                 content,
                 untrusted=is_untrusted,
+                cfg=cfg,
             )
 
             if guarded == content:
@@ -162,6 +168,7 @@ class GuardrailsModelMiddleware(
             guarded = await self._guard_text(
                 text,
                 untrusted=is_untrusted,
+                cfg=cfg,
             )
 
             if guarded != text:
@@ -190,13 +197,14 @@ class GuardrailsModelMiddleware(
         text: str,
         *,
         untrusted: bool,
+        cfg: ContentGuardrailsConfig,
     ) -> str:
         current = text
 
         if untrusted:
             guarded = (
                 await self._guardrails.guard_untrusted_text(
-                    current
+                    current, cfg=cfg
                 )
             )
 
@@ -216,6 +224,7 @@ class GuardrailsModelMiddleware(
             await self._guardrails.protect_model_context(
                 current,
                 model_name=self._model_name,
+                cfg=cfg,
             )
         )
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
 from guardrails.validator_base import FailResult
@@ -34,6 +34,7 @@ from server.src.config import (
     Settings,
 )
 from server.src.guardrails.policy import PermissionPolicyStore
+from server.src.guardrails.cache import GuardrailDecisionCache
 
 
 logger = logging.getLogger(__name__)
@@ -102,6 +103,11 @@ class ContentGuardrailService:
 
         # Do not call one validator instance concurrently.
         self._locks: dict[str, asyncio.Lock] = {}
+        self._decision_cache = GuardrailDecisionCache()
+        self._settings_update_lock = asyncio.Lock()
+        # Collapse concurrent scans for identical content/policy boundaries.
+        self._inflight_guard = asyncio.Lock()
+        self._inflight_locks: dict[bytes, tuple[asyncio.Lock, int]] = {}
 
     async def get_settings(
         self,
@@ -135,23 +141,21 @@ class ContentGuardrailService:
         self,
         patch: dict[str, Any],
     ) -> ContentGuardrailsConfig:
-        current = await self.get_settings()
+        async with self._settings_update_lock:
+            current = await self.get_settings()
 
-        merged = {
-            **current.model_dump(mode="python"),
-            **patch,
-        }
-
-        updated = ContentGuardrailsConfig.model_validate(
-            merged
-        )
-
-        await self._policy_store.set_setting(
-            self._SETTINGS_KEY,
-            updated.model_dump(mode="json"),
-        )
-
-        return updated
+            merged = {
+                **current.model_dump(mode="python"),
+                **patch,
+            }
+            updated = ContentGuardrailsConfig.model_validate(merged)
+            await self._policy_store.set_setting(
+                self._SETTINGS_KEY, updated.model_dump(mode="json")
+            )
+            # Cache keys also include the *entire* policy snapshot. A
+            # concurrent old-policy scan cannot pollute a new-policy lookup.
+            self._decision_cache.clear()
+            return updated
 
     async def inspect_user_prompt(
         self,
@@ -234,10 +238,25 @@ class ContentGuardrailService:
     async def guard_untrusted_text(
         self,
         text: str,
+        *,
+        cfg: ContentGuardrailsConfig | None = None,
+    ) -> GuardedText:
+        """Validate untrusted text, reusing decisions under identical policy."""
+        if cfg is None:
+            cfg = await self.get_settings()
+        if not cfg.enabled or not cfg.prompt_injection_enabled or not text.strip():
+            return GuardedText(text=text)
+        return await self._cached_guard(
+            stage="untrusted", text=text, cfg=cfg, model_name="",
+            producer=lambda: self._guard_untrusted_text_uncached(text, cfg),
+        )
+
+    async def _guard_untrusted_text_uncached(
+        self,
+        text: str,
+        cfg: ContentGuardrailsConfig,
     ) -> GuardedText:
         """Guard RAG/tool/file/web output before the agent trusts it."""
-
-        cfg = await self.get_settings()
 
         if (
             not cfg.enabled
@@ -258,10 +277,7 @@ class ContentGuardrailService:
             validator="detect_prompt_injection",
             boundary="untrusted_content",
             action=cfg.untrusted_content_action,
-            message=(
-                result.error_message
-                or "Prompt injection detected in untrusted content."
-            ),
+            message="Prompt injection detected in untrusted content.",
         )
 
         if cfg.untrusted_content_action == "block":
@@ -287,10 +303,88 @@ class ContentGuardrailService:
         text: str,
         *,
         model_name: str,
+        cfg: ContentGuardrailsConfig | None = None,
+    ) -> GuardedText:
+        """Protect cloud-bound text; use a different cache boundary from tools."""
+        if cfg is None:
+            cfg = await self.get_settings()
+        if (
+            not cfg.enabled or not text or
+            self._is_local_model(model_name, cfg) or
+            cfg.cloud_sensitive_action == "allow" or
+            (not cfg.secrets_enabled and not cfg.pii_enabled)
+        ):
+            return GuardedText(text=text)
+        return await self._cached_guard(
+            stage="cloud_privacy", text=text, cfg=cfg,
+            model_name=model_name,
+            producer=lambda: self._protect_model_context_uncached(
+                text, model_name=model_name, cfg=cfg
+            ),
+        )
+
+    async def _cached_guard(
+        self,
+        *,
+        stage: str,
+        text: str,
+        cfg: ContentGuardrailsConfig,
+        model_name: str,
+        producer: Callable[[], Awaitable[GuardedText]],
+    ) -> GuardedText:
+        key = self._decision_cache.key(
+            stage=stage,
+            policy_json=cfg.model_dump_json(),
+            model_name=model_name,
+            text=text,
+        )
+        if key is None:
+            # Very large payloads are not retained in the cache.
+            return await producer()
+
+        cached = self._decision_cache.get(key, text)
+        if cached is not None:
+            return cached
+
+        # The per-key lock is only live while callers are waiting or scanning.
+        # This is not a global validator lock and doesn't serialize distinct
+        # content hashes. A second caller rechecks the cache after acquiring.
+        async with self._inflight_guard:
+            current = self._inflight_locks.get(key)
+            if current is None:
+                lock = asyncio.Lock()
+                self._inflight_locks[key] = (lock, 1)
+            else:
+                lock, count = current
+                self._inflight_locks[key] = (lock, count + 1)
+
+        try:
+            async with lock:
+                cached = self._decision_cache.get(key, text)
+                if cached is not None:
+                    return cached
+                # Validator failures propagate and are never cached as allow.
+                result = await producer()
+                self._decision_cache.put(key, text, result)
+                return result
+        finally:
+            async with self._inflight_guard:
+                live = self._inflight_locks.get(key)
+                if live is not None:
+                    _, count = live
+                    if count <= 1:
+                        self._inflight_locks.pop(key, None)
+                    else:
+                        self._inflight_locks[key] = (lock, count - 1)
+
+    async def _protect_model_context_uncached(
+        self,
+        text: str,
+        *,
+        model_name: str,
+        cfg: ContentGuardrailsConfig,
     ) -> GuardedText:
         """Privacy boundary before Bifrost/cloud-provider transmission."""
-
-        cfg = await self.get_settings()
 
         if not cfg.enabled or not text:
             return GuardedText(text=text)
@@ -319,10 +413,7 @@ class ContentGuardrailService:
                     validator="secrets_present",
                     boundary="cloud_model_context",
                     action=cfg.cloud_sensitive_action,
-                    message=(
-                        result.error_message
-                        or "Secret detected in cloud-bound context."
-                    ),
+                    message="Secret detected in cloud-bound context.",
                     redacted=(
                         cfg.cloud_sensitive_action == "redact"
                     ),
@@ -357,10 +448,7 @@ class ContentGuardrailService:
                     validator="detect_pii",
                     boundary="cloud_model_context",
                     action=cfg.cloud_sensitive_action,
-                    message=(
-                        result.error_message
-                        or "PII detected in cloud-bound context."
-                    ),
+                    message="PII detected in cloud-bound context.",
                     redacted=(
                         cfg.cloud_sensitive_action == "redact"
                     ),
