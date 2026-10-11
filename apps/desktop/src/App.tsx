@@ -3,6 +3,8 @@ import {
   useMemo,
 } from "react";
 
+import { StartupDialog, StartupToasts, useStartupExperience } from "./components/startup/StartupExperience";
+
 import {
   useBackendHealth,
   useChatActions,
@@ -30,6 +32,21 @@ import {
 } from "./components/SettingsModal";
 
 export default function App() {
+  const startup = useStartupExperience();
+  const theme = useChatStore((state) => state.theme);
+  useEffect(() => {
+    const resolved = theme === "system"
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+      : theme;
+    document.documentElement.setAttribute("data-theme", resolved);
+  }, [theme]);
+  return <>
+    {startup.ready ? <AppWorkspace /> : <StartupDialog startup={startup} />}
+    <StartupToasts startup={startup} />
+  </>;
+}
+
+function AppWorkspace() {
   const activeId =
     useChatStore(
       (state) =>

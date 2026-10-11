@@ -6398,3 +6398,32 @@ select:disabled {
 .desktop-action-button--danger { color: #bd4e4e; }
 .desktop-feedback { display: flex; align-items: center; gap: 8px; margin: 10px 0; padding: 10px 12px; border-radius: 8px; background: var(--color-hover-veil, #8881); font-size: 12px; }
 .desktop-feedback--error { color: #bd4e4e; }
+
+/* Cold-start: the workspace is mounted only after startup finishes. */
+.startup-page { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: var(--color-pure-white); }
+.startup-dialog { width: min(470px, 100%); padding: 30px; border: 1px solid var(--color-hairline); border-radius: 20px; background: var(--surface-elevated-panel); box-shadow: 0 18px 70px #00000017; }
+.startup-logo { width: 52px; height: 52px; display: grid; place-items: center; border-radius: 15px; background: var(--color-hover-veil); }
+.startup-dialog h1 { margin: 18px 0 6px; font-size: 25px; line-height: 1.2; }
+.startup-description, .startup-current { margin: 0; font-size: 14px; color: var(--color-mid-ash); }
+.startup-progress { width: 100%; height: 5px; margin: 24px 0 17px; background: var(--color-edge-gray); border-radius: 20px; overflow: hidden; }
+.startup-progress > span { display: block; height: 100%; border-radius: inherit; background: var(--color-graphite-ink); transition: width 240ms ease; }
+.startup-steps { display: flex; flex-direction: column; gap: 3px; }
+.startup-step { display: flex; align-items: center; gap: 11px; min-height: 39px; padding: 5px 0; font-size: 13px; color: var(--color-hollow); }
+.startup-step svg { flex: none; }
+.startup-step span { flex: 1; }
+.startup-step small { font-size: 11px; }
+.startup-step--ready, .startup-step--running { color: var(--color-graphite-ink); }
+.startup-step--warning, .startup-step--failed { color: #d58628; }
+.startup-current { margin: 21px 0 0; }
+.startup-spin { animation: startup-rotate 1s linear infinite; }
+@keyframes startup-rotate { to { transform: rotate(360deg); } }
+.startup-failure { margin-top: 19px; padding: 12px; border-radius: 10px; background: #cb51551a; color: var(--color-graphite-ink); font-size: 13px; overflow-wrap: anywhere; }
+.startup-actions { display: flex; gap: 8px; margin-top: 18px; }
+.startup-actions button { padding: 11px 16px; color: var(--color-pure-white); background: var(--color-graphite-ink); border-radius: 10px; cursor: pointer; }
+.startup-actions .startup-secondary { color: var(--color-graphite-ink); background: var(--color-hover-veil); }
+.startup-toast-stack { position: fixed; bottom: 24px; right: 24px; z-index: 10000; display: flex; flex-direction: column; gap: 10px; width: min(420px, calc(100vw - 32px)); max-height: 60vh; overflow-y: auto; pointer-events: none; }
+.startup-toast { display: flex; align-items: flex-start; gap: 11px; padding: 15px; border: 1px solid var(--color-edge-gray); border-radius: 13px; background: var(--surface-elevated-panel); box-shadow: 0 10px 35px #00000025; color: var(--color-graphite-ink); pointer-events: auto; }
+.startup-toast > svg { flex: none; margin-top: 2px; color: #d58628; }
+.startup-toast p { flex: 1; margin: 0; font-size: 13px; line-height: 1.5; }
+.startup-toast button { padding: 0; background: transparent; color: var(--color-hollow); cursor: pointer; }
+@media (prefers-reduced-motion: reduce) { .startup-spin { animation: none; } .startup-progress > span { transition: none; } }

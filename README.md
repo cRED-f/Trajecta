@@ -34,6 +34,7 @@ Trajecta is a Tauri 2 desktop application with a Python/FastAPI agent backend. I
 - **Models:** Choose the chat/default/reflection model in Trajecta. Manage cloud/Ollama/9Router providers, API keys, routing, fallbacks, and virtual keys in the Bifrost dashboard.
 - **Automation:** One-time, interval, and cron scheduled tasks.
 - **Desktop lifecycle:** One global `trajecta` launcher, system tray, optional login startup, managed FastAPI, and in-app Git-based updates/diagnostics.
+- **Cold-start recovery:** A startup dialog waits for FastAPI, checks Bifrost, restores saved UI/API configuration and recent chats, and resumes the persisted background-learning worker. Previously selected local Ollama embedding/learning models are warmed if available; unavailable Ollama/Bifrost services show non-blocking notices. Showing an existing tray window does not perform a new cold start.
 
 ## LLM gateway ownership
 

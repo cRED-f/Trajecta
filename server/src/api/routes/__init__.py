@@ -13,6 +13,7 @@ from .llm import router as llm_router
 from .traces import router as traces_router
 from .chat import router as chat_router
 from .health import router as health_router
+from .startup import router as startup_router
 from .learning import router as learning_router
 
 all_routers = [
@@ -28,4 +29,5 @@ all_routers = [
     llm_router,
     traces_router,
     health_router,
+    startup_router,
 ]
