@@ -3,6 +3,34 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
+
+
+def is_transient_gateway_disconnect(exc: Exception) -> bool:
+    """Recognize transport disconnects, including OpenAI's wrapped httpx errors.
+
+    Do not classify HTTP authorization errors as transient: retrying a revoked
+    credential cannot help and would hide the actionable auth diagnostics.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    for _ in range(6):
+        if current is None or id(current) in seen:
+            break
+        seen.add(id(current))
+        if isinstance(current, (
+            httpx.RemoteProtocolError,
+            httpx.ConnectError,
+            httpx.ReadError,
+            httpx.ConnectTimeout,
+            httpx.ReadTimeout,
+        )):
+            return True
+        if "server disconnected without sending a response" in str(current).lower():
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
 
 def describe_gateway_failure(exc: Exception) -> str:
     """Distinguish 9Router upstream 401 from Bifrost virtual-key 401.
@@ -54,6 +82,15 @@ def describe_gateway_failure(exc: Exception) -> str:
             "For the managed gateway, reinstall Trajecta to provision its "
             "persistent key and restart both services. For an external "
             "gateway, register the BIFROST_VIRTUAL_KEY there."
+        )
+    if is_transient_gateway_disconnect(exc):
+        return (
+            "The selected model's connection through Bifrost closed unexpectedly. "
+            "The client retries transient failures before streaming starts, "
+            "but a connection can still fail during an active stream. "
+            "Please retry this response; if it repeats, check the Bifrost and "
+            "provider logs and verify the selected model is reachable. "
+            "Your completed tool actions have not been automatically replayed."
         )
     return detail
 

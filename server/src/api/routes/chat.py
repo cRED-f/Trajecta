@@ -97,6 +97,8 @@ def _response_for_prepared(
             heartbeat_seconds=(
                 request.app.state.settings.chat.stream_heartbeat_seconds
             ),
+            conversation_id=prepared.conversation.id,
+            run_id=prepared.run_id,
         ),
         media_type="text/event-stream",
         headers={
@@ -129,6 +131,8 @@ def _response_for_resume(
         sse_stream(
             source(),
             heartbeat_seconds=request.app.state.settings.chat.stream_heartbeat_seconds,
+            conversation_id=prepared.conversation.id,
+            run_id=prepared.run_id,
         ),
         media_type="text/event-stream",
         headers={

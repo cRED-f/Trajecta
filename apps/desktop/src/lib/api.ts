@@ -164,6 +164,7 @@ async function streamRequest(
     throw await readError(response);
   }
 
+  let sawTerminalEvent = false;
   await consumeSSE(
     response,
     async ({ event, data }) => {
@@ -171,13 +172,22 @@ async function streamRequest(
         ChatStreamEvent,
         "type"
       >;
-
+      if (["message.completed", "run.error", "run.cancelled", "run.interrupted"].includes(event)) {
+        sawTerminalEvent = true;
+      }
       await onEvent({
         type: event,
         ...payload,
       });
     },
   );
+  if (!signal.aborted && !sawTerminalEvent) {
+    throw new Error(
+      "Trajecta's chat stream ended before the assistant finished. " +
+      "The backend or model connection may have dropped. Please retry; " +
+      "if it persists, check the FastAPI and Bifrost logs.",
+    );
+  }
 }
 
 export const chatApi = {

@@ -17,7 +17,10 @@ from langgraph.types import Command
 
 from server.src.chat.mcp import MCPToolProvider
 from server.src.chat.model import BifrostModelFactory
-from server.src.llm_auth_errors import describe_gateway_failure
+from server.src.llm_auth_errors import (
+    describe_gateway_failure,
+    is_transient_gateway_disconnect,
+)
 from server.src.chat.models import Attachment, ChatEvent, Conversation
 from server.src.output_safety import InternalContextExposure, VisibleTextGate
 from server.src.chat.rag import AttachmentRAGIndex
@@ -474,32 +477,45 @@ class DeepAgentRuntime:
         *,
         prepared: PreparedAgentRun,
         conversation: Conversation,
-        decisions: list[dict[str, Any]],
+        resume_payload: dict[str, Any],
         cancel_event: asyncio.Event,
     ) -> AsyncIterator[ChatEvent]:
-        """Resume a Deep Agents HITL interrupt using its persisted checkpoint."""
+        """Resume the saved HITL checkpoint, including parallel interrupts."""
         async for event in self._stream_input(
             prepared=prepared,
             conversation=conversation,
-            agent_input=Command(resume={"decisions": decisions}),
+            agent_input=Command(resume=resume_payload),
             cancel_event=cancel_event,
             resumed=True,
         ):
             yield event
 
     @staticmethod
-    def _interrupt_value(raw: Any) -> dict[str, Any]:
+    def _interrupt_entries(raw: Any) -> list[dict[str, Any]]:
+        """Preserve LangGraph interrupt IDs alongside Deep Agents review payloads."""
         items = raw if isinstance(raw, (list, tuple)) else [raw]
-        values: list[Any] = []
+        entries: list[dict[str, Any]] = []
         for item in items:
             value = getattr(item, "value", item)
+            interrupt_id = getattr(item, "id", None) or getattr(item, "interrupt_id", None)
+            if isinstance(item, dict) and "value" in item and "id" in item:
+                interrupt_id = interrupt_id or item["id"]
+                value = item["value"]
             if isinstance(value, dict):
-                values.append(value)
+                entry = dict(value)
             else:
-                values.append({"value": str(value)})
-        if len(values) == 1 and isinstance(values[0], dict):
-            return values[0]
-        return {"interrupts": values}
+                entry = {"value": str(value)}
+            if interrupt_id:
+                entry["id"] = str(interrupt_id)
+            entries.append(entry)
+        return entries
+
+    @classmethod
+    def _interrupt_value(cls, raw: Any) -> dict[str, Any]:
+        entries = cls._interrupt_entries(raw)
+        if len(entries) == 1:
+            return entries[0]
+        return {"interrupts": entries}
 
     async def _stream_input(
         self,
@@ -543,6 +559,8 @@ class DeepAgentRuntime:
         answer_gate = VisibleTextGate()
         reasoning_gate = VisibleTextGate()
         active_message_id: str | None = None
+        pending_interrupts: list[dict[str, Any]] = []
+        seen_interrupt_ids: set[str] = set()
 
         try:
             stream = prepared.agent.astream(
@@ -677,17 +695,17 @@ class DeepAgentRuntime:
                     data = chunk.get("data")
                     if isinstance(data, dict):
                         if "__interrupt__" in data:
-                            checkpoint_id = await self.latest_checkpoint_id(prepared.thread_id)
-                            yield ChatEvent(
-                                type="run.interrupted",
-                                conversation_id=conversation.id,
-                                run_id=run_id,
-                                data={
-                                    "checkpoint_id": checkpoint_id,
-                                    "interrupt": self._interrupt_value(data["__interrupt__"]),
-                                },
-                            )
-                            return
+                            # Parallel subagents can surface separate update
+                            # chunks. Do not stop at the first interrupt:
+                            # collect all IDs before presenting a single review.
+                            for entry in self._interrupt_entries(data["__interrupt__"]):
+                                interrupt_id = entry.get("id")
+                                if interrupt_id and interrupt_id in seen_interrupt_ids:
+                                    continue
+                                if interrupt_id:
+                                    seen_interrupt_ids.add(interrupt_id)
+                                pending_interrupts.append(entry)
+                            continue
                         for node_name in data:
                             yield ChatEvent(
                                 type="agent.step",
@@ -699,6 +717,21 @@ class DeepAgentRuntime:
                                     "is_subagent": source != "main",
                                 },
                             )
+
+            if pending_interrupts:
+                # Interrupts have been checkpointed by LangGraph. The user
+                # must answer all currently pending branches before resuming.
+                checkpoint_id = await self.latest_checkpoint_id(prepared.thread_id)
+                yield ChatEvent(
+                    type="run.interrupted",
+                    conversation_id=conversation.id,
+                    run_id=run_id,
+                    data={
+                        "checkpoint_id": checkpoint_id,
+                        "interrupt": self._interrupt_value(pending_interrupts),
+                    },
+                )
+                return
 
             # A provider can finish before a normal, short prefix is fully
             # disambiguated. Emit the buffered safe remainder, if any.
@@ -791,7 +824,11 @@ class DeepAgentRuntime:
                 type="run.error",
                 conversation_id=conversation.id,
                 run_id=run_id,
-                data={"error": describe_gateway_failure(exc)},
+                data={
+                    "error": describe_gateway_failure(exc),
+                    **({"code": "upstream_disconnected", "retryable": True}
+                       if is_transient_gateway_disconnect(exc) else {}),
+                },
             )
 
     async def latest_checkpoint_id(self, thread_id: str) -> str | None:

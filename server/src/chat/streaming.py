@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from contextlib import aclosing
+
+logger = logging.getLogger(__name__)
 
 from collections.abc import (
     AsyncIterator,
@@ -33,6 +36,8 @@ async def sse_stream(
     source: AsyncIterator[BaseModel],
     *,
     heartbeat_seconds: float = 15.0,
+    conversation_id: str = "",
+    run_id: str = "",
 ) -> AsyncIterator[str]:
     """
     Keep the HTTP stream alive even while a long tool call
@@ -60,6 +65,7 @@ async def sse_stream(
     producer = asyncio.create_task(
         produce()
     )
+    terminal_sent = False
 
     try:
         while True:
@@ -77,11 +83,43 @@ async def sse_stream(
             if value is None:
                 break
 
-            if isinstance(
-                value,
-                BaseException,
-            ):
-                raise value
+            if isinstance(value, BaseException):
+                if terminal_sent:
+                    # An auxiliary cleanup hook can fail after completion;
+                    # never replace the already-delivered terminal event.
+                    logger.error(
+                        "Chat SSE cleanup failed after terminal event",
+                        exc_info=(type(value), value, value.__traceback__),
+                    )
+                    break
+                # Cancellation/system-exit must propagate; an unexpected
+                # application error can still be reported if FastAPI is alive.
+                if not isinstance(value, Exception):
+                    raise value
+                logger.error(
+                    "Chat SSE producer failed (conversation=%s run=%s)",
+                    conversation_id, run_id,
+                    exc_info=(type(value), value, value.__traceback__),
+                )
+                # Never dump arbitrary exceptions to the client: they can
+                # contain paths, SQL parameters, or authentication material.
+                yield encode_sse(
+                    "run.error",
+                    {
+                        "conversation_id": conversation_id,
+                        "run_id": run_id,
+                        "data": {
+                            "error": (
+                                "Trajecta encountered an unexpected backend error "
+                                "while streaming. Please retry; if it repeats, "
+                                "inspect the FastAPI backend log."
+                            ),
+                            "code": "chat_stream_internal_error",
+                            "retryable": True,
+                        },
+                    },
+                )
+                break
 
             payload = value.model_dump(
                 mode="json"
@@ -98,6 +136,8 @@ async def sse_stream(
                 event_name,
                 payload,
             )
+            if event_name in {"run.error", "run.cancelled", "run.interrupted", "message.completed"}:
+                terminal_sent = True
 
     finally:
         if not producer.done():

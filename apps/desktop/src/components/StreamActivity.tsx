@@ -16,8 +16,8 @@ import { isAtScrollBottom } from "./chat-scroll-policy";
 
 interface Props {
   stream: StreamState;
-  /** Restored activity is always initially collapsed; live activity closes
-   * automatically once the assistant starts answering or finishes the run. */
+  /** Restored activity is initially collapsed; live activity follows the
+   * run state unless the user has explicitly toggled it. */
   variant?: "live" | "saved";
 }
 
@@ -96,6 +96,15 @@ const ToolRow = memo(function ToolRow({ tool, running }: { tool: ToolActivity; r
   );
 });
 
+/** Automatic expansion must never override a reader's manual choice. */
+export function activityExpansionAfterUpdate(
+  previousExpanded: boolean,
+  manuallyToggled: boolean,
+  working: boolean,
+): boolean {
+  return manuallyToggled ? previousExpanded : working;
+}
+
 /** A single unobtrusive activity surface for reasoning and tool calls.
  * The final answer is rendered outside this component so it never gets buried
  * inside a growing tools / thinking card. */
@@ -105,6 +114,8 @@ export function StreamActivity({ stream, variant = "live" }: Props) {
   const working = live && stream.running && !answering;
   const hasDetails = Boolean(stream.reasoning.trim() || stream.tools.length);
   const [expanded, setExpanded] = useState(working);
+  const manuallyToggledRef = useRef(false);
+  const currentRunRef = useRef(stream.runId);
   const reasoningRef = useRef<HTMLDivElement>(null);
   const followReasoningRef = useRef(true);
   const lastTouchYRef = useRef<number | null>(null);
@@ -125,11 +136,20 @@ export function StreamActivity({ stream, variant = "live" }: Props) {
     }
   }, [stream.reasoning, working, expanded]);
 
-  // A new live run reopens the timeline even when the component is reused.
-  // Transitioning into the answer (or stopping) closes it automatically.
-  // Manual collapsing during one run is never overridden by new tokens.
+  // Auto-open while working and auto-close when answering, but only until
+  // the user clicks the arrow. Their explicit preference must survive later
+  // reasoning tokens and the transition into the final answer. Reset only
+  // when a genuinely new run begins.
   useEffect(() => {
-    setExpanded(working);
+    if (currentRunRef.current !== stream.runId) {
+      currentRunRef.current = stream.runId;
+      manuallyToggledRef.current = false;
+      setExpanded(working);
+    } else {
+      setExpanded((previous) => activityExpansionAfterUpdate(
+        previous, manuallyToggledRef.current, working,
+      ));
+    }
   }, [working, stream.runId]);
 
   // Empty restored activity is not useful. It previously left an always
@@ -156,7 +176,10 @@ export function StreamActivity({ stream, variant = "live" }: Props) {
         className="agent-activity__toggle"
         type="button"
         aria-expanded={expanded}
-        onClick={() => setExpanded((value) => !value)}
+        onClick={() => {
+          manuallyToggledRef.current = true;
+          setExpanded((value) => !value);
+        }}
       >
         <span className="agent-activity__symbol" aria-hidden="true">
           {working ? (

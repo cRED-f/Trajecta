@@ -11,6 +11,7 @@ candidates.
 from __future__ import annotations
 
 import httpx
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,8 @@ from server.src.tools.personal.process import ProcessManager
 from server.src.tools.personal.store import PersonalAgentStore
 from server.src.tools.personal.system import SystemTools
 from server.src.tools.personal.utility import UtilityTools
+
+logger = logging.getLogger(__name__)
 
 
 class PersonalToolProvider:
@@ -250,7 +253,17 @@ class PersonalToolProvider:
         @tool
         async def memory_save(key: str, content: str) -> str:
             """Save or replace a durable user/project fact for future sessions."""
-            await memory.semantic.aput(key, content)
+            try:
+                await memory.semantic.aput(key, content)
+            except Exception:
+                # Saving memory is helpful, but not a prerequisite for answering
+                # the user's question.  Keep the agent alive and explicitly
+                # report that persistence/indexing was not completed.
+                logger.exception("Nonfatal memory_save failure for key %r", key)
+                return (
+                    f"Memory save for {key!r} failed; persistence may be incomplete. "
+                    "Continue the user's task without assuming the fact was saved."
+                )
             return f"Saved memory {key!r}"
 
         @tool

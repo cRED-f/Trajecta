@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { StreamState } from "../types/chat";
-import { StreamActivity } from "./StreamActivity";
+import { StreamActivity, activityExpansionAfterUpdate } from "./StreamActivity";
 
 function activity(overrides: Partial<StreamState> = {}): StreamState {
   return {
@@ -51,6 +51,13 @@ describe("StreamActivity", () => {
     expect(html).toContain("web_search");
     expect(html).toContain("Running");
     expect(html).not.toContain("run-timeline__payload");
+  });
+
+  it("preserves manual expansion while the model starts answering or finishes", () => {
+    expect(activityExpansionAfterUpdate(true, true, false)).toBe(true);
+    expect(activityExpansionAfterUpdate(false, true, true)).toBe(false);
+    expect(activityExpansionAfterUpdate(true, false, false)).toBe(false);
+    expect(activityExpansionAfterUpdate(false, false, true)).toBe(true);
   });
 
   it("does not show an empty activity toggle while an answer is streaming", () => {

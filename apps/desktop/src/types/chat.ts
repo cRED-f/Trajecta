@@ -117,6 +117,8 @@ export interface ApprovalReviewConfig {
 }
 
 export interface ApprovalInterruptData {
+  /** LangGraph interrupt ID, required when parallel branches pause. */
+  id?: string;
   action_requests?: ApprovalActionRequest[];
   review_configs?: ApprovalReviewConfig[];
   interrupts?: ApprovalInterruptData[];

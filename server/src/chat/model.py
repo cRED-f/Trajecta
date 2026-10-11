@@ -110,7 +110,10 @@ class BifrostModelFactory:
             api_key=virtual_key,
             default_headers={"x-bf-vk": virtual_key},
             use_responses_api=False,
-            max_retries=0,
+            # A transient upstream disconnect can occur before the model sends
+            # its first response byte. Let the OpenAI client retry only these
+            # request-level failures; never replay the entire agent/tool graph.
+            max_retries=2,
             timeout=180,
         )
 

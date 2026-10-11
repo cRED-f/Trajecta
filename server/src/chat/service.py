@@ -72,6 +72,82 @@ class InvalidMessageOperation(RuntimeError):
     pass
 
 
+def _review_groups(interrupt_data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return review payloads in the same order as the desktop approval UI."""
+    groups: list[dict[str, Any]] = []
+    if interrupt_data.get("action_requests"):
+        groups.append(interrupt_data)
+    for item in interrupt_data.get("interrupts") or []:
+        if isinstance(item, dict):
+            groups.extend(_review_groups(item))
+    return groups
+
+
+def _build_resume_payload(
+    interrupt_data: dict[str, Any], decisions: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Pair each decision group with its interrupt ID for parallel HITL."""
+    groups = _review_groups(interrupt_data)
+    expected = sum(len(group.get("action_requests") or []) for group in groups)
+    if expected == 0:
+        raise InvalidMessageOperation("No reviewable action is waiting for approval")
+    if len(decisions) != expected:
+        raise InvalidMessageOperation(
+            f"Expected {expected} approval decision(s), received {len(decisions)}"
+        )
+
+    known_types = {"approve", "edit", "reject", "respond"}
+    offset = 0
+    resume_by_id: dict[str, dict[str, Any]] = {}
+    for group in groups:
+        actions = group.get("action_requests") or []
+        review_configs = group.get("review_configs") or []
+        allowed_by_action = {
+            str(item.get("action_name")): set(item.get("allowed_decisions") or [])
+            for item in review_configs
+            if isinstance(item, dict)
+        }
+        group_decisions = decisions[offset : offset + len(actions)]
+        for index, (action, decision) in enumerate(zip(actions, group_decisions)):
+            decision_type = str(decision.get("type") or "")
+            if decision_type not in known_types:
+                raise InvalidMessageOperation(
+                    f"Invalid approval decision type: {decision_type}"
+                )
+            if isinstance(action, dict):
+                action_name = str(action.get("name") or "")
+                allowed = allowed_by_action.get(action_name)
+                if allowed and decision_type not in allowed:
+                    raise InvalidMessageOperation(
+                        f"Decision {decision_type!r} is not allowed for {action_name!r}"
+                    )
+            if decision_type == "edit" and not isinstance(
+                decision.get("edited_action"), dict
+            ):
+                raise InvalidMessageOperation("edit decisions require edited_action")
+            if decision_type in {"reject", "respond"} and not str(
+                decision.get("message") or ""
+            ).strip():
+                raise InvalidMessageOperation(
+                    f"{decision_type} decisions require a message"
+                )
+        offset += len(actions)
+        interrupt_id = str(group.get("id") or "")
+        if len(groups) > 1:
+            if not interrupt_id:
+                raise InvalidMessageOperation(
+                    "One or more parallel approvals are missing LangGraph interrupt IDs; "
+                    "start a fresh run with the updated backend"
+                )
+            if interrupt_id in resume_by_id:
+                raise InvalidMessageOperation("Duplicate LangGraph interrupt ID")
+            resume_by_id[interrupt_id] = {"decisions": group_decisions}
+
+    # Single interrupts keep the classic Deep Agents payload for checkpoints
+    # written by older versions of Trajecta.
+    return resume_by_id if len(groups) > 1 else {"decisions": decisions}
+
+
 class WorkspaceBusy(InvalidMessageOperation):
     """The conversation is running or awaiting approval, so it cannot switch folders.
 
@@ -104,6 +180,7 @@ class PreparedResume:
     runtime: PreparedAgentRun
     cancel_event: asyncio.Event
     decisions: list[dict]
+    resume_payload: dict[str, Any]
     partial_text: str
     interaction_history: list[dict[str, Any]] = field(default_factory=list)
     prior_activity_events: list[dict[str, Any]] = field(default_factory=list)
@@ -1057,7 +1134,7 @@ class ChatService:
             async for event in self._runtime.stream_resume(
                 prepared=turn.runtime,
                 conversation=turn.conversation,
-                decisions=turn.decisions,
+                resume_payload=turn.resume_payload,
                 cancel_event=turn.cancel_event,
             ):
                 event.run_id = turn.run_id
@@ -1253,54 +1330,23 @@ class ChatService:
                 conversation_id, str(pending["user_message_id"])
             )
             interrupt = pending.get("interrupt_data") or {}
-            actions = interrupt.get("action_requests") or []
-            reviews = interrupt.get("review_configs") or []
-            expected = len(actions)
-            if expected and len(decisions) != expected:
-                raise InvalidMessageOperation(
-                    f"Expected {expected} approval decision(s), received {len(decisions)}"
-                )
-            allowed_by_action = {
-                str(item.get("action_name")): set(item.get("allowed_decisions") or [])
-                for item in reviews
-                if isinstance(item, dict)
-            }
-            known_types = {"approve", "edit", "reject", "respond"}
-            for index, decision in enumerate(decisions):
-                decision_type = str(decision.get("type") or "")
-                if decision_type not in known_types:
-                    raise InvalidMessageOperation(
-                        f"Invalid approval decision type: {decision_type}"
-                    )
-                if index < len(actions) and isinstance(actions[index], dict):
-                    action_name = str(actions[index].get("name") or "")
-                    allowed = allowed_by_action.get(action_name)
-                    if allowed and decision_type not in allowed:
-                        raise InvalidMessageOperation(
-                            f"Decision {decision_type!r} is not allowed for {action_name!r}"
-                        )
-                if decision_type == "edit" and not isinstance(
-                    decision.get("edited_action"), dict
-                ):
-                    raise InvalidMessageOperation("edit decisions require edited_action")
-                if decision_type in {"reject", "respond"} and not str(
-                    decision.get("message") or ""
-                ).strip():
-                    raise InvalidMessageOperation(f"{decision_type} decisions require a message")
-
+            resume_payload = _build_resume_payload(interrupt, decisions)
             history = list(interrupt.get("interaction_history") or [])
-            for index, action in enumerate(actions):
-                if (
-                    isinstance(action, dict)
-                    and action.get("name") == "ask_user"
-                    and index < len(decisions)
-                    and decisions[index].get("type") == "respond"
-                ):
-                    args = action.get("args") or {}
-                    history.append({
-                        "question": str(args.get("question") or ""),
-                        "answer": str(decisions[index].get("message") or ""),
-                    })
+            offset = 0
+            for group in _review_groups(interrupt):
+                for action in group.get("action_requests") or []:
+                    decision = decisions[offset]
+                    offset += 1
+                    if (
+                        isinstance(action, dict)
+                        and action.get("name") == "ask_user"
+                        and decision.get("type") == "respond"
+                    ):
+                        args = action.get("args") or {}
+                        history.append({
+                            "question": str(args.get("question") or ""),
+                            "answer": str(decision.get("message") or ""),
+                        })
             runtime = await self._runtime.prepare(
                 conversation=conversation,
                 thread_id=str(pending["thread_id"]),
@@ -1318,6 +1364,7 @@ class ChatService:
                 runtime=runtime,
                 cancel_event=cancel_event,
                 decisions=decisions,
+                resume_payload=resume_payload,
                 partial_text=str(pending.get("partial_text") or ""),
                 interaction_history=history,
                 prior_activity_events=list(interrupt.get("prior_activity_events") or []),

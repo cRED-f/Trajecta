@@ -51,34 +51,41 @@ class FTSIndex:
             "tier UNINDEXED, namespace UNINDEXED, key UNINDEXED, content, tokenize='porter')"
         )
 
-    async def add(self, memory_id: str, tier: str, namespace: str, key: str, content: str) -> None:
-        """Insert into memories + FTS in one transaction."""
+    async def upsert(self, memory_id: str, tier: str, namespace: str, key: str, content: str) -> None:
+        """Atomically insert or replace both memory and its FTS5 mirror.
+
+        A single upsert avoids the fetch-then-insert race when two chat runs
+        save the same memory key concurrently.
+        """
         now = datetime.now(UTC).isoformat()
         rowid = _fts_rowid(memory_id)
-        conn = self._db._conn
-        await conn.execute("BEGIN")
-        try:
+        async with self._db.transaction() as conn:
             await conn.execute(
                 "INSERT INTO memories (id, tier, namespace, key, content, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "tier=excluded.tier, namespace=excluded.namespace, key=excluded.key, "
+                "content=excluded.content, updated_at=excluded.updated_at",
                 (memory_id, tier, namespace, key, content, now, now),
             )
+            # FTS5 does not support the usual INSERT..ON CONFLICT syntax.
+            # Delete and replace under one transaction so search never sees
+            # an index row inconsistent with its canonical SQLite record.
+            await conn.execute("DELETE FROM memories_fts WHERE rowid = ?", (rowid,))
             await conn.execute(
                 "INSERT INTO memories_fts(rowid, tier, namespace, key, content) VALUES (?, ?, ?, ?, ?)",
                 (rowid, tier, namespace, key, content),
             )
-            await conn.execute("COMMIT")
-        except Exception:
-            await conn.execute("ROLLBACK")
-            raise
+
+    async def add(self, memory_id: str, tier: str, namespace: str, key: str, content: str) -> None:
+        """Insert (or idempotently replace) memory and its search index."""
+        await self.upsert(memory_id, tier, namespace, key, content)
 
     async def update(self, memory_id: str, content: str) -> None:
-        """Update memories + FTS in one transaction."""
+        """Update existing memory and FTS contents in one transaction."""
         now = datetime.now(UTC).isoformat()
         rowid = _fts_rowid(memory_id)
-        conn = self._db._conn
-        await conn.execute("BEGIN")
-        try:
+        async with self._db.transaction() as conn:
             await conn.execute(
                 "UPDATE memories SET content = ?, updated_at = ? WHERE id = ?",
                 (content, now, memory_id),
@@ -87,29 +94,13 @@ class FTSIndex:
                 "UPDATE memories_fts SET content = ? WHERE rowid = ?",
                 (content, rowid),
             )
-            await conn.execute("COMMIT")
-        except Exception:
-            await conn.execute("ROLLBACK")
-            raise
 
     async def remove(self, memory_id: str) -> None:
-        """Delete from memories + FTS in one transaction."""
+        """Delete both memory and FTS row in one transaction."""
         rowid = _fts_rowid(memory_id)
-        conn = self._db._conn
-        await conn.execute("BEGIN")
-        try:
-            await conn.execute(
-                "DELETE FROM memories_fts WHERE rowid = ?",
-                (rowid,),
-            )
-            await conn.execute(
-                "DELETE FROM memories WHERE id = ?",
-                (memory_id,),
-            )
-            await conn.execute("COMMIT")
-        except Exception:
-            await conn.execute("ROLLBACK")
-            raise
+        async with self._db.transaction() as conn:
+            await conn.execute("DELETE FROM memories_fts WHERE rowid = ?", (rowid,))
+            await conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
 
     async def fetch_memory(self, memory_id: str) -> dict[str, Any] | None:
         """Return the memory row for a given id."""

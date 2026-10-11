@@ -91,23 +91,13 @@ class SemanticMemory:
         memory_id = self._memory_id(key)
 
         if self._provider.fts is not None:
-            existing = await self._provider.fts.fetch_memory(
-                memory_id
+            await self._provider.fts.upsert(
+                memory_id,
+                "semantic",
+                "memories",
+                key,
+                content,
             )
-
-            if existing:
-                await self._provider.fts.update(
-                    memory_id,
-                    content,
-                )
-            else:
-                await self._provider.fts.add(
-                    memory_id,
-                    "semantic",
-                    "memories",
-                    key,
-                    content,
-                )
 
         await asyncio.to_thread(
             self._provider.vector.upsert,

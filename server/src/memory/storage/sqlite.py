@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -1457,19 +1459,50 @@ class SQLiteDatabase:
 
     # -- execution helpers -------------------------------------------------
 
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[Any]:
+        """Serialize an atomic multi-statement write with every other writer.
+
+        All Trajecta writers share one aiosqlite connection.  Explicit BEGIN
+        must hold the *same* lock as execute()/execute_returning(), otherwise
+        a concurrent write can open an implicit transaction before BEGIN.
+        """
+        assert self._conn is not None, "call open() first"
+        async with self._write_lock:
+            await self._conn.execute("BEGIN")
+            try:
+                yield self._conn
+                await self._conn.commit()
+            except BaseException:
+                # Roll back on cancellation too; never leave BEGIN active for
+                # the next chat turn or background learning job.
+                await self._conn.rollback()
+                raise
+
     async def execute(self, sql: str, params: tuple[Any, ...] = ()) -> Any:
         """Run a single SQL statement. Use `executescript` for multi-statement DDL."""
         assert self._conn is not None, "call open() first"
         async with self._write_lock:
-            cur = await self._conn.execute(sql, params)
-            await self._conn.commit()
-            return cur
+            try:
+                cur = await self._conn.execute(sql, params)
+                await self._conn.commit()
+                return cur
+            except BaseException:
+                # A failed write may have opened an implicit transaction.
+                # Without this rollback the next FTS BEGIN can fail.
+                await self._conn.rollback()
+                raise
 
     async def executescript(self, sql: str) -> None:
         """Run a multi-statement SQL script (DDL with several statements)."""
         assert self._conn is not None, "call open() first"
-        await self._conn.executescript(sql)
-        await self._conn.commit()
+        async with self._write_lock:
+            try:
+                await self._conn.executescript(sql)
+                await self._conn.commit()
+            except BaseException:
+                await self._conn.rollback()
+                raise
 
     async def execute_returning(
         self, sql: str, params: tuple[Any, ...] = ()
@@ -1477,11 +1510,15 @@ class SQLiteDatabase:
         """Run a mutating RETURNING statement and commit after consuming rows."""
         assert self._conn is not None, "call open() first"
         async with self._write_lock:
-            cur = await self._conn.execute(sql, params)
-            rows = await cur.fetchall()
-            await cur.close()
-            await self._conn.commit()
-            return [dict(row) for row in rows]
+            try:
+                cur = await self._conn.execute(sql, params)
+                rows = await cur.fetchall()
+                await cur.close()
+                await self._conn.commit()
+                return [dict(row) for row in rows]
+            except BaseException:
+                await self._conn.rollback()
+                raise
 
     async def fetch(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
         assert self._conn is not None, "call open() first"
