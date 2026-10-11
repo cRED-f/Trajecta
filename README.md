@@ -33,81 +33,9 @@
 
 ## Architecture
 
-```mermaid
-flowchart TB
-    subgraph DESKTOP["01 · TAURI DESKTOP"]
-        direction LR
-        UI["React UI<br/>Chat · Knowledge · Settings"]
-        HOST["Native desktop manager<br/>Tray · Startup · FastAPI supervision"]
-    end
+<img width="2908" height="1328" alt="Trajecta_System_Architecture" src="https://github.com/user-attachments/assets/505c90dd-3be5-4700-a9ab-87026a3997d5" />
+<img width="2908" height="1326" alt="Trajecta_Learning_Architecture" src="https://github.com/user-attachments/assets/1e7695c4-2f2f-4623-8cc9-b7b081c40c3c" />
 
-    subgraph CHAT["02 · FASTAPI · REAL-TIME CHAT"]
-        direction TB
-        API["Chat API"]
-        INPUT["Guardrails AI<br/>User prompt inspection"]
-        RET["Unified knowledge retrieval<br/>Facts · Episodes · Active skills"]
-        AGENT["LangChain Deep Agent"]
-        CONTEXT["Guardrails AI · Model boundary<br/>Untrusted tool-text checks<br/>Cloud-bound secrets / PII protection"]
-        MODEL["Bifrost gateway<br/>Provider routing · Fallback"]
-        POLICY{"Tool policy<br/>ALLOW / ASK / DENY"}
-        TOOLS["Local · Web · Files · MCP tools"]
-        EXEC["Local subprocess executor<br/>PowerShell · Python · Git · npm<br/>Host user permissions · Timeout"]
-        STREAM["SSE response stream"]
-
-        API --> INPUT --> RET --> AGENT
-        AGENT --> CONTEXT --> MODEL --> AGENT
-        AGENT --> POLICY
-        POLICY -->|Approved shell / Python| EXEC
-        POLICY -->|Other authorized actions| TOOLS
-        EXEC -->|Execution result| AGENT
-        TOOLS -->|Result| AGENT
-        AGENT --> STREAM
-    end
-
-    UI --> API
-    HOST -.->|Start / health / recovery| API
-    STREAM --> UI
-
-    subgraph LEARNING["03 · NON-BLOCKING AUTONOMOUS LEARNING"]
-        direction TB
-        EVENTS["Durable run & tool events"]
-        TASK["Logical task tracking<br/>Multi-turn · Cross-session"]
-        JOBS["Background learning queue"]
-        REFLECT["Bifrost reflection<br/>Privacy-protected context"]
-        SEM["Semantic memory<br/>Facts · Preferences"]
-        EP["Episodic memory<br/>Task history · Outcomes"]
-        CAND["Procedural candidates<br/>Reusable workflows"]
-        EVAL["Replay / held-out evaluation<br/>Guardrails AI structured-output checks"]
-        ACTIVE["Verified, versioned active skills"]
-        PENDING["Inactive candidates<br/>Insufficient evidence"]
-
-        EVENTS --> TASK --> JOBS --> REFLECT
-        REFLECT --> SEM
-        REFLECT --> EP
-        REFLECT --> CAND --> EVAL
-        EVAL -->|Passes gates| ACTIVE
-        EVAL -->|Not yet verified| PENDING
-    end
-
-    API -.-> EVENTS
-    TOOLS -.-> EVENTS
-    EXEC -.-> EVENTS
-
-    subgraph STORAGE["04 · PERSISTENT KNOWLEDGE"]
-        direction LR
-        SQL[("SQLite · FTS5<br/>Tasks · Events · Memories · Skill versions")]
-        VECTOR[("Qdrant<br/>Vector index")]
-    end
-
-    SEM --> SQL
-    EP --> SQL
-    ACTIVE --> SQL
-    SQL -.-> RET
-    SQL -.-> VECTOR
-    VECTOR -.-> RET
-```
-
-The chat response **does not wait for task classification, reflection, or skill evaluation**. Individual runs retain their event history, while logical tasks can continue across turns or sessions. Task association currently uses conservative heuristics rather than perfect semantic understanding. Inactivity can checkpoint a task without marking it successful.
 
 ## Install from a Git clone (Windows)
 
