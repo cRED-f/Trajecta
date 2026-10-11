@@ -915,6 +915,7 @@ export interface LearningOverview {
   items: LearnedExperience[];
   skills: SkillRegistryItem[];
   previous_candidates: SkillCandidate[];
+  skill_evidence?: { workspace_replay_enabled: boolean };
 }
 
 export const learningApi = {

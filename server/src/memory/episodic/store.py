@@ -15,6 +15,8 @@ import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from server.src.skills.representation.skill import OutcomeAssertion, OutcomeAssertionType
+
 from server.src.memory.storage.fts import _fts_query
 from server.src.output_safety import contains_internal_context
 from server.src.skills.trajectory_store import TrajectoryStore
@@ -66,6 +68,55 @@ class EpisodicMemory:
         item["outcome_verified"] = bool(item.get("outcome_verified"))
         return item
 
+    @staticmethod
+    def _verified_local_outcome(runs: list[dict[str, Any]]) -> dict[str, Any] | None:
+        """Link a user-confirmed task to *independently captured local state*.
+
+        A model response, a successful tool status, or thumbs-up alone does not
+        verify an outcome. Replayable file-state assertions plus an explicit
+        positive user rating provide both an intent check and an independent
+        observed-state check. No web/external side effects are certified here.
+        """
+        for run in runs[-1:]:
+            meta = run.get("metadata") or {}
+            if (run.get("outcome") != "success" or meta.get("user_feedback") != "success"
+                    or meta.get("outcome_capture_complete") is not True
+                    or meta.get("replay_fixture_complete") is not True
+                    or not meta.get("replay_fixture_id")):
+                continue
+            raw = meta.get("outcome_assertions")
+            if not isinstance(raw, list) or not raw or len(raw) > 200:
+                continue
+            try:
+                assertions = [OutcomeAssertion.model_validate(item) for item in raw]
+            except (ValueError, TypeError):
+                continue
+            # Only verifiable workspace modifications: never assume external
+            # services or an unchanged read-only result were proven correct.
+            if not all(a.path and a.path.startswith("/workspace/") and
+                       a.type in {
+                           OutcomeAssertionType.FILE_EXISTS,
+                           OutcomeAssertionType.FILE_NOT_EXISTS,
+                           OutcomeAssertionType.FILE_SHA256,
+                           OutcomeAssertionType.FILE_CHANGED_FROM_FIXTURE,
+                           OutcomeAssertionType.FILE_TEXT_SIMILARITY,
+                           OutcomeAssertionType.FILE_JSON_EQUALS,
+                           OutcomeAssertionType.PDF_SEMANTIC_EQUALS,
+                           OutcomeAssertionType.DOCX_SEMANTIC_EQUALS,
+                           OutcomeAssertionType.XLSX_SEMANTIC_EQUALS,
+                           OutcomeAssertionType.CSV_SEMANTIC_EQUALS,
+                           OutcomeAssertionType.ZIP_SEMANTIC_EQUALS,
+                           OutcomeAssertionType.IMAGE_SEMANTIC_EQUALS,
+                       } for a in assertions):
+                continue
+            return {
+                "verification": "user_confirmed_observed_local_state",
+                "verification_trajectory_id": run["id"],
+                "replay_fixture_id": meta["replay_fixture_id"],
+                "outcome_assertions": [a.model_dump(mode="json") for a in assertions],
+            }
+        return None
+
     async def consolidate(self, trajectory_id: str) -> dict[str, Any] | None:
         """Consolidate linked runs into ONE task episode, including later revisions.
 
@@ -112,7 +163,7 @@ class EpisodicMemory:
                     errors.append("agent run")
         task_goal = self._text(trace.get("task_goal") or trace.get("goal"), 800)
         substantial = any(len(str(t.get("metadata",{}).get("user_feedback_note") or "")) > 60
-                          or len(str(t.get("goal") or "")) >= 100
+                          or len(str(t.get("run_goal") or t.get("task_goal") or t.get("goal") or "")) >= 100
                           for t in finished)
         if not tools and not substantial and not errors:
             return None
@@ -124,14 +175,20 @@ class EpisodicMemory:
         feedback = (last.get("metadata") or {}).get("user_feedback")
         if feedback not in {"success", "failure"}:
             feedback = None
+        verified_state = self._verified_local_outcome(finished)
         summary = "\n".join([
             f"Task: {task_goal or 'Task with attachments'}",
             f"Observed runs: {len(finished)}",
             *([f"Tools: {', '.join(tools[:20])}"] if tools else []),
             *([f"Observed errors: {', '.join(dict.fromkeys(errors))}"] if errors else []),
             *([f"Latest observed response: {result}"] if result else []),
-            f"Outcome: {outcome}; not independently verified",
-        ])[:2500]
+            (f"Outcome: {outcome}; observed local state with explicit user confirmation"
+             if verified_state else f"Outcome: {outcome}; not independently verified"),
+        ])
+        if feedback:
+            summary += (f"\nRecorded outcome: {feedback} (explicit user feedback); "
+                        + ("local state captured" if verified_state else "not independently verified"))
+        summary = summary[:2500]
         task_meta = trace.get("task_metadata") or {}
         if not isinstance(task_meta, dict):
             task_meta = {}
@@ -142,22 +199,25 @@ class EpisodicMemory:
                     "event_refs": evidence_refs, "tool_result_count": total_results,
                     "reported_tool_errors": len(errors), "verification": "unverified",
                     "user_feedback": feedback}
+        if verified_state:
+            evidence.update(verified_state)
         current = datetime.now(UTC).isoformat()
         existing = await db.fetchone("SELECT * FROM episodes WHERE logical_task_id=?", (task_id,))
         if existing:
             await db.execute(
-                """UPDATE episodes SET summary=?,outcome=?,tool_names=?,evidence=?,updated_at=?
+                """UPDATE episodes SET summary=?,outcome=?,outcome_verified=?,tool_names=?,evidence=?,updated_at=?
                    WHERE id=?""",
-                (summary, outcome, json.dumps(tools), json.dumps(evidence), current, existing["id"]),
+                (summary, outcome, int(bool(verified_state)), json.dumps(tools),
+                 json.dumps(evidence), current, existing["id"]),
             )
         else:
             await db.execute(
                 """INSERT OR IGNORE INTO episodes
                    (id,source_trajectory_id,logical_task_id,user_id,scope,thread_id,
                     goal,summary,outcome,outcome_verified,tool_names,evidence,created_at,updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,0,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (eid, finished[0]["id"], task_id, user_id, scope, trace.get("thread_id"),
-                 task_goal or "Task with attachments", summary, outcome, json.dumps(tools),
+                 task_goal or "Task with attachments", summary, outcome, int(bool(verified_state)), json.dumps(tools),
                  json.dumps(evidence), current, current),
             )
         try:

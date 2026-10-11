@@ -758,6 +758,7 @@ class ChatService:
                 "conversation_id": turn.conversation.id,
                 "branch_id": turn.branch.id,
                 "user_message_id": turn.user_message.id,
+                "workspace_path": turn.conversation.metadata.get(METADATA_KEY),
             },
             )
         try:

@@ -237,12 +237,12 @@ class ReplayFixtureStore:
             )
             return []
 
-        if not fixture.complete:
+        if not fixture.complete or not fixture.metadata.get("workspace_root_captured"):
             await self._attach_outcome(
                 trajectory_id,
                 assertions=[],
                 complete=False,
-                metadata={"reason": "initial replay fixture incomplete"},
+                metadata={"reason": "complete initial workspace snapshot required"},
             )
             return []
 
@@ -313,6 +313,8 @@ class ReplayFixtureStore:
         max_file_bytes = self._config.max_file_mb * 1024 * 1024
         max_total_bytes = self._config.max_total_mb * 1024 * 1024
         seen_virtual: set[str] = set()
+        selected = metadata.get("workspace_path")
+        workspace_root = Path(selected).expanduser().resolve() if selected else self._workspace_root
 
         def add_file(host_path: Path, virtual_path: str) -> bool:
             nonlocal total_bytes, complete
@@ -374,9 +376,9 @@ class ReplayFixtureStore:
 
         # Capture bounded workspace.
         if self._config.capture_workspace:
-            if self._workspace_root.exists():
-                for host_path in self._iter_workspace_files(self._workspace_root):
-                    relative = host_path.relative_to(self._workspace_root).as_posix()
+            if workspace_root.exists():
+                for host_path in self._iter_workspace_files(workspace_root):
+                    relative = host_path.relative_to(workspace_root).as_posix()
                     add_file(host_path, f"/workspace/{relative}")
             else:
                 complete = False
@@ -408,6 +410,7 @@ class ReplayFixtureStore:
             metadata={
                 **metadata,
                 "workspace_root_captured": self._config.capture_workspace,
+                "captured_workspace_path": str(workspace_root),
             },
         )
 
@@ -423,10 +426,11 @@ class ReplayFixtureStore:
         }
 
         final: dict[str, tuple[Path, str]] = {}
+        workspace_root = Path(fixture.metadata.get("captured_workspace_path") or self._workspace_root).resolve()
 
-        if self._workspace_root.exists():
-            for host_path in self._iter_workspace_files(self._workspace_root):
-                relative = host_path.relative_to(self._workspace_root).as_posix()
+        if workspace_root.exists():
+            for host_path in self._iter_workspace_files(workspace_root):
+                relative = host_path.relative_to(workspace_root).as_posix()
                 virtual = f"/workspace/{relative}"
                 digest = self._sha256(host_path)
                 final[self._normalise_virtual_path(virtual)] = (host_path, digest)

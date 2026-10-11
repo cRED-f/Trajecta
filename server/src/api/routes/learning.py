@@ -81,6 +81,10 @@ async def learning_overview(request: Request):
         "items": await _learner(request).list(limit=200),
         "skills": await service.repository.list_registered(),
         "previous_candidates": await service.repository.list_candidates(limit=200),
+        "skill_evidence": {
+            "workspace_replay_enabled": bool(service._settings.skills.fixtures.enabled
+                                              and service._settings.skills.fixtures.capture_workspace),
+        },
     }
 
 

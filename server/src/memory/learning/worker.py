@@ -361,6 +361,9 @@ class ContinuousLearningWorker:
                     candidate = await finder.discover(job['task_id'],traces,insight)
                     if candidate:
                         candidates.append(candidate)
+            # Later successful tasks can provide held-out evidence for older
+            # candidates even when the current reflection is only a lesson.
+            await finder.refresh_pending()
         await self.db.execute('UPDATE tasks SET checkpoint_seq=? WHERE id=? AND checkpoint_seq<?',
                               (job['watermark'],job['task_id'],job['watermark']))
         return {'summary':EpisodicMemory._text(reflection.summary,600),
