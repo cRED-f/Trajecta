@@ -168,3 +168,40 @@ async def test_each_chunk_streams_as_a_delta_before_model_step_completes() -> No
     # them to the assistant response.
     deltas = [event for event in collected if event.type == "message.delta"]
     assert all(event.data.get("source") == "main" for event in deltas)
+
+
+async def test_recoverable_web_404_is_activity_error_not_run_error() -> None:
+    """A missing page must not prevent subsequent model output or completion."""
+    import json
+    from langchain_core.messages import ToolMessage
+
+    missing_page = ToolMessage(
+        name="web_extract",
+        tool_call_id="web-1",
+        content=json.dumps({
+            "ok": False,
+            "recoverable": True,
+            "reason": "HTTP 404",
+            "message": "Continue with another source",
+        }),
+    )
+    events = [
+        {"type": "messages", "ns": (), "data": (missing_page, {})},
+        {"type": "messages", "ns": (), "data": (
+            AIMessageChunk(content="The original page is unavailable; here are other universities."),
+            {},
+        )},
+    ]
+    collected: list[Any] = []
+    await _consume(_runtime(), _prepared(FakeAgent(events)), asyncio.Event(), collected)
+
+    assert "run.finished" in [event.type for event in collected]
+    assert "run.error" not in [event.type for event in collected]
+    failures = [event for event in collected if event.type == "tool.result"]
+    assert len(failures) == 1
+    assert failures[0].data["status"] == "error"
+    assert "other universities" in "".join(
+        event.data["text"] for event in collected if event.type == "message.delta"
+    )
+    finished = next(event for event in collected if event.type == "run.finished")
+    assert finished.data["tool_errors"] == 1

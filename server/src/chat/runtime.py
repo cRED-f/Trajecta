@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import uuid
@@ -92,7 +93,9 @@ Web research failure recovery:
   findings to that alternative URL, not the original page.
 - If web_extract fails completely, use web_search to find
   independent sources and web_extract to inspect them.
-- Never repeatedly request a URL that returned 403.
+- Never repeatedly request an exact URL that returned 403 or 404.
+- A failed web tool is an observation, not an instruction to stop;
+  continue useful research, using a bounded number of alternative searches.
 - Treat search snippets as leads, not verified article content.
 - Do not invent the contents of an inaccessible page.
 - If no alternatives work, explain what could not be
@@ -642,7 +645,20 @@ class DeepAgentRuntime:
                             )
                         # Subagent output never enters the main answer.
                     elif isinstance(token, ToolMessage):
-                        if getattr(token, "status", None) == "error":
+                        # Recoverable web failures return ordinary tool
+                        # observations (so a subagent never aborts the graph).
+                        # Still mark them as failed in the activity timeline.
+                        status = getattr(token, "status", None)
+                        if token.name in {"web_extract", "web_search", "url_metadata", "rss_read"}:
+                            content = token.content
+                            if isinstance(content, str):
+                                try:
+                                    content = json.loads(content)
+                                except (json.JSONDecodeError, ValueError):
+                                    pass
+                            if isinstance(content, dict) and content.get("ok") is False:
+                                status = "error"
+                        if status == "error":
                             tool_errors += 1
                         yield ChatEvent(
                             type="tool.result",
@@ -653,7 +669,7 @@ class DeepAgentRuntime:
                                 "name": token.name,
                                 "tool_call_id": token.tool_call_id,
                                 "content": str(token.content)[:10_000],
-                                "status": getattr(token, "status", None),
+                                "status": status,
                             },
                         )
 

@@ -10,12 +10,12 @@ candidates.
 
 from __future__ import annotations
 
-import json
+import httpx
 from pathlib import Path
 from typing import Any
 
 from deepagents import FilesystemPermission
-from langchain_core.tools import BaseTool, ToolException, tool
+from langchain_core.tools import BaseTool, tool
 
 from server.src.config import Settings
 from server.src.guardrails.policy import (
@@ -506,32 +506,58 @@ class PersonalToolProvider:
             return await store.mark_notification_read(notification_id)
 
         # ---- Free web/network -----------------------------------------
+        def web_failure(name: str, exc: httpx.HTTPError) -> dict[str, Any]:
+            """Return a tool observation, not a fatal agent exception."""
+            status = (
+                exc.response.status_code
+                if isinstance(exc, httpx.HTTPStatusError)
+                else None
+            )
+            return {
+                "ok": False,
+                "recoverable": True,
+                "tool": name,
+                "reason": f"HTTP {status}" if status is not None else type(exc).__name__,
+                "message": (
+                    "This web source is unavailable. Try a different URL or "
+                    "search source; continue the task and disclose any "
+                    "information that could not be verified."
+                ),
+            }
+
         @tool
-        async def web_search(query: str, max_results: int = 8) -> list[dict[str, str]]:
-            """Search the public web using configured self-hosted SearXNG or a free best-effort fallback."""
-            return await network.web_search(query, max_results=max_results)
+        async def web_search(query: str, max_results: int = 8) -> list[dict[str, str]] | dict[str, Any]:
+            """Search the public web; network failure is nonfatal to the agent."""
+            try:
+                return await network.web_search(query, max_results=max_results)
+            except httpx.HTTPError as exc:
+                return web_failure("web_search", exc)
 
         @tool
         async def web_extract(url: str, max_chars: int = 40_000) -> dict[str, Any]:
-            """Fetch a page and recover using alternative web sources."""
-            result = await network.web_extract(url, max_chars=max_chars)
-            if not result.get("ok", True):
-                raise ToolException(json.dumps(result, ensure_ascii=False))
-            return result
-
-        # Convert handled ToolException into an error ToolMessage.
-        # The agent can reason about it and keep executing.
-        web_extract.handle_tool_error = True
+            """Read a page with bounded fallback; missing pages cannot end the run."""
+            try:
+                # network.web_extract already searches for alternative URLs
+                # and returns {ok: False} when none are available.
+                return await network.web_extract(url, max_chars=max_chars)
+            except httpx.HTTPError as exc:
+                return web_failure("web_extract", exc)
 
         @tool
         async def rss_read(url: str, max_items: int = 20) -> dict[str, Any]:
-            """Read an RSS/Atom feed without a paid API."""
-            return await network.rss_read(url, max_items=max_items)
+            """Read an RSS/Atom feed; inaccessible feeds are nonfatal."""
+            try:
+                return await network.rss_read(url, max_items=max_items)
+            except httpx.HTTPError as exc:
+                return web_failure("rss_read", exc)
 
         @tool
         async def url_metadata(url: str) -> dict[str, Any]:
-            """Inspect URL status, final URL, content type, size and title metadata."""
-            return await network.url_metadata(url)
+            """Inspect URL metadata; missing URLs are nonfatal."""
+            try:
+                return await network.url_metadata(url)
+            except httpx.HTTPError as exc:
+                return web_failure("url_metadata", exc)
 
         @tool
         async def http_request(

@@ -102,18 +102,42 @@ class NetworkTools:
         url: str,
         original_host: str | None,
     ) -> bool:
-        """Filter obvious unsafe or duplicate search targets."""
+        """Allow updated official URLs, but never an unsafe private target.
+
+        A 404 often means the *path* moved on the same official website.
+        Rejecting every URL on the original host prevents that recovery.
+        ``original_host`` stays in the signature for existing callers.
+        """
         parsed = urlparse(url)
         host = parsed.hostname or ""
         if parsed.scheme not in {"http", "https"} or not host:
-            return False
-        if host.lower() == (original_host or "").lower():
             return False
         if host.lower() == "localhost" or host.lower().endswith(
             (".localhost", ".local")
         ):
             return False
         return await NetworkTools._host_is_public(host)
+
+    @staticmethod
+    def _fallback_queries(url: str) -> list[str]:
+        """Search for updated official URLs first, then other sources.
+
+        Search providers sometimes ignore site: filtering; retaining a broad
+        independent query protects against that and against missing results.
+        """
+        parsed = urlparse(url)
+        topic = NetworkTools._fallback_query(url)
+        host = parsed.hostname or ""
+        if not host:
+            return [topic]
+        # _fallback_query can include the host when the final path segment
+        # is short (e.g. /old/ai); remove that duplication.
+        site_terms = topic.removeprefix(host).strip() or re.sub(
+            r"[^\w]+", " ", unquote(parsed.path)
+        ).strip()
+        if not site_terms:
+            return [host]
+        return [f"site:{host} {site_terms}"[:200], f"{host} {site_terms}"[:200]]
 
     async def _assert_public_request(self, request: httpx.Request) -> None:
         """Reject a fetch whose target does not resolve to a public address."""
@@ -284,7 +308,7 @@ class NetworkTools:
                 )
                 response.raise_for_status()
                 payload = response.json()
-                return [
+                results = [
                     {
                         "title": str(item.get("title") or ""),
                         "url": str(item.get("url") or ""),
@@ -293,6 +317,11 @@ class NetworkTools:
                     }
                     for item in payload.get("results", [])[:limit]
                 ]
+                if results:
+                    return results
+                # A valid empty SearXNG response is still an unsuccessful
+                # search, so try the public provider before giving up.
+                logger.info("SearXNG returned no results; trying public search")
             except (
                 httpx.HTTPError,
                 ValueError,
@@ -406,57 +435,78 @@ class NetworkTools:
         except httpx.RequestError:
             reason = "connection_error"
 
-        # The original source failed. Find another.
-        query = self._fallback_query(url)
-        alternatives: list[dict[str, str]] = []
-        search_error: str | None = None
-        try:
-            alternatives = await self.web_search(query, max_results=8)
-        except (httpx.HTTPError, RuntimeError, ValueError) as exc:
-            search_error = type(exc).__name__
-            logger.warning("Fallback search for %s failed (%s)", url, search_error)
-
+        # Never revisit the exact failed URL. A newer path on the same
+        # official host is allowed and preferred to third-party sources.
+        queries = self._fallback_queries(url)
+        search_errors: list[str] = []
+        visited: set[str] = {url.rstrip("/").lower()}
         original_host = urlparse(url).hostname
-        visited: set[str] = set()
         attempted = 0
-        for item in alternatives:
-            # Bounded recovery: at most a few distinct hosts, and never the
-            # page that just failed. This is not a retry loop.
-            if attempted >= 3:
+        max_attempts = 4
+        for query in queries[:2]:
+            if attempted >= max_attempts:
                 break
-            candidate = self._normalize_page_url(str(item.get("url") or ""))
-            if not candidate or candidate in visited:
-                continue
-            visited.add(candidate)
-            if not await self._safe_alternative_url(candidate, original_host):
-                continue
-            attempted += 1
+            attempted_for_query = 0
             try:
-                alternative = await self._alt_client.get(candidate)
-                alternative.raise_for_status()
-            except httpx.HTTPError:
+                alternatives = await self.web_search(query, max_results=8)
+            except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+                search_errors.append(type(exc).__name__)
+                logger.warning(
+                    "Fallback search for %s failed (%s)", url, type(exc).__name__
+                )
                 continue
-            return {
-                "ok": True,
-                "recovered": True,
-                "reason": reason,
-                "original_url": url,
-                "search_query": query,
-                **self._extract_page(alternative, limit),
-            }
+
+            # Prioritize corrected first-party links, while allowing
+            # independent sources when the official site no longer serves it.
+            alternatives = sorted(
+                alternatives,
+                key=lambda item: urlparse(
+                    self._normalize_page_url(str(item.get("url") or ""))
+                ).hostname != original_host,
+            )
+            for item in alternatives:
+                # Reserve attempts for the independent second search instead
+                # of spending the whole budget on broken same-site links.
+                if attempted >= max_attempts or attempted_for_query >= 2:
+                    break
+                candidate = self._normalize_page_url(str(item.get("url") or ""))
+                canonical = candidate.rstrip("/").lower()
+                if not candidate or canonical in visited:
+                    continue
+                visited.add(canonical)
+                if not await self._safe_alternative_url(candidate, original_host):
+                    continue
+                attempted += 1
+                attempted_for_query += 1
+                try:
+                    alternative = await self._alt_client.get(candidate)
+                    alternative.raise_for_status()
+                except httpx.HTTPError:
+                    continue
+                return {
+                    "ok": True,
+                    "recovered": True,
+                    "reason": reason,
+                    "original_url": url,
+                    "search_query": query,
+                    **self._extract_page(alternative, limit),
+                }
 
         return {
             "ok": False,
+            "recoverable": True,
             "recovered": False,
             "reason": reason,
             "url": url,
-            "search_query": query,
-            "search_error": search_error,
+            "search_query": queries[0],
+            "search_queries": queries,
+            "search_error": ", ".join(search_errors) or None,
             "alternatives_attempted": attempted,
             "message": (
-                f"{url} failed ({reason}) and no accessible alternative "
-                "source was found. Say what could not be verified instead "
-                "of guessing at the page's contents."
+                "This page is unavailable and no alternative page could be "
+                "verified automatically. Continue the user's research with "
+                "other sources and give a useful answer based on verified "
+                "evidence; do not invent this page's contents."
             ),
         }
 
