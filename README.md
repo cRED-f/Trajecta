@@ -16,7 +16,7 @@
 
 Trajecta is a Tauri 2 desktop application with a Python/FastAPI agent backend. It can execute multi-step tasks, search stored knowledge, and learn from prior interactions while keeping sensitive tool actions behind explicit permissions.
 
-- **Act:** LangChain Deep Agents, local tools, MCP integrations, native Windows sandboxed execution, and user-selected models.
+- **Act:** LangChain Deep Agents, local tools, MCP integrations, Docker-free local command execution, and user-selected models.
 - **Remember:** Saved facts, prior task experiences, document context, and reusable skills.
 - **Learn:** A durable background worker links related chat runs into logical tasks and generates evidence-backed insights and skill candidates.
 - **Protect:** Guardrails AI checks prompt injection, untrusted tool content, and sensitive context before cloud-model calls.
@@ -26,6 +26,7 @@ Trajecta is a Tauri 2 desktop application with a Python/FastAPI agent backend. I
 
 - **Desktop chat:** SSE streaming, expandable reasoning/tool activity, branching and regeneration, message editing, and stop/cancellation handling.
 - **Tools & workspaces:** Local files, web and document tools, MCP integrations, and per-conversation folder selection.
+- **Docker-free local commands:** Deep Agents `execute` uses the installed Windows PowerShell and other tools via Python subprocess, with terminal approval and timeouts. **Commands are not sandboxed:** they can access host files and network resources as the current user.
 - **Knowledge Center:** Semantic memory (facts/preferences), episodic memory (task history), and procedural memory (versioned skills).
 - **Autonomous learning:** Multi-turn task tracking, background reflection, procedural candidate synthesis, and evidence-aware consolidation without routine review prompts.
 - **Skill quality controls:** Independent replay/held-out evaluation and safety checks gate activation; unverified candidates remain inactive.
@@ -54,15 +55,15 @@ flowchart TB
         MODEL["Bifrost gateway<br/>Configured LLM"]
         POLICY{"Tool policy<br/>ALLOW / ASK / DENY"}
         TOOLS["Local · Web · Files · MCP tools"]
-        SANDBOX["Native Windows sandbox<br/>AppContainer · Filesystem & network isolation<br/>Job Object · CPU / RAM / timeout"]
+        EXEC["Local subprocess executor<br/>PowerShell · Python · Git · npm<br/>Host user permissions · Timeout"]
         STREAM["SSE response stream"]
 
         API --> INPUT --> RET --> AGENT
         AGENT --> CONTEXT --> MODEL --> AGENT
         AGENT --> POLICY
-        POLICY -->|Approved shell / Python| SANDBOX
+        POLICY -->|Approved shell / Python| EXEC
         POLICY -->|Other authorized actions| TOOLS
-        SANDBOX -->|Execution result| AGENT
+        EXEC -->|Execution result| AGENT
         TOOLS -->|Result| AGENT
         AGENT --> STREAM
     end
@@ -94,7 +95,7 @@ flowchart TB
 
     API -.-> EVENTS
     TOOLS -.-> EVENTS
-    SANDBOX -.-> EVENTS
+    EXEC -.-> EVENTS
 
     subgraph STORAGE["04 · PERSISTENT KNOWLEDGE"]
         direction LR
@@ -118,7 +119,7 @@ The chat response **does not wait for task classification, reflection, or skill 
 
 - Windows 10/11 and Microsoft Edge WebView2.
 - Git, Node.js 22+, pnpm, and [uv](https://docs.astral.sh/uv/).
-- Rust toolchain with the MSVC target, Visual Studio C++ build tools and Windows SDK (required to compile the native AppContainer helper); see [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/).
+- Rust toolchain with the MSVC target and Visual Studio C++ build tools (for Tauri); see [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/).
 - Internet access to download dependencies on first installation. `uv` provisions Python 3.11 for the managed backend.
 - A reachable **Bifrost** gateway and configured model credentials for AI chat. It is **not bundled/downloaded automatically** by the source installer.
 
@@ -140,13 +141,14 @@ The installed application uses an isolated writable directory rather than storin
 ```text
 %LOCALAPPDATA%\ai.trajecta.desktop\
 ├── runtime\Trajecta.exe         # Locally compiled desktop executable
-├── runtime\trajecta-native-sandbox.exe  # AppContainer + Job Object command launcher
 ├── runtime\venv\                # Managed Python backend
 ├── data\.trajecta\              # Conversations, SQLite, Qdrant, skills and uploads
 ├── logs\backend.log             # FastAPI startup/runtime diagnostics
 ├── desktop.json                 # Desktop preferences
 └── install.json                 # Git checkout reference
 ```
+
+**Settings → Local Execution** lets you enable/disable command execution and configure a timeout. Commands run directly on the host with your user permissions: the selected folder is a working directory, **not** a filesystem or network restriction. Keep **Permissions → Run commands** on ASK.
 
 **Settings → Desktop & Application → Check for updates** inspects the configured Git branch; **Update & restart** pulls and rebuilds from the clone. Commit or stash local changes first. The updater keeps previous runtime artifacts as rollback backups and retains production data, but schema migrations and data backups still require care.
 
@@ -168,7 +170,6 @@ Trajecta/
 │   ├── tools/               # Local tools and MCP integrations
 │   └── llm_gateway/         # Bifrost integration
 ├── config/                  # Defaults and guardrail rules
-├── native/windows/          # Windows AppContainer + Job Object helper
 ├── pyproject.toml
 └── SOURCE_INSTALL.md
 ```
@@ -180,7 +181,6 @@ Trajecta/
 - [Memory](server/src/memory/REQUIREMENTS.md) · [Skills](server/src/skills/REQUIREMENTS.md)
 - [Guardrails](server/src/guardrails/REQUIREMENTS.md) · [Tools](server/src/tools/REQUIREMENTS.md)
 - [LLM gateway](server/src/llm_gateway/REQUIREMENTS.md) · [Observability](server/src/observability/REQUIREMENTS.md)
-- [Native sandbox](native/windows/README.md)
 
 ## License
 

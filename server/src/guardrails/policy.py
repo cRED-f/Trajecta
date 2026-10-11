@@ -38,7 +38,7 @@ PERMISSIONS: dict[str, dict[str, str]] = {
     },
     "terminal": {
         "title": "Run commands",
-        "description": "Execute sandbox commands and local processes.",
+        "description": "Execute commands directly on this computer (no sandbox isolation).",
         "default": "ask",
     },
     "browser-actions": {

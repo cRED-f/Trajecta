@@ -55,6 +55,9 @@ pub fn run() {
                         std::thread::sleep(Duration::from_secs(4));
                         if monitor.state::<DesktopProcesses>().stopping.load(Ordering::Relaxed) { break; }
                         let _ = backend_health(&monitor);
+                        if let Ok(base) = app_base(&monitor) {
+                            ensure_bifrost(&base, &monitor.state::<DesktopProcesses>());
+                        }
                     }
                 });
             }
@@ -97,6 +100,8 @@ use tauri::Manager;
 struct DesktopProcesses {
     backend: Mutex<Option<Child>>,
     bifrost: Mutex<Option<Child>>,
+    bifrost_error: Mutex<Option<String>>,
+    bifrost_restart_attempts: Mutex<u8>,
     error: Mutex<Option<String>>,
     restart_attempts: Mutex<u8>,
     stopping: AtomicBool,
@@ -136,6 +141,99 @@ fn show_main_window(app: &tauri::AppHandle) {
 fn service_online(port: u16) -> bool {
     let addr = SocketAddr::from(([127,0,0,1], port));
     TcpStream::connect_timeout(&addr, Duration::from_millis(250)).is_ok()
+}
+// Do not confuse an unrelated TCP listener on 8080 with a healthy Bifrost.
+fn bifrost_ready() -> bool {
+    let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
+    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(350)) else { return false; };
+    if stream.set_read_timeout(Some(Duration::from_millis(600))).is_err() { return false; }
+    if stream.write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n").is_err() { return false; }
+    let mut result = [0_u8; 256];
+    let Ok(n) = stream.read(&mut result) else { return false; };
+    let response = String::from_utf8_lossy(&result[..n]);
+    response.starts_with("HTTP/1.1 200 ") || response.starts_with("HTTP/1.0 200 ")
+}
+
+fn bifrost_setup_token(base: &std::path::Path) -> Option<String> {
+    let token = fs::read_to_string(base.join("data/bifrost/setup-token")).ok()?;
+    let token = token.trim();
+    (token.len() == 64 && token.chars().all(|c| c.is_ascii_hexdigit())).then(|| token.to_owned())
+}
+
+// Return a valid argv for the official pinned npm gateway launcher.
+fn bifrost_launch_command(base: &std::path::Path) -> Result<Option<Command>, String> {
+    let install = base.join("runtime/bifrost");
+    let manifest = install.join("launcher.json");
+    if !manifest.exists() { return Ok(None); }
+    let raw = fs::read(&manifest).map_err(|e| format!("Bifrost manifest: {e}"))?;
+    let info: serde_json::Value = serde_json::from_slice(&raw).map_err(|e| format!("Bifrost manifest: {e}"))?;
+    let entry = info.get("launcher").and_then(|v| v.as_str()).ok_or("Bifrost launcher is missing")?;
+    let relative = std::path::Path::new(entry);
+    if relative.is_absolute() || relative.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+        return Err("Unsafe Bifrost launcher path".into());
+    }
+    let script = install.join(relative);
+    if !script.is_file() { return Err("Bifrost launcher is missing. Re-run pnpm trajecta:install".into()); }
+    let node = info.get("node_executable").and_then(|v| v.as_str())
+        .filter(|v| std::path::Path::new(v).is_file()).unwrap_or("node");
+    let version = info.get("transport_version").and_then(|v| v.as_str()).unwrap_or("v2.2.6");
+    if !version.starts_with('v') || !version[1..].chars().all(|c| c.is_ascii_digit() || c == '.') {
+        return Err("Invalid Bifrost transport version".into());
+    }
+    let bifrost_data = base.join("data/bifrost");
+    fs::create_dir_all(&bifrost_data).map_err(|e| e.to_string())?;
+    let mut cmd = Command::new(node);
+    cmd.arg(script).arg("--transport-version").arg(version)
+        .arg("-host").arg("127.0.0.1").arg("-port").arg("8080")
+        .arg("-app-dir").arg(&bifrost_data).current_dir(&bifrost_data);
+    if let Some(token) = bifrost_setup_token(base) { cmd.env("BIFROST_SETUP_TOKEN", token); }
+    Ok(Some(cmd))
+}
+
+fn ensure_bifrost(base: &std::path::Path, processes: &DesktopProcesses) {
+    let mut guard = processes.bifrost.lock().unwrap();
+    if let Some(child) = guard.as_mut() {
+        match child.try_wait() {
+            Ok(None) => return, // Initial binary download can take time; don't duplicate it.
+            Ok(Some(status)) => {
+                *guard = None;
+                *processes.bifrost_error.lock().unwrap() = Some(format!("Bifrost exited ({status}). See logs/bifrost.log"));
+            }
+            Err(error) => {
+                *guard = None;
+                *processes.bifrost_error.lock().unwrap() = Some(format!("Bifrost status error: {error}"));
+            }
+        }
+    }
+    if bifrost_ready() {
+        *processes.bifrost_error.lock().unwrap() = None;
+        return; // Externally managed gateway: never kill or replace it.
+    }
+    if service_online(8080) {
+        *processes.bifrost_error.lock().unwrap() = Some("Port 8080 is occupied by a service that is not responding as Bifrost".into());
+        return;
+    }
+    let mut attempts = processes.bifrost_restart_attempts.lock().unwrap();
+    if *attempts >= 3 { return; } // Prevent endlessly restarting a broken installation.
+    let cmd = match bifrost_launch_command(base) {
+        Ok(Some(command)) => command,
+        Ok(None) => {
+            *processes.bifrost_error.lock().unwrap() = Some("Bifrost is not installed. Re-run pnpm trajecta:install".into());
+            return;
+        }
+        Err(error) => {
+            *processes.bifrost_error.lock().unwrap() = Some(error);
+            return;
+        }
+    };
+    *attempts += 1;
+    match launch_process(cmd, base.join("logs/bifrost.log")) {
+        Ok(child) => {
+            *guard = Some(child);
+            *processes.bifrost_error.lock().unwrap() = None;
+        }
+        Err(error) => *processes.bifrost_error.lock().unwrap() = Some(error),
+    }
 }
 
 // A successful health response is not proof that a backend belongs to this
@@ -223,16 +321,7 @@ fn start_services(app: &tauri::AppHandle) -> Result<(), String> {
         *processes.error.lock().unwrap() = Some(message.clone());
         return Err(message);
     }
-    // Bifrost is optional: manage an installed binary, otherwise use existing gateway URL.
-    let bifrost_exe = base.join("runtime/bifrost/bifrost.exe");
-    if bifrost_exe.exists() && !service_online(8080) {
-        let mut guard = processes.bifrost.lock().unwrap();
-        if guard.is_none() {
-            let mut cmd = Command::new(&bifrost_exe);
-            cmd.current_dir(base.join("data"));
-            if let Ok(child) = launch_process(cmd, base.join("logs/bifrost.log")) { *guard = Some(child); }
-        }
-    }
+    ensure_bifrost(&base, &processes);
     // Check the child we already own BEFORE probing the port. Previously the
     // supervisor rejected its own healthy backend as an external conflict.
     let mut backend = processes.backend.lock().unwrap();
@@ -263,6 +352,9 @@ fn start_services(app: &tauri::AppHandle) -> Result<(), String> {
         .env("TRAJECTA_SERVER_PORT", "8420")
         .env("TRAJECTA_BACKEND_INSTANCE_ID", backend_instance_id(&base)?)
         .env("PYTHONUTF8", "1");
+    if let Some(token) = bifrost_setup_token(&base) {
+        cmd.env("TRAJECTA_BIFROST_SETUP_TOKEN", token);
+    }
     let child = launch_process(cmd, base.join("logs/backend.log")).map_err(|message| {
         *processes.error.lock().unwrap() = Some(format!("Unable to start FastAPI: {message}"));
         message
@@ -278,11 +370,22 @@ fn stop_services(app: &tauri::AppHandle) {
     // An attached backend was not spawned by this process. Never kill it
     // without verified OS-level ownership; it remains available for reuse.
     processes.attached_backend.store(false, Ordering::Relaxed);
-    for slot in [&processes.backend, &processes.bifrost] {
-        if let Ok(mut guard) = slot.lock() {
-            if let Some(mut child) = guard.take() { let _ = child.kill(); let _ = child.wait(); }
-        }
+    if let Ok(mut guard) = processes.backend.lock() {
+        if let Some(mut child) = guard.take() { let _ = child.kill(); let _ = child.wait(); }
     }
+    if let Ok(mut guard) = processes.bifrost.lock() {
+        if let Some(mut child) = guard.take() {
+            // The npm launcher is a parent of the actual gateway process.
+            // Kill only the child tree that Trajecta itself started.
+            #[cfg(target_os = "windows")]
+            {
+                let _ = Command::new("taskkill").args(["/PID", &child.id().to_string(), "/T", "/F"])
+                    .stdout(Stdio::null()).stderr(Stdio::null()).status();
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    };
 }
 fn restart_services(app: &tauri::AppHandle) -> Result<(), String> {
     if cfg!(debug_assertions) { return Err("Development services are managed by your dev terminal".into()); }
@@ -294,6 +397,7 @@ fn restart_services(app: &tauri::AppHandle) -> Result<(), String> {
     }
     stop_services(app);
     *processes.restart_attempts.lock().unwrap() = 0;
+    *processes.bifrost_restart_attempts.lock().unwrap() = 0;
     start_services(app)
 }
 
@@ -384,6 +488,8 @@ struct DesktopStatus {
     backend_log_path: Option<String>,
     bifrost_reachable: bool,
     managed_bifrost: bool,
+    bifrost_installed: bool,
+    bifrost_error: Option<String>,
     error: Option<String>,
 }
 #[tauri::command]
@@ -399,13 +505,16 @@ fn desktop_status(app: tauri::AppHandle) -> DesktopStatus {
     let error = backend_error.or_else(|| state.error.lock().unwrap().clone());
     let backend_log_path = if cfg!(debug_assertions) { None }
         else { app_base(&app).ok().map(|dir| dir.join("logs/backend.log").display().to_string()) };
+    let bifrost_error = state.bifrost_error.lock().unwrap().clone();
     DesktopStatus {
         installed: !cfg!(debug_assertions),
         backend_running: backend_state == "connected",
         backend_state,
         backend_log_path,
-        bifrost_reachable: service_online(8080),
+        bifrost_reachable: bifrost_ready(),
         managed_bifrost,
+        bifrost_installed: app_base(&app).ok().is_some_and(|base| base.join("runtime/bifrost/launcher.json").exists()),
+        bifrost_error,
         error,
     }
 }

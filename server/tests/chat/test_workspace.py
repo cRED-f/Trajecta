@@ -57,7 +57,7 @@ def _settings(tmp_path: Path, **overrides: Any) -> Settings:
             "vector_store": {"enabled": False},
         },
         "tools": {"workspace_root": str(tmp_path / "default-workspace")},
-        "sandbox": {"enabled": False},
+        "execution": {"enabled": False},
     }
     for key, value in overrides.items():
         payload[key] = value
@@ -498,18 +498,18 @@ async def test_virtual_paths_cannot_escape_the_selected_folder(tmp_path: Path) -
 
 
 # ---------------------------------------------------------------------------
-# Native sandbox isolation and workspace binding
+# Local command execution and workspace binding
 # ---------------------------------------------------------------------------
 
 
-async def test_native_execute_uses_selected_workspace(monkeypatch: pytest.MonkeyPatch,
+async def test_local_execute_uses_selected_workspace(monkeypatch: pytest.MonkeyPatch,
                                                        tmp_path: Path) -> None:
-    """Simulate a ready native helper; real isolation needs Windows acceptance tests."""
+    """Simulate local process execution with independent selected workspaces."""
     from server.src.memory import provider as provider_module
 
     created: list[Any] = []
 
-    class FakeNativeSandbox:
+    class FakeLocalExecutor:
         def __init__(self, *, workspace_root: str, **_: Any) -> None:
             self.workspace_root = workspace_root
             self.id = f"test-{len(created)}"
@@ -524,7 +524,7 @@ async def test_native_execute_uses_selected_workspace(monkeypatch: pytest.Monkey
         def close(self) -> None:
             pass
 
-    monkeypatch.setattr(provider_module, "NativeWindowsSandboxBackend", FakeNativeSandbox)
+    monkeypatch.setattr(provider_module, "LocalExecutionBackend", FakeLocalExecutor)
     project_a = tmp_path / "project-a"
     project_b = tmp_path / "project-b"
     project_a.mkdir()
@@ -532,7 +532,7 @@ async def test_native_execute_uses_selected_workspace(monkeypatch: pytest.Monkey
     _marker(project_a, "marker-a.txt", "a")
     _marker(project_b, "marker-b.txt", "b")
 
-    provider = MemoryProvider(_settings(tmp_path, sandbox={"enabled": True}))
+    provider = MemoryProvider(_settings(tmp_path, execution={"enabled": True}))
     await provider.open()
     try:
         backend_a = provider.agent_kwargs(allow_execute=True, workspace_root=str(project_a))["backend"]
@@ -550,17 +550,16 @@ async def test_native_execute_uses_selected_workspace(monkeypatch: pytest.Monkey
         await provider.close()
 
 
-async def test_missing_native_launcher_never_falls_back_to_host_execution(
+async def test_local_shell_failure_removes_execute_backend(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     from server.src.memory import provider as provider_module
-    from server.src.tools.sandbox import NativeSandboxUnavailable
 
     def unavailable(**_: Any) -> Any:
-        raise NativeSandboxUnavailable("test: Windows launcher unavailable")
+        raise RuntimeError("test: local shell unavailable")
 
-    monkeypatch.setattr(provider_module, "NativeWindowsSandboxBackend", unavailable)
-    provider = MemoryProvider(_settings(tmp_path, sandbox={"enabled": True}))
+    monkeypatch.setattr(provider_module, "LocalExecutionBackend", unavailable)
+    provider = MemoryProvider(_settings(tmp_path, execution={"enabled": True}))
     await provider.open()
     try:
         backend = provider.agent_kwargs(allow_execute=True)["backend"]

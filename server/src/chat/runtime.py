@@ -57,7 +57,7 @@ Behavior:
 - Use persistent memory for stable facts/preferences and search_past_conversations for scoped episodic recall; session_search provides message history.
 - Use schedule_create for future/recurring work instead of claiming you will remember manually.
 - Browser tools automate websites; computer tools (when enabled) control non-browser desktop apps.
-- Prefer native sandbox execute for code/commands (Windows PowerShell syntax, workspace is current directory); host process tools are for approved long-running processes only.
+- Use execute for approved local commands (Windows PowerShell syntax; the selected workspace is the current directory). Commands run with the user's host permissions, not in an isolated sandbox; request approval for sensitive actions.
 - For textual questions about uploaded documents, use one preferred source:
   1) if rag_indexed=true, use search_attachments first;
   2) otherwise, if an extracted text companion exists, read that companion;
@@ -297,7 +297,7 @@ class DeepAgentRuntime:
 
         # Every tool in the run must agree on which host folder `/workspace/`
         # means, so resolve it once here: the Deep Agents route backends, the
-        # sandbox mount, and Trajecta's own document/process tools are all
+        # execution working directory, and Trajecta's document/process tools are all
         # bound from this value.
         workspace_root = conversation_workspace(conversation, self._settings)
         personal_tools = self._personal_tools.for_workspace(workspace_root)

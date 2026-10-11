@@ -13,6 +13,8 @@ management-API responses) and are never persisted in agent_settings.
 from __future__ import annotations
 
 import asyncio
+import os
+from urllib.parse import urlsplit
 from typing import Any
 
 import httpx
@@ -183,6 +185,15 @@ class BifrostAdminClient:
         json: dict | None = None,
     ) -> tuple[int, Any]:
         base = self._require_base()
+        # Only attach the local installation's setup token to its loopback gateway.
+        # Never forward this administrative secret to remote Bifrost instances.
+        headers: dict[str, str] = {}
+        parsed = urlsplit(base)
+        if (parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost"}
+                and parsed.port == 8080):
+            token = os.environ.get("TRAJECTA_BIFROST_SETUP_TOKEN", "")
+            if token and len(token) == 64 and all(c in "0123456789abcdefABCDEF" for c in token):
+                headers["X-Bifrost-Setup-Token"] = token
         try:
             async with httpx.AsyncClient(
                 timeout=self._timeout,
@@ -191,6 +202,7 @@ class BifrostAdminClient:
                     method,
                     f"{base}{path}",
                     json=json,
+                    headers=headers,
                 )
         except httpx.HTTPError as exc:
             raise BifrostAdminError(

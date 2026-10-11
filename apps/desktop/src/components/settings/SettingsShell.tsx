@@ -116,10 +116,10 @@ export function SettingsShell({
         />
 
         <SettingsNavItem
-          page="sandbox"
+          page="execution"
           current={page}
           icon={<Terminal size={17} strokeWidth={1.8} />}
-          label="Sandbox Execution"
+          label="Local Execution"
           onSelect={onPageChange}
         />
 

@@ -242,12 +242,9 @@ class SkillsConfig(BaseModel):
     regression: SkillRegressionConfig = SkillRegressionConfig()
 
 
-class SandboxConfig(BaseModel):
+class LocalExecutionConfig(BaseModel):
     enabled: bool = True
-    timeout_seconds: int = 300
-    memory_limit: str = "512m"
-    cpu_limit: float = 1.0
-    network_enabled: bool = False
+    timeout_seconds: int = Field(default=300, ge=1, le=3600)
 
 
 class ContentGuardrailsConfig(BaseModel):
@@ -384,7 +381,7 @@ class Settings(BaseSettings):
     chat: ChatConfig = ChatConfig()
     tools: ToolsConfig = ToolsConfig()
     skills: SkillsConfig = SkillsConfig()
-    sandbox: SandboxConfig = SandboxConfig()
+    execution: LocalExecutionConfig = LocalExecutionConfig()
     guardrails: GuardrailsConfig = GuardrailsConfig()
 
     yaml_defaults_path: Path = Path("config/default.yaml")

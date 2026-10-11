@@ -15,6 +15,8 @@ type DesktopStatus = {
   backend_log_path: string | null;
   bifrost_reachable: boolean;
   managed_bifrost: boolean;
+  bifrost_installed: boolean;
+  bifrost_error: string | null;
   error: string | null;
 };
 type UpdateCheck = {
@@ -91,7 +93,7 @@ export function DesktopSettings() {
       </div>)}
     </div>
 
-    <div className="settings-page-header desktop-section"><div><h3>Backend services</h3><p>Trajecta manages its Python backend; Bifrost uses the installed gateway if available.</p></div></div>
+    <div className="settings-page-header desktop-section"><div><h3>Backend services</h3><p>Trajecta installs and runs its Bifrost gateway automatically.</p></div></div>
     <div className="settings-group-card">
       <div className="settings-row">
         <div className="settings-row__icon"><HardDrive size={16}/></div>
@@ -100,9 +102,10 @@ export function DesktopSettings() {
       </div>
       <div className="settings-row">
         <div className="settings-row__icon"><Power size={16}/></div>
-        <div className="settings-row__body"><strong>Bifrost</strong><span>{status?.managed_bifrost ? "Managed local gateway" : "External or optional gateway"} · port 8080</span></div>
-        <span className={`settings-status-pill ${status?.bifrost_reachable ? "settings-status-pill--online" : "settings-status-pill--offline"}`}>{status?.bifrost_reachable ? "Reachable" : "Not detected"}</span>
+        <div className="settings-row__body"><strong>Bifrost</strong><span>{status?.managed_bifrost ? "Managed local gateway" : status?.bifrost_installed ? "Bundled gateway · starting or external" : "Gateway not installed"} · port 8080</span></div>
+        <span className={`settings-status-pill ${status?.bifrost_reachable ? "settings-status-pill--online" : "settings-status-pill--offline"}`}>{status?.bifrost_reachable ? "Reachable" : status?.managed_bifrost ? "Starting…" : "Not detected"}</span>
       </div>
+      {status?.bifrost_error && <div className="desktop-feedback desktop-feedback--error" role="alert"><ShieldAlert size={15}/>{status.bifrost_error} · See <code>%LOCALAPPDATA%\\ai.trajecta.desktop\\logs\\bifrost.log</code></div>}
       {status?.error && <div className="desktop-feedback desktop-feedback--error" role="alert"><ShieldAlert size={15}/>{status.error}</div>}
       {status?.installed && !status.backend_running && status.backend_log_path && (
         <div className="desktop-feedback" role="status">Backend diagnostic log: <code>{status.backend_log_path}</code></div>

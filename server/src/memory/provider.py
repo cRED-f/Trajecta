@@ -30,14 +30,14 @@ from deepagents.backends import (
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.store.sqlite.aio import AsyncSqliteStore
 
-from server.src.config import Settings, SandboxConfig
+from server.src.config import Settings, LocalExecutionConfig
 from server.src.memory.embeddings import DEFAULT_OLLAMA_URL
 from server.src.memory.episodic.store import EpisodicMemory
 from server.src.memory.procedural.store import ProceduralMemory
 from server.src.memory.semantic.store import SemanticMemory
 from server.src.memory.short_term.store import ShortTermStore
 from server.src.memory.storage import SQLiteDatabase, FTSIndex, VectorStore
-from server.src.tools.sandbox import NativeWindowsSandboxBackend, NativeSandboxUnavailable
+from server.src.tools.execution import LocalExecutionBackend
 
 logger = logging.getLogger(__name__)
 
@@ -55,14 +55,14 @@ class MemoryProvider:
         self.checkpointer: AsyncSqliteSaver | None = None
         self.store: AsyncSqliteStore | None = None
         self.backend: CompositeBackend | None = None
-        self.sandbox: NativeWindowsSandboxBackend | None = None
+        self.executor: LocalExecutionBackend | None = None
 
-        # Host folders pinned per conversation. Backends and sandbox
-        # containers are derived from these instead of mutating settings,
+        # Host folders pinned per conversation. Backends and executor
+        # instances are derived from these instead of mutating settings,
         # so two conversations can point at different projects at once.
         self._default_workspace_root: str | None = None
         self._uploads_root: Path | None = None
-        self._sandboxes: dict[str, NativeWindowsSandboxBackend] = {}
+        self._executors: dict[str, LocalExecutionBackend] = {}
 
         self.db_path = cfg.db_path
         self.langgraph_db_path = cfg.langgraph_db_path
@@ -106,10 +106,9 @@ class MemoryProvider:
         self.store = AsyncSqliteStore(conn_store)
         await self.store.setup()
 
-        # Deep Agents backend routing. Persistent memories/skills live in the
-        # LangGraph Store, user-selected host files are exposed at /workspace/,
-        # chat uploads are read-only at /uploads/, and arbitrary execution goes
-        # to a restricted native Windows AppContainer when available.
+        # Deep Agents backend routing. Persistent memories/skills use Store,
+        # host files are exposed at /workspace/, uploads at /uploads/, and
+        # approved commands run as the current local user without isolation.
         ns_local = ("trajecta-local",)
 
         uploads_root = Path(self._settings.chat.uploads_path).resolve()
@@ -127,9 +126,9 @@ class MemoryProvider:
         self.fts = FTSIndex(self.sqlite)
         await self.fts.open()
 
-        # Runtime sandbox controls survive a backend restart, like permission settings.
-        await self._restore_sandbox_settings()
-        self.sandbox = self._sandbox_for(str(workspace_root))
+        # Local-execution preferences survive a backend restart.
+        await self._restore_execution_settings()
+        self.executor = self._executor_for(str(workspace_root))
         self.backend = self._build_backend(str(workspace_root), allow_execute=True)
 
         # Restore the persisted Ollama embedding model BEFORE Qdrant
@@ -139,27 +138,33 @@ class MemoryProvider:
         if self._settings.memory.vector_store.enabled:
             self.vector.open()
 
-    async def _restore_sandbox_settings(self) -> None:
+    async def _restore_execution_settings(self) -> None:
         if self.sqlite is None:
             return
         row = await self.sqlite.fetchone(
-            "SELECT value_json FROM agent_settings WHERE key = ?", ("tools.native_sandbox",)
+            "SELECT value_json FROM agent_settings WHERE key = ?", ("tools.local_execution",)
         )
+        if row is None:
+            # One-time compatibility with installations using the former
+            # AppContainer settings. Only enabled/timeout carry over.
+            row = await self.sqlite.fetchone(
+                "SELECT value_json FROM agent_settings WHERE key = ?", ("tools.native_sandbox",)
+            )
         if row is not None:
             try:
-                self._settings.sandbox = SandboxConfig.model_validate(json.loads(row["value_json"]))
+                self._settings.execution = LocalExecutionConfig.model_validate(json.loads(row["value_json"]))
             except (ValueError, TypeError):
-                logger.warning("Invalid saved sandbox settings; using safe defaults")
+                logger.warning("Invalid saved execution settings; using defaults")
 
-    def reconfigure_sandbox(self, config: SandboxConfig) -> None:
-        """Apply newly persisted settings to subsequent agent turns; revoke old ACLs."""
-        self._settings.sandbox = config
-        for sandbox in list(self._sandboxes.values()):
-            sandbox.close()
-        self._sandboxes.clear()
-        self.sandbox = None
+    def reconfigure_execution(self, config: LocalExecutionConfig) -> None:
+        """Update local-execution settings for future agent turns."""
+        self._settings.execution = config
+        for executor in list(self._executors.values()):
+            executor.close()
+        self._executors.clear()
+        self.executor = None
         if self._default_workspace_root is not None and self.store is not None:
-            self.sandbox = self._sandbox_for(self._default_workspace_root)
+            self.executor = self._executor_for(self._default_workspace_root)
             self.backend = self._build_backend(self._default_workspace_root, allow_execute=True)
 
     # -- embedding configuration -----------------------------------------
@@ -367,12 +372,12 @@ class MemoryProvider:
 
     async def close(self) -> None:
         self.vector.close()
-        # Every conversation's sandbox, not just the default folder's: a
-        # workspace-specific sandbox outlives its run until shutdown.
-        for sandbox in list(self._sandboxes.values()):
-            sandbox.close()
-        self._sandboxes.clear()
-        self.sandbox = None
+        # Every conversation's executor, not just the default folder's: a
+        # workspace-specific executor outlives its run until shutdown.
+        for executor in list(self._executors.values()):
+            executor.close()
+        self._executors.clear()
+        self.executor = None
         if self.fts is not None:
             self.fts = None
         if self.sqlite is not None:
@@ -454,34 +459,26 @@ class MemoryProvider:
 
         return self._build_backend(root, allow_execute=allow_execute)
 
-    def _sandbox_for(self, workspace_root: str) -> NativeWindowsSandboxBackend | None:
-        """Secure Windows process sandbox per selected workspace; fail closed.
-
-        A missing helper must never enable unrestricted host execution.
-        The chat remains available without the execute tool and surfaces a
-        descriptive error in logs/Settings until the native helper is installed.
-        """
-        if not self._settings.sandbox.enabled:
+    def _executor_for(self, workspace_root: str) -> LocalExecutionBackend | None:
+        """Get an executor for this workspace (host execution, no isolation)."""
+        if not self._settings.execution.enabled:
             return None
-        existing = self._sandboxes.get(workspace_root)
+        existing = self._executors.get(workspace_root)
         if existing is not None:
             return existing
         if self._uploads_root is None:
             return None
         try:
-            sandbox = NativeWindowsSandboxBackend(
+            executor = LocalExecutionBackend(
                 workspace_root=workspace_root,
                 uploads_root=str(self._uploads_root),
-                timeout_seconds=self._settings.sandbox.timeout_seconds,
-                memory_limit=self._settings.sandbox.memory_limit,
-                cpu_limit=self._settings.sandbox.cpu_limit,
-                network_enabled=self._settings.sandbox.network_enabled,
+                timeout_seconds=self._settings.execution.timeout_seconds,
             )
-        except (NativeSandboxUnavailable, OSError, ValueError) as exc:
-            logger.error("Native execution disabled (fail closed): %s", exc)
+        except (RuntimeError, OSError, ValueError) as exc:
+            logger.error("Local command execution unavailable: %s", exc)
             return None
-        self._sandboxes[workspace_root] = sandbox
-        return sandbox
+        self._executors[workspace_root] = executor
+        return executor
 
     def _build_backend(self, workspace_root: str, *, allow_execute: bool) -> CompositeBackend:
         """Compose the route backends around one conversation's workspace."""
@@ -498,9 +495,9 @@ class MemoryProvider:
         # create the built-in ``execute`` tool when Terminal is DENY.
         default_backend: Any = StateBackend()
         if allow_execute:
-            sandbox = self._sandbox_for(workspace_root)
-            if sandbox is not None:
-                default_backend = sandbox
+            executor = self._executor_for(workspace_root)
+            if executor is not None:
+                default_backend = executor
 
         return CompositeBackend(
             default=default_backend,

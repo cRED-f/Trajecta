@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 // Windows-first source installer. Does not publish an npm package or move user data.
 import { execFileSync, spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, copyFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { packageManagerCommand } from './windows-package-manager.mjs';
+import { BIFROST_NPM_INSTALL_ARGS, prepareBifrostStaging, writeBifrostManifest } from './bifrost-install.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 if (process.platform !== 'win32') throw new Error('Local source installation currently supports Windows only.');
@@ -15,11 +17,11 @@ const data = join(base, 'data');
 const backups = join(base, 'backups');
 const venv = join(runtime, 'venv');
 const stagingVenv = join(runtime, 'venv.new');
+const bifrost = join(runtime, 'bifrost');
+const stagingBifrost = join(runtime, 'bifrost.new');
 const python = join(stagingVenv, 'Scripts', 'python.exe');
 const built = join(root, 'apps','desktop','src-tauri','target','release','trajecta-desktop.exe');
 const target = join(runtime, 'Trajecta.exe');
-const nativeSandbox = join(root, 'native', 'windows', 'bin', 'trajecta-native-sandbox.exe');
-const installedSandbox = join(runtime, 'trajecta-native-sandbox.exe');
 
 function call(program, args, cwd = root) {
   console.log(`> ${program} ${args.join(' ')}`);
@@ -39,10 +41,6 @@ function requireCommand(cmd,args=['--version']) {
   catch (error) { throw new Error(`Cannot run ${cmd} ${args.join(' ')}: ${error.message}`); }
 }
 requireCommand('git'); requireCommand('node'); requireCommand('pnpm'); requireCommand('uv'); requireCommand('cargo');
-// The native sandbox is mandatory for a full source installation. Fail rather
-// than silently shipping a desktop without restricted execute support.
-call('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(root, 'scripts', 'build-native-sandbox.ps1')]);
-if (!existsSync(nativeSandbox)) throw new Error('Native sandbox helper was not built');
 if (!existsSync(join(root,'.git'))) throw new Error('Install from a Git clone, not a downloaded source archive.');
 mkdirSync(runtime,{recursive:true}); mkdirSync(data,{recursive:true}); mkdirSync(backups,{recursive:true});
 // Keep an existing working installation in place until the build succeeds.
@@ -59,32 +57,63 @@ call('uv',['pip','install','--python',python,root]);
 call(python,['-X','utf8','-c',
   'from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver; from langgraph.store.sqlite.aio import AsyncSqliteStore; import server.src.main',
 ],data);
+// Install the official Bifrost launcher into the managed runtime (not globally).
+// No Docker, Go compiler, or separate Bifrost install is needed.
+if (existsSync(stagingBifrost)) rmSync(stagingBifrost, {recursive:true, force:true});
+prepareBifrostStaging(stagingBifrost);
+// --prefix=. forces npm to install in stagingBifrost, not the parent app or
+// pnpm's project root. The explicit package.json avoids ancestor resolution.
+console.log(`Installing Bifrost only in: ${stagingBifrost}`);
+call('npm', BIFROST_NPM_INSTALL_ARGS, stagingBifrost);
+writeBifrostManifest(stagingBifrost);
+// Bifrost v2.2.6 requires a setup token for management APIs prior to admin setup.
+// Reuse it on updates so provider configuration is not invalidated.
+const bifrostData = join(data, 'bifrost');
+mkdirSync(bifrostData, {recursive:true});
+const setupToken = join(bifrostData, 'setup-token');
+if (!existsSync(setupToken)) {
+  try { writeFileSync(setupToken, randomBytes(32).toString('hex') + '\n', {flag:'wx', mode:0o600}); }
+  catch (error) { if (error.code !== 'EEXIST') throw error; }
+}
+console.log('Bifrost launcher installed. Its platform-specific gateway binary is downloaded automatically on first launch.');
 mkdirSync(join(runtime,'backend','config'),{recursive:true});
 copyFileSync(join(root,'config','default.yaml'),join(runtime,'backend','config','default.yaml'));
 copyFileSync(join(root,'config','guardrail-rules.yaml'),join(runtime,'backend','config','guardrail-rules.yaml'));
 // Commit only after both the Rust binary and Python dependencies have built.
 // The updater waits for the app to exit before running this script.
 const oldVenv = join(backups, 'venv.previous');
+const oldBifrost = join(backups, 'bifrost.previous');
+if (existsSync(oldBifrost)) rmSync(oldBifrost, {recursive:true, force:true});
+if (existsSync(bifrost)) renameSync(bifrost, oldBifrost);
+try { renameSync(stagingBifrost, bifrost); }
+catch (error) {
+  if (existsSync(oldBifrost)) renameSync(oldBifrost, bifrost);
+  throw error;
+}
 if (existsSync(oldVenv)) rmSync(oldVenv,{recursive:true,force:true});
 if (existsSync(venv)) renameSync(venv,oldVenv);
 renameSync(stagingVenv,venv);
 if (existsSync(target)) copyFileSync(target,join(backups,'Trajecta.previous.exe'));
 copyFileSync(built,target + '.new');
-copyFileSync(nativeSandbox,installedSandbox + '.new');
 try {
   if (existsSync(target)) rmSync(target);
   renameSync(target + '.new',target);
-  if (existsSync(installedSandbox)) rmSync(installedSandbox);
-  renameSync(installedSandbox + '.new',installedSandbox);
 } catch (error) {
   if (!existsSync(target) && existsSync(join(backups,'Trajecta.previous.exe')))
     copyFileSync(join(backups,'Trajecta.previous.exe'),target);
   if (existsSync(venv)) rmSync(venv,{recursive:true,force:true});
   if (existsSync(oldVenv)) renameSync(oldVenv,venv);
+  if (existsSync(bifrost)) rmSync(bifrost, {recursive:true, force:true});
+  if (existsSync(oldBifrost)) renameSync(oldBifrost, bifrost);
   throw error;
 }
+// Remove an obsolete native sandbox helper from previous installations.
+const obsoleteSandbox = join(runtime, 'trajecta-native-sandbox.exe');
+try { if (existsSync(obsoleteSandbox)) rmSync(obsoleteSandbox, {force:true}); }
+catch (error) { console.warn(`Could not remove obsolete helper: ${error.message}`); }
 const commit = execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim();
 writeFileSync(join(base,'install.json'),JSON.stringify({source:root,commit,installed_at:new Date().toISOString()},null,2));
 call('npm',['link'],root);
-console.log('\nInstalled Trajecta. Run `trajecta` from any terminal. Settings handle maintenance.');
+console.log('\nInstalled Trajecta with Bifrost. Run `trajecta` from any terminal.');
+console.log('The gateway starts automatically; on first launch it may download its Windows binary.');
 console.log(`Production data is isolated at: ${data}`);

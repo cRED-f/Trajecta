@@ -165,12 +165,9 @@ guardrails:
     # allow | redact | block
     cloud_sensitive_action: "redact"
 
-sandbox:
+execution:
   enabled: true
   timeout_seconds: 300
-  memory_limit: "512m"
-  cpu_limit: 1.0
-  network_enabled: false
 
 chat:
   uploads_path: ".trajecta/uploads"

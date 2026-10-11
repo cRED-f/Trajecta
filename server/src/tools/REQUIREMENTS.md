@@ -2,7 +2,7 @@
 
 ## Overview
 
-Two categories of tools: built-in tools (filesystem, shell, git, etc.) and external tools via MCP (Model Context Protocol). All tool execution passes through the guardrail layer. Command execution is restricted by a Windows AppContainer and Job Object; normal host processes still require explicit human approval.
+Two categories of tools: built-in tools (filesystem, shell, git, etc.) and external tools via MCP (Model Context Protocol). All tool execution passes through the guardrail layer. Command execution uses the local shell as the current user, without sandbox isolation. Terminal permissions (ALLOW/ASK/DENY) govern whether it may run.
 
 ## Built-in Tools
 
@@ -27,13 +27,11 @@ Integrations via Model Context Protocol:
 - Documentation systems — search and read docs
 - Custom user tools — user-defined MCP servers
 
-## Sandboxed Execution
+## Local command execution
 
-Deep Agents execute commands use native Windows AppContainer isolation:
-- Isolated filesystem
-- Job Object CPU, memory and timeout controls (no disk quota)
-- Per-workspace AppContainer identity; selected project remains mounted for edits
-- Restricted network access where configured
+Deep Agents `execute` runs through `execution/local.py` using PowerShell on Windows or `/bin/sh` on POSIX hosts. It supports a selected working directory, timeouts, process-tree cancellation, and capped tool output. Model-generated commands can read or modify any host resource the user can access; this is **not** a sandbox. The file-transfer API separately restricts virtual `/workspace/` and `/uploads/` paths, but those restrictions do not apply to shell commands. Keep Terminal permission on ASK.
+
+Automatic skill replays requiring `execute` are skipped: unattended host subprocesses are not allowed during evaluation.
 
 ## File Map
 
@@ -55,14 +53,14 @@ server/src/tools/
 │   ├── client.py         # MCP client — connect to MCP servers
 │   ├── registry.py       # Registry of configured MCP servers
 │   └── adapter.py        # Adapt MCP tools to agent tool interface
-└── sandbox/
+└── execution/
     ├── __init__.py
-    └── native_windows.py # AppContainer adapter for native helper
+    └── local.py # Local system-shell execution
 ```
 
 ## Key Interfaces
 
 - `execute_tool(name, args, context) -> ToolResult` — unified tool execution
 - `list_tools() -> list[ToolDef]` — all available tools (built-in + MCP)
-- `sandbox_exec(command, config) -> SandboxResult` — run as restricted native subprocess
+- `LocalExecutionBackend.execute(command, timeout)` — run on the host (not sandboxed)
 - `mcp_connect(server_config) -> MCPClient` — connect to an MCP server

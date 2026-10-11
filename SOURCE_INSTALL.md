@@ -71,10 +71,7 @@ The built-in embedded Qdrant mode needs no external database service.
 configuration). Otherwise it connects to a separately running Bifrost gateway
 at its configured endpoint. **Bifrost is not downloaded or built automatically**
 by this patch; Ollama and 9Router also remain externally managed. Confirm they
-are reachable in Settings before relying on chat. Command execution uses a Windows AppContainer sandbox built with MSVC during source installation.
-Without a successfully built native helper, the execute tool is intentionally unavailable.
-Build and isolation behavior must be tested on real Windows before claiming production security;
-see [native security tests](native/windows/README.md).
+are reachable in Settings before relying on chat. Command execution uses the installed local shell directly. No AppContainer helper or Docker is needed. Commands run as the current Windows user with host filesystem and network access; keep Terminal permission on ASK.
 
 **Existing data:** The installer does not overwrite or silently migrate your
 old checkout's `.trajecta` folder. Close the old backend and make a consistent

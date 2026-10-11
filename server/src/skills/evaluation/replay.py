@@ -84,10 +84,6 @@ from server.src.tools.personal import (
     PersonalToolProvider,
 )
 
-from server.src.tools.sandbox import (
-    NativeSandboxUnavailable,
-    NativeWindowsSandboxBackend,
-)
 
 
 # ---------------------------------------------------------------------------
@@ -999,10 +995,6 @@ class DeepAgentReplayExecutor:
             time.perf_counter()
         )
 
-        sandbox: (
-            NativeWindowsSandboxBackend
-            | None
-        ) = None
 
         with tempfile.TemporaryDirectory(
             prefix=(
@@ -1146,37 +1138,18 @@ class DeepAgentReplayExecutor:
                 manifest = None
 
             # -----------------------------------
-            # Default isolated backend
-            # -----------------------------------
-
-            native_available = False
-
-            if self._settings.sandbox.enabled:
-                try:
-                    sandbox = NativeWindowsSandboxBackend(
-                        workspace_root=str(workspace),
-                        uploads_root=str(uploads),
-                        timeout_seconds=self._settings.sandbox.timeout_seconds,
-                        memory_limit=self._settings.sandbox.memory_limit,
-                        cpu_limit=self._settings.sandbox.cpu_limit,
-                        network_enabled=False,  # replay fixtures must remain offline
-                    )
-                    default_backend: Any = sandbox
-                    native_available = True
-                except (NativeSandboxUnavailable, ValueError, OSError):
-                    default_backend = FilesystemBackend(root_dir=str(root), virtual_mode=True)
-            else:
-                default_backend = FilesystemBackend(root_dir=str(root), virtual_mode=True)
-
-            if "execute" in case.allowed_tools and not native_available:
-                if sandbox:
-                    sandbox.close()
+            # Automatic evaluations must not execute model-generated shell
+            # commands directly on the user's host. With native OS sandboxing
+            # removed, skip cases that need execute rather than silently
+            # granting the evaluator unrestricted subprocess access.
+            default_backend: Any = FilesystemBackend(root_dir=str(root), virtual_mode=True)
+            if "execute" in case.allowed_tools:
                 return ReplayResult(
                     case_id=case.id,
                     repetition=repetition,
                     variant=variant,
                     skipped=True,
-                    error="case requires execute but native isolated Windows sandbox is unavailable",
+                    error="automatic execute replay disabled: local commands have full host access",
                     duration_seconds=time.perf_counter() - started,
                 )
 
@@ -1929,8 +1902,6 @@ class DeepAgentReplayExecutor:
                     - started
                 )
 
-                if sandbox:
-                    sandbox.close()
 
         return (
             await self

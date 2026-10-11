@@ -988,7 +988,7 @@ class PersonalToolProvider:
         builtins = [
             "ls", "read_file", "write_file", "edit_file", "delete", "glob", "grep", "task", "write_todos"
         ]
-        if self.memory.sandbox is not None:
+        if self.memory.executor is not None:
             builtins.append("execute")
         result = [{"name": name, "source": "deepagents", "enabled": True} for name in builtins]
         for item in self.get_tools():
