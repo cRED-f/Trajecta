@@ -157,3 +157,36 @@ async def test_union_with_the_v1_catalog_keeps_its_metadata(
     assert by_id["ollama/qwen3:8b"].owned_by == "ollama"
     assert by_id["ollama/qwen3:8b"].source == "bifrost"
     assert "ollama/gemma3:12b" in by_id
+
+
+async def test_model_catalog_does_not_prefix_bare_ids_from_gateway(monkeypatch) -> None:
+    monkeypatch.delenv("TRAJECTA_BIFROST_URL", raising=False)
+    monkeypatch.setenv("BIFROST_URL", "http://bifrost.test")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": "route-by-bifrost"}]})
+
+    client = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "AsyncClient",
+        lambda *args, **kwargs: client(
+            *args, **{**kwargs, "transport": httpx.MockTransport(handler)}
+        ),
+    )
+    catalog = await ModelCatalogService(Settings()).list_models()
+    entry = next(model for model in catalog.models if model.id == "route-by-bifrost")
+    assert entry.provider is None
+
+
+async def test_model_catalog_uses_persisted_global_default(monkeypatch) -> None:
+    _no_gateway(monkeypatch)
+
+    class FakeRuntime:
+        async def get(self):
+            return {"default_model": "my-route"}
+
+    catalog = await ModelCatalogService(
+        Settings(), runtime_settings=FakeRuntime()  # type: ignore[arg-type]
+    ).list_models()
+    assert catalog.default_model == "my-route"
+    assert any(entry.id == "my-route" for entry in catalog.models)

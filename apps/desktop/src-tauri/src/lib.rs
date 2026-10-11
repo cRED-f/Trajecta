@@ -160,6 +160,19 @@ fn bifrost_setup_token(base: &std::path::Path) -> Option<String> {
     (token.len() == 64 && token.chars().all(|c| c.is_ascii_hexdigit())).then(|| token.to_owned())
 }
 
+// The managed key is generated once at installation and kept in user data.
+// A user-supplied environment override remains available for an external gateway.
+fn bifrost_virtual_key(base: &std::path::Path) -> Option<String> {
+    if let Ok(value) = std::env::var("BIFROST_VIRTUAL_KEY") {
+        if !value.trim().is_empty() { return Some(value.trim().to_owned()); }
+    }
+    let raw = fs::read_to_string(base.join("data/bifrost/virtual-key")).ok()?;
+    let value = raw.trim();
+    (value.starts_with("sk-bf-") && value.len() >= 22 &&
+        value.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+        .then(|| value.to_owned())
+}
+
 // Return a valid argv for the official pinned npm gateway launcher.
 fn bifrost_launch_command(base: &std::path::Path) -> Result<Option<Command>, String> {
     let install = base.join("runtime/bifrost");
@@ -187,6 +200,10 @@ fn bifrost_launch_command(base: &std::path::Path) -> Result<Option<Command>, Str
         .arg("-host").arg("127.0.0.1").arg("-port").arg("8080")
         .arg("-app-dir").arg(&bifrost_data).current_dir(&bifrost_data);
     if let Some(token) = bifrost_setup_token(base) { cmd.env("BIFROST_SETUP_TOKEN", token); }
+    let key = bifrost_virtual_key(base).ok_or(
+        "Managed Bifrost virtual key is missing. Re-run pnpm trajecta:install"
+    )?;
+    cmd.env("BIFROST_VIRTUAL_KEY", key);
     Ok(Some(cmd))
 }
 
@@ -354,6 +371,9 @@ fn start_services(app: &tauri::AppHandle) -> Result<(), String> {
         .env("PYTHONUTF8", "1");
     if let Some(token) = bifrost_setup_token(&base) {
         cmd.env("TRAJECTA_BIFROST_SETUP_TOKEN", token);
+    }
+    if let Some(key) = bifrost_virtual_key(&base) {
+        cmd.env("BIFROST_VIRTUAL_KEY", key);
     }
     let child = launch_process(cmd, base.join("logs/backend.log")).map_err(|message| {
         *processes.error.lock().unwrap() = Some(format!("Unable to start FastAPI: {message}"));

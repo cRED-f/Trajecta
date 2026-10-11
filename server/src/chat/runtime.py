@@ -16,6 +16,7 @@ from langgraph.types import Command
 
 from server.src.chat.mcp import MCPToolProvider
 from server.src.chat.model import BifrostModelFactory
+from server.src.llm_auth_errors import describe_gateway_failure
 from server.src.chat.models import Attachment, ChatEvent, Conversation
 from server.src.output_safety import InternalContextExposure, VisibleTextGate
 from server.src.chat.rag import AttachmentRAGIndex
@@ -774,7 +775,7 @@ class DeepAgentRuntime:
                 type="run.error",
                 conversation_id=conversation.id,
                 run_id=run_id,
-                data={"error": str(exc)},
+                data={"error": describe_gateway_failure(exc)},
             )
 
     async def latest_checkpoint_id(self, thread_id: str) -> str | None:

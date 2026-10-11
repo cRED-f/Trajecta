@@ -1,63 +1,25 @@
-"""LLM gateway (Bifrost) settings APIs.
+"""Read-only Bifrost gateway status and Trajecta model preferences.
 
-The gateway itself is fixed — Bifrost is the only gateway. What the
-user chooses here is the provider behind Bifrost, the model behind
-that provider, and the global default applied to NEW conversations.
-Per-conversation model selection is unchanged (PUT /chat/.../model).
+Provider creation, deletion, credentials, routing and fallbacks are managed
+exclusively in the Bifrost dashboard. Trajecta only chooses model IDs.
 """
-
 from __future__ import annotations
 
-from typing import Literal
-
-from fastapi import (
-    APIRouter,
-    HTTPException,
-    Request,
-)
-from pydantic import (
-    BaseModel,
-)
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
 from server.src.llm_gateway.bifrost_admin import (
-    DEFAULT_OLLAMA_BASE_URL,
-    STANDARD_PROVIDER_IDS,
-    BifrostAdminClient,
-    BifrostAdminError,
-    classify_provider_type,
-    key_status_ok,
+    BifrostAdminClient, BifrostAdminError,
+    classify_provider_type, key_status_ok,
 )
 
-router = APIRouter(
-    prefix="/llm",
-    tags=["llm"],
-)
-
-# Always listed in Settings even before they are configured.
-TEMPLATE_PROVIDER_IDS = (
-    "9router",
-    "openai",
-    "anthropic",
-    "ollama",
-)
-
-
-class ProviderUpsert(BaseModel):
-    type: Literal[
-        "openai",
-        "anthropic",
-        "ollama",
-        "openai_compat",
-    ]
-    base_url: str | None = None
-    # Forwarded to Bifrost only; never persisted in agent_settings.
-    api_key: str | None = None
-    extra_headers: dict[str, str] | None = None
+router = APIRouter(prefix="/llm", tags=["llm"])
 
 
 class DefaultModelUpdate(BaseModel):
-    default_provider: str
     default_model: str
+    # Legacy clients may continue to send this field; the new UI does not.
+    default_provider: str | None = None
 
 
 def _admin(request: Request) -> BifrostAdminClient:
@@ -68,300 +30,73 @@ def _store(request: Request):
     return request.app.state.llm_settings
 
 
-def _map_error(exc: BifrostAdminError) -> HTTPException:
-    return HTTPException(
-        status_code=exc.status_code or 502,
-        detail=str(exc),
-    )
-
-
-async def _configured_providers(
-    admin: BifrostAdminClient,
-    gateway_ok: bool,
-) -> dict[str, dict]:
-    if not gateway_ok:
-        return {}
+async def _provider_catalog(admin: BifrostAdminClient, healthy: bool) -> list[dict]:
+    """Read-only diagnostics; never mutate Bifrost configuration."""
+    if not healthy:
+        return []
     try:
-        items = await admin.list_providers()
+        providers = await admin.list_providers()
     except BifrostAdminError:
-        return {}
-    return {
-        str(item.get("name")): item
-        for item in items
-        if item.get("name")
-    }
+        return []
 
-
-async def _provider_entry(
-    admin: BifrostAdminClient,
-    provider_id: str,
-    *,
-    gateway_ok: bool,
-    configured: dict[str, dict],
-) -> dict:
-    is_configured = provider_id in configured
-    reachable = False
-
-    if is_configured and gateway_ok:
+    result: list[dict] = []
+    for entry in providers:
+        provider_id = str(entry.get("name") or "").strip()
+        if not provider_id:
+            continue
         try:
             keys = await admin.provider_keys(provider_id)
         except BifrostAdminError:
             keys = []
-        reachable = bool(keys) and all(
-            key_status_ok(key) for key in keys
-        )
-
-    return {
-        "id": provider_id,
-        "type": classify_provider_type(provider_id),
-        "configured": is_configured,
-        "reachable": reachable,
-    }
-
-
-async def _catalog(admin: BifrostAdminClient) -> tuple[bool, list[dict]]:
-    gateway_ok = await admin.health()
-    configured = await _configured_providers(admin, gateway_ok)
-
-    provider_ids = list(
-        dict.fromkeys(
-            [
-                *TEMPLATE_PROVIDER_IDS,
-                *configured.keys(),
-            ]
-        )
-    )
-
-    entries = [
-        await _provider_entry(
-            admin,
-            provider_id,
-            gateway_ok=gateway_ok,
-            configured=configured,
-        )
-        for provider_id in provider_ids
-    ]
-    return gateway_ok, entries
-
-
-def _single_entry(
-    provider_id: str,
-    provider_type: str,
-    *,
-    existing: dict | None,
-    keys: list[dict],
-) -> dict:
-    is_configured = existing is not None
-    return {
-        "id": provider_id,
-        "type": provider_type,
-        "configured": is_configured,
-        "reachable": is_configured
-        and bool(keys)
-        and all(key_status_ok(key) for key in keys),
-    }
-
-
-async def _require_provider(
-    admin: BifrostAdminClient,
-    provider: str,
-) -> dict:
-    existing = await admin.get_provider(provider)
-    if existing is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Provider {provider!r} is not configured",
-        )
-    return existing
+        result.append({
+            "id": provider_id,
+            "type": classify_provider_type(provider_id),
+            "configured": True,
+            # Key discovery status is diagnostic, not proof inference succeeds.
+            "reachable": bool(keys) and all(key_status_ok(key) for key in keys),
+        })
+    return result
 
 
 @router.get("")
 async def get_llm_catalog(request: Request) -> dict:
-    """Gateway status, defaults, and the provider catalog."""
     runtime = await _store(request).get()
-    gateway_ok, providers = await _catalog(_admin(request))
-
+    admin = _admin(request)
+    healthy = await admin.health()
     return {
         "gateway": {
             "type": "bifrost",
-            "url": _admin(request).base_url,
-            "reachable": gateway_ok,
+            "url": admin.base_url,
+            "reachable": healthy,
         },
-        "default_provider": runtime["default_provider"],
+        "default_provider": runtime["default_provider"],  # legacy read compatibility
         "default_model": runtime["default_model"],
-        "providers": providers,
+        "providers": await _provider_catalog(admin, healthy),
     }
-
-
-@router.get("/providers")
-async def list_providers(request: Request) -> dict:
-    _, providers = await _catalog(_admin(request))
-    return {"providers": providers}
-
-
-@router.put("/providers/{provider}")
-async def upsert_provider(
-    provider: str,
-    body: ProviderUpsert,
-    request: Request,
-) -> dict:
-    """Create or reconfigure a provider behind Bifrost."""
-    provider = provider.strip()
-    if not provider:
-        raise HTTPException(
-            status_code=422,
-            detail="Provider id cannot be empty",
-        )
-
-    provider_type = body.type
-
-    # Native providers live at their fixed id; anything else is a
-    # custom OpenAI-compatible provider with a free-form id.
-    if provider_type in ("openai", "anthropic", "ollama"):
-        if provider != provider_type:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"Type {provider_type!r} must be configured at "
-                    f"/providers/{provider_type}"
-                ),
-            )
-    elif provider in STANDARD_PROVIDER_IDS:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"{provider!r} is a built-in Bifrost provider; "
-                "choose a different provider id"
-            ),
-        )
-
-    base_url = (body.base_url or "").strip() or None
-    if provider_type == "ollama" and not base_url:
-        base_url = DEFAULT_OLLAMA_BASE_URL
-    if provider_type == "openai_compat" and not base_url:
-        raise HTTPException(
-            status_code=422,
-            detail="base_url is required for OpenAI-compatible providers",
-        )
-
-    admin = _admin(request)
-    try:
-        await admin.upsert_provider(
-            provider=provider,
-            provider_type=provider_type,
-            base_url=base_url,
-            extra_headers=body.extra_headers,
-            api_key=body.api_key,
-        )
-        # The Trajecta virtual key must be able to use newly
-        # configured providers.
-        await admin.ensure_allow_all_providers()
-        # Immediately ask Bifrost to discover/refresh the
-        # provider's models.
-        #
-        # This is intentionally best-effort: the provider
-        # configuration should still be saved if the upstream
-        # provider is temporarily unavailable.
-        try:
-            await admin.test_provider(provider)
-        except BifrostAdminError:
-            pass
-        existing = await admin.get_provider(provider)
-        keys = (
-            await admin.provider_keys(provider)
-            if existing is not None
-            else []
-        )
-    except BifrostAdminError as exc:
-        raise _map_error(exc) from exc
-
-    return _single_entry(
-        provider,
-        provider_type,
-        existing=existing,
-        keys=keys,
-    )
-
-
-@router.delete("/providers/{provider}")
-async def remove_provider(
-    provider: str,
-    request: Request,
-) -> dict:
-    admin = _admin(request)
-    try:
-        removed = await admin.remove_provider(provider)
-    except BifrostAdminError as exc:
-        raise _map_error(exc) from exc
-
-    if not removed:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Provider {provider!r} is not configured",
-        )
-    return {"deleted": provider}
-
-
-@router.get("/providers/{provider}/models")
-async def provider_models(
-    provider: str,
-    request: Request,
-) -> dict:
-    admin = _admin(request)
-    try:
-        await _require_provider(admin, provider)
-        models = await admin.provider_models(provider)
-    except BifrostAdminError as exc:
-        raise _map_error(exc) from exc
-    return {"models": models}
-
-
-@router.post("/providers/{provider}/test")
-async def test_provider(
-    provider: str,
-    request: Request,
-) -> dict:
-    admin = _admin(request)
-    try:
-        await _require_provider(admin, provider)
-        result = await admin.test_provider(provider)
-    except BifrostAdminError as exc:
-        raise _map_error(exc) from exc
-    return result
 
 
 @router.put("/default")
-async def put_default(
-    body: DefaultModelUpdate,
-    request: Request,
-) -> dict:
-    """Persist the global default for NEW conversations."""
-    provider = body.default_provider.strip()
+async def put_default(body: DefaultModelUpdate, request: Request) -> dict:
+    """Set the model for NEW conversations; preserve bare routing aliases."""
     model = body.default_model.strip()
+    if not model:
+        raise HTTPException(status_code=422, detail="default_model is required")
+    if len(model) > 200 or any(ch.isspace() for ch in model):
+        raise HTTPException(status_code=422, detail="Invalid model id")
 
-    if not provider or not model:
-        raise HTTPException(
-            status_code=422,
-            detail="default_provider and default_model are required",
-        )
+    provider = model.split("/", 1)[0] if "/" in model else ""
+    if "/" in model and not model.split("/", 1)[1]:
+        raise HTTPException(status_code=422, detail="Invalid model id")
 
-    if "/" not in model:
-        model = f"{provider}/{model}"
-    elif model.split("/", 1)[0] != provider:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"default_model {model!r} must start with "
-                f"{provider}/"
-            ),
-        )
+    # Preserve the old PUT contract for existing callers, without forcing
+    # provider prefixes on new clients that choose a Bifrost-managed alias.
+    legacy_provider = (body.default_provider or "").strip()
+    if legacy_provider:
+        if provider and provider != legacy_provider:
+            raise HTTPException(status_code=422, detail="Provider does not match model id")
+        if not provider:
+            provider = legacy_provider
+            model = f"{legacy_provider}/{model}"
 
-    await _store(request).set(
-        default_provider=provider,
-        default_model=model,
-    )
-
-    return {
-        "default_provider": provider,
-        "default_model": model,
-    }
+    await _store(request).set(default_provider=provider, default_model=model)
+    return {"default_provider": provider, "default_model": model}

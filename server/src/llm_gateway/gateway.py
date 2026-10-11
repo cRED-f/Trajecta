@@ -49,7 +49,9 @@ def _build_router(settings: Settings | None = None) -> Router:
     # Credentials live in Bifrost config, not here — virtual key is just auth.
     bifrost_url = os.environ.get("TRAJECTA_BIFROST_URL") or _find_bifrost(settings)
     if bifrost_url:
-        virtual_key = os.environ.get("BIFROST_VIRTUAL_KEY", "sk-bf-trajecta")
+        virtual_key = os.environ.get("BIFROST_VIRTUAL_KEY", "").strip()
+        if not virtual_key:
+            raise RuntimeError("BIFROST_VIRTUAL_KEY must be configured for Bifrost inference")
         bifrost_client = OpenAICompatClient(
             api_key=virtual_key,
             base_url=f"{bifrost_url.rstrip('/')}/v1",

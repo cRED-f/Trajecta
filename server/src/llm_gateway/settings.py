@@ -44,11 +44,7 @@ class LLMSettingsStore:
 
     def _bootstrap(self) -> dict:
         model = self._bootstrap_model
-        provider = (
-            model.split("/", 1)[0]
-            if "/" in model
-            else "openai"
-        )
+        provider = model.split("/", 1)[0] if "/" in model else ""
         return {
             "gateway": {"type": "bifrost"},
             "default_provider": provider,
@@ -85,13 +81,12 @@ class LLMSettingsStore:
         if not isinstance(gateway, dict) or not gateway.get("type"):
             gateway = defaults["gateway"]
 
-        default_provider = (
-            str(stored.get("default_provider") or "").strip()
-            or defaults["default_provider"]
-        )
         default_model = (
             str(stored.get("default_model") or "").strip()
             or defaults["default_model"]
+        )
+        default_provider = (
+            default_model.split("/", 1)[0] if "/" in default_model else ""
         )
 
         return {
@@ -107,9 +102,11 @@ class LLMSettingsStore:
         default_model: str,
     ) -> None:
         """Persist the global default (new conversations only)."""
+        # Derive the compatibility provider field from the actual model ID;
+        # a provider-free alias must not inherit a stale provider.
         value = {
             "gateway": {"type": "bifrost"},
-            "default_provider": default_provider,
+            "default_provider": default_model.split("/", 1)[0] if "/" in default_model else "",
             "default_model": default_model,
         }
 

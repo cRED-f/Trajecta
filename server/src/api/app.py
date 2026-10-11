@@ -91,8 +91,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         retrieval = UnifiedMemoryRetriever(memory)
         curator = MemoryCurator(memory.sqlite)
 
-        # Bifrost control plane (Settings -> management API -> config DB)
-        # and the persisted global default for new conversations.
+        # Bifrost control plane is read-only here; configure providers in
+        # Bifrost's dashboard. Trajecta persists only model preferences.
         llm_settings = LLMSettingsStore(
             memory.sqlite,
             bootstrap_model=settings.chat.default_model,
@@ -172,6 +172,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.model_catalog = ModelCatalogService(
             settings,
             admin=llm_admin,
+            runtime_settings=llm_settings,
         )
         app.state.llm_admin = llm_admin
         app.state.llm_settings = llm_settings

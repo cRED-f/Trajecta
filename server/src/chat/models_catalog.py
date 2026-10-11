@@ -12,6 +12,7 @@ from server.src.llm_gateway.bifrost_admin import (
     BifrostAdminClient,
     BifrostAdminError,
 )
+from server.src.llm_gateway.settings import LLMSettingsStore
 
 
 class ModelCatalogService:
@@ -22,23 +23,23 @@ class ModelCatalogService:
         settings: Settings,
         *,
         admin: BifrostAdminClient | None = None,
+        runtime_settings: LLMSettingsStore | None = None,
     ) -> None:
         self._settings = settings
         self._factory = BifrostModelFactory(settings)
         self._admin = admin
+        self._runtime_settings = runtime_settings
 
     async def list_models(self) -> ModelCatalog:
-        default_model = (
-            self._factory
-            .canonical_model_name(
-                self._settings.chat.default_model
-            )
-        )
+        configured_default = self._settings.chat.default_model
+        if self._runtime_settings is not None:
+            configured_default = (await self._runtime_settings.get())["default_model"]
+        default_model = self._factory.canonical_model_name(configured_default)
 
         configured: dict[str, ModelInfo] = {
             default_model: ModelInfo(
                 id=default_model,
-                provider=default_model.split("/", 1)[0],
+                provider=default_model.split("/", 1)[0] if "/" in default_model else None,
                 source="configured",
             )
         }
@@ -67,7 +68,7 @@ class ModelCatalogService:
                         model_id = self._factory.canonical_model_name(raw_model_id)
                         gateway_models[model_id] = ModelInfo(
                             id=model_id,
-                            provider=model_id.split("/", 1)[0],
+                            provider=model_id.split("/", 1)[0] if "/" in model_id else None,
                             source="bifrost",
                             owned_by=(str(item.get("owned_by")) if item.get("owned_by") else None),
                             metadata={
@@ -101,9 +102,9 @@ class ModelCatalogService:
                         except BifrostAdminError:
                             continue
                         for raw_model_id in discovered:
-                            model_id = self._factory.canonical_model_name(
-                                str(raw_model_id).strip()
-                            )
+                            model_id = str(raw_model_id).strip()
+                            if model_id and "/" not in model_id:
+                                model_id = f"{provider}/{model_id}"
                             if not model_id:
                                 continue
                             # /v1/models carries owned_by and the rest of
@@ -113,7 +114,7 @@ class ModelCatalogService:
                                 model_id,
                                 ModelInfo(
                                     id=model_id,
-                                    provider=model_id.split("/", 1)[0],
+                                    provider=model_id.split("/", 1)[0] if "/" in model_id else None,
                                     source="bifrost",
                                 ),
                             )

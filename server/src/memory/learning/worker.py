@@ -16,6 +16,9 @@ from typing import Any, Awaitable, Callable, Literal
 from pydantic import BaseModel, Field
 
 from server.src.config import ReflectionConfig, Settings
+from server.src.llm_auth_errors import (
+    describe_gateway_failure, is_non_retryable_gateway_auth_failure,
+)
 from server.src.guardrails.policy import PermissionPolicyStore
 from server.src.memory.episodic.store import EpisodicMemory
 from server.src.memory.storage.sqlite import SQLiteDatabase
@@ -217,14 +220,14 @@ class ContinuousLearningWorker:
             raise
         except Exception as exc:
             attempts = int(job['attempts'])
-            state = 'failed' if attempts>=self.cfg.max_attempts else 'pending'
+            state = 'failed' if (attempts >= self.cfg.max_attempts or is_non_retryable_gateway_auth_failure(exc)) else 'pending'
             retry = (datetime.now(UTC)+timedelta(seconds=self.cfg.retry_delay_seconds * min(8,2**(attempts-1)))).isoformat()
             await self.db.execute(
                 '''UPDATE task_learning_jobs SET status=?,last_error=?,lease_until=NULL,
                    next_attempt_at=?,updated_at=? WHERE id=?''',
-                (state,type(exc).__name__,retry,now(),job['id']),
+                (state,describe_gateway_failure(exc)[:1500],retry,now(),job['id']),
             )
-            log.warning('Background learning job failed (%s)',type(exc).__name__)
+            log.warning('Background learning job failed: %s',describe_gateway_failure(exc))
         return True
 
     def _evidence(self, traces: list[dict[str,Any]], job: dict[str,Any]) -> tuple[dict[str,Any], set[int]]:
@@ -276,8 +279,6 @@ class ContinuousLearningWorker:
     async def _call_review(self,prompt: str) -> Reflection:
         model_settings = await self.llm_settings.get()
         model_name = (self.cfg.model or str(model_settings['default_model'])).strip()
-        if '/' not in model_name:
-            model_name = f"{model_settings['default_provider']}/{model_name}"
         if self.guardrails is not None:
             prompt = (await self.guardrails.protect_model_context(prompt,model_name=model_name)).text
         if self.reviewer is not None:

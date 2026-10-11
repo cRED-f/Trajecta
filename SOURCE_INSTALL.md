@@ -42,6 +42,7 @@ working tree. On update failure, review `%LOCALAPPDATA%\\ai.trajecta.desktop\\up
   runtime\\venv\\          # managed Python + installed FastAPI package
   runtime\\backend\\config\\
   data\\.trajecta\\       # persistent SQLite, Qdrant, skills, uploads, config
+  data\\bifrost\\         # managed Bifrost config, keys, persistent database
   logs\\                 # backend and optional Bifrost logs
   desktop.json           # tray and startup preferences
   install.json           # original Git-clone location
@@ -66,12 +67,17 @@ be stopped once before the new runtime can manage the port. Data is
 separated from build artifacts so updates don't delete conversations or memories.
 The built-in embedded Qdrant mode needs no external database service.
 
-**Bifrost:** Trajecta can launch a local gateway executable placed at
-`runtime\\bifrost\\bifrost.exe` (if compatible with the project's Bifrost
-configuration). Otherwise it connects to a separately running Bifrost gateway
-at its configured endpoint. **Bifrost is not downloaded or built automatically**
-by this patch; Ollama and 9Router also remain externally managed. Confirm they
-are reachable in Settings before relying on chat. Command execution uses the installed local shell directly. No AppContainer helper or Docker is needed. Commands run as the current Windows user with host filesystem and network access; keep Terminal permission on ASK.
+**Bifrost:** The source installer installs the pinned gateway npm launcher
+under `runtime\bifrost`; the gateway executable downloads on first launch.
+The installer creates a persistent virtual key under `data\bifrost\virtual-key`
+and seeds `data\bifrost\config.json` with Trajecta's governance entry while
+preserving configured providers, other keys and routing rules. The Tauri
+launcher passes the same key to Bifrost and FastAPI. Never use a guessed key.
+For an external Bifrost instance, manually register the matching virtual key.
+A 401 with `is_bifrost_error: false`, `provider: 9router`, and
+`access_not_found` is a 9Router or upstream credential failure; changing
+Trajecta's Bifrost virtual key cannot fix it. 9Router and Ollama are still
+external services. Command execution uses the installed local shell directly. No AppContainer helper or Docker is needed. Commands run as the current Windows user with host filesystem and network access; keep Terminal permission on ASK.
 
 **Existing data:** The installer does not overwrite or silently migrate your
 old checkout's `.trajecta` folder. Close the old backend and make a consistent

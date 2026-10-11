@@ -8,6 +8,7 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { packageManagerCommand } from './windows-package-manager.mjs';
 import { BIFROST_NPM_INSTALL_ARGS, prepareBifrostStaging, writeBifrostManifest } from './bifrost-install.mjs';
+import { prepareManagedBifrostIdentity } from './bifrost-config.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 if (process.platform !== 'win32') throw new Error('Local source installation currently supports Windows only.');
@@ -70,6 +71,7 @@ writeBifrostManifest(stagingBifrost);
 // Reuse it on updates so provider configuration is not invalidated.
 const bifrostData = join(data, 'bifrost');
 mkdirSync(bifrostData, {recursive:true});
+prepareManagedBifrostIdentity(bifrostData);
 const setupToken = join(bifrostData, 'setup-token');
 if (!existsSync(setupToken)) {
   try { writeFileSync(setupToken, randomBytes(32).toString('hex') + '\n', {flag:'wx', mode:0o600}); }

@@ -6,7 +6,6 @@ import type {
   ContentGuardrailCatalog,
   ContentGuardrailSettings,
   LlmDefaultUpdate,
-  LlmProviderUpsert,
   PermissionCatalog,
   PermissionMode,
   ScheduleCreateInput,
@@ -16,8 +15,6 @@ import type {
 export const settingsQueryKeys = {
   permissions: ["settings", "permissions"] as const,
   llm: ["settings", "llm"] as const,
-  llmModels: (provider: string) =>
-    ["settings", "llm", "models", provider] as const,
   memory: (query: string) => ["settings", "memory", query] as const,
   memoryAll: ["settings", "memory"] as const,
   embedding: ["settings", "embedding"] as const,
@@ -175,21 +172,6 @@ export function useLlmCatalog(enabled = true) {
   });
 }
 
-/** Discovered models for one configured provider (404s otherwise). */
-export function useLlmProviderModels(
-  provider: string | null,
-  enabled = true,
-) {
-  return useQuery({
-    queryKey: settingsQueryKeys.llmModels(provider ?? ""),
-    queryFn: () => settingsApi.llmProviderModels(provider ?? ""),
-    enabled: Boolean(provider) && enabled,
-    staleTime: 30_000,
-    refetchOnWindowFocus: false,
-    retry: false,
-  });
-}
-
 export function useLlmActions() {
   const queryClient = useQueryClient();
 
@@ -207,37 +189,16 @@ export function useLlmActions() {
     });
   }
 
-  const upsert = useMutation({
-    mutationFn: ({
-      provider,
-      body,
-    }: {
-      provider: string;
-      body: LlmProviderUpsert;
-    }) => settingsApi.upsertLlmProvider(provider, body),
-    onSuccess: invalidate,
-  });
-
   const setDefault = useMutation({
     mutationFn: (body: LlmDefaultUpdate) =>
       settingsApi.setLlmDefault(body),
     onSuccess: invalidate,
   });
 
-  const test = useMutation({
-    mutationFn: (provider: string) =>
-      settingsApi.testLlmProvider(provider),
-    onSuccess: invalidate,
-  });
-
   return {
-    upsert: upsert.mutateAsync,
-    upserting: upsert.isPending,
     setDefault: setDefault.mutateAsync,
     savingDefault: setDefault.isPending,
-    test: test.mutateAsync,
-    testingProvider: test.isPending ? test.variables ?? null : null,
-    error: upsert.error ?? setDefault.error ?? test.error,
+    error: setDefault.error,
   };
 }
 

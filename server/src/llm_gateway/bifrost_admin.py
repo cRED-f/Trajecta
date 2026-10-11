@@ -1,13 +1,11 @@
 """Control-plane client for the Bifrost management API.
 
-Settings changes flow through Bifrost itself:
+Trajecta consumes provider and model diagnostics through this client.
+Configure provider credentials, routing and fallbacks in Bifrost's own
+Web UI; Trajecta's public API exposes no provider-write endpoints.
 
-    Settings -> Bifrost management API -> Bifrost config DB
-
-config.json is only a first-boot seed: once config.db exists it is
-authoritative, so the Settings page never rewrites config.json.
-Provider credentials are stored by Bifrost (which redacts them from
-management-API responses) and are never persisted in agent_settings.
+The older write helpers remain internal for compatibility with gateway
+bootstrap/test utilities, but must not be exposed by Trajecta Settings.
 """
 
 from __future__ import annotations

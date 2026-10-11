@@ -85,6 +85,12 @@ class BifrostModelFactory:
             )
 
         virtual_key = self.virtual_key()
+        if not virtual_key:
+            raise BifrostConfigurationError(
+                "BIFROST_VIRTUAL_KEY is not configured. For the managed "
+                "gateway, run pnpm trajecta:install; for an external "
+                "gateway, create a virtual key in Bifrost and set the environment variable."
+            )
 
         model = self.canonical_model_name(
             model_name
@@ -117,7 +123,7 @@ class BifrostModelFactory:
 
     @staticmethod
     def virtual_key() -> str:
-        return os.environ.get("BIFROST_VIRTUAL_KEY", "sk-bf-trajecta")
+        return os.environ.get("BIFROST_VIRTUAL_KEY", "").strip()
 
     def _configured_url(
         self,
@@ -141,12 +147,11 @@ class BifrostModelFactory:
         self,
         model_name: str | None,
     ) -> str:
-        """
-        Return an explicit Bifrost provider/model identifier.
+        """Preserve the exact ID selected by the user.
 
-        Bare model names are repaired using the provider from
-        chat.default_model. This is especially important for custom
-        OpenAI-compatible providers such as 9router.
+        Qualified IDs pin an upstream provider. Bare IDs may be resolved by
+        Bifrost's model catalog or virtual-key routing rules. Never attach
+        Trajecta's default provider to a bare ID.
         """
         model = (
             model_name
@@ -158,26 +163,7 @@ class BifrostModelFactory:
                 "Model cannot be empty"
             )
 
-        # Already explicit.
-        if "/" in model:
-            return model
-
-        default_model = (
-            self._settings.chat.default_model.strip()
-        )
-
-        if "/" not in default_model:
-            raise BifrostConfigurationError(
-                "Bifrost model must use provider/model format; "
-                f"got {model!r}. Configure chat.default_model "
-                "with an explicit provider."
-            )
-
-        provider = (
-            default_model.split("/", 1)[0]
-        )
-
-        return f"{provider}/{model}"
+        return model
 
     async def resolve_or_default(
         self,
@@ -195,32 +181,25 @@ class BifrostModelFactory:
         # requested; inference is the final source of model availability.
         if not validate_catalog:
             return canonical
-        provider = canonical.split(
-            "/",
-            1,
-        )[0]
-        known = await self._known_models(
-            provider
-        )
+        provider = canonical.split("/", 1)[0] if "/" in canonical else None
+        known = await self._known_models(provider)
         # If Bifrost model discovery itself is unavailable,
         # let the actual inference request determine whether
         # the model can be used.
         if known is None:
             return canonical
-        if canonical not in known:
+        # A bare name can also be resolved by a Bifrost routing rule that
+        # does not appear in the catalog. Let Bifrost validate at inference.
+        if provider is not None and canonical not in known:
             raise BifrostConfigurationError(
-                (
-                    f"Selected model {canonical!r} "
-                    f"is not available from provider "
-                    f"{provider!r}. Refresh the provider's "
-                    "model list and try again."
-                )
+                f"Selected model {canonical!r} is not in Bifrost's model "
+                "catalog. Refresh the catalog or configure routing in Bifrost."
             )
         return canonical
 
     async def _known_models(
         self,
-        provider: str,
+        provider: str | None,
     ) -> set[str] | None:
         import httpx
 
@@ -236,7 +215,7 @@ class BifrostModelFactory:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.get(
                     f"{base.rstrip('/')}/v1/models",
-                    params={"provider": provider},
+                    params={"provider": provider} if provider else None,
                     headers=headers,
                 )
                 response.raise_for_status()
@@ -256,7 +235,7 @@ class BifrostModelFactory:
                     # The catalog is scoped to `provider`, so a bare id
                     # belongs to that provider — never to whatever
                     # chat.default_model happens to point at.
-                    if "/" not in model_id:
+                    if provider and "/" not in model_id:
                         model_id = f"{provider}/{model_id}"
                     known.add(model_id)
                 return known

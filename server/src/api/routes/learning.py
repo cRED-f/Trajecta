@@ -111,8 +111,8 @@ async def update_reflection_settings(body: ReflectionSettingsUpdate, request: Re
         raise HTTPException(422, "Review limits and enabled status cannot be null")
     if "model" in patch:
         model = patch["model"]
-        if model is not None and not re.fullmatch(r"[A-Za-z0-9._-]+/[A-Za-z0-9._:/-]+", model):
-            raise HTTPException(400, "Choose a provider/model, or the default")
+        if model is not None and not re.fullmatch(r"(?:[A-Za-z0-9._:-]+|[A-Za-z0-9._-]+/[A-Za-z0-9._:/-]+)", model):
+            raise HTTPException(400, "Choose a Bifrost model id or leave blank for the default")
     return await worker.update_config(patch)
 
 

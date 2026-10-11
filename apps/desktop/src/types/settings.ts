@@ -388,24 +388,8 @@ export interface LlmProviderEntry {
   reachable: boolean;
 }
 
-/** PUT /llm/providers/{id} — keys go to Bifrost, never agent_settings. */
-export interface LlmProviderUpsert {
-  type: LlmProviderType;
-  base_url?: string | null;
-  api_key?: string | null;
-  extra_headers?: Record<string, string> | null;
-}
-
-/** POST /llm/providers/{id}/test */
-export interface LlmTestResult {
-  reachable: boolean;
-  status: string;
-  detail?: string | null;
-}
-
 /** PUT /llm/default — applied to NEW conversations only. */
 export interface LlmDefaultUpdate {
-  default_provider: string;
   default_model: string;
 }
 

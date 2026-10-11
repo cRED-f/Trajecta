@@ -41,7 +41,9 @@ def _model() -> ChatOpenAI:
             bifrost_url = bifrost_url or cfg.base_url
             break
     if bifrost_url:
-        virtual_key = os.environ.get("BIFROST_VIRTUAL_KEY", "sk-bf-trajecta")
+        virtual_key = os.environ.get("BIFROST_VIRTUAL_KEY", "").strip()
+        if not virtual_key:
+            raise RuntimeError("BIFROST_VIRTUAL_KEY must be configured for the memory graph")
         return ChatOpenAI(
             model=model_str,
             base_url=f"{bifrost_url.rstrip('/')}/v1",

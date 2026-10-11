@@ -95,7 +95,7 @@ export function SettingsShell({
           page="llm-providers"
           current={page}
           icon={<ServerCog size={17} strokeWidth={1.8} />}
-          label="LLM Providers"
+          label="LLM Gateway & Models"
           onSelect={onPageChange}
         />
 

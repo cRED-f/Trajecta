@@ -9,6 +9,9 @@ import {
 } from "lucide-react";
 
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { isTauri } from "@tauri-apps/api/core";
+import { useLlmCatalog } from "../hooks/use-settings";
+import { bifrostDashboardUrl } from "../lib/bifrost-dashboard";
 
 import {
   useMemo,
@@ -61,6 +64,8 @@ export function Sidebar({
 }: Props) {
   const [search, setSearch] =
     useState("");
+  const gateway = useLlmCatalog();
+  const dashboard = bifrostDashboardUrl(gateway.data?.gateway.url ?? "http://127.0.0.1:8080");
 
   const filtered = useMemo(
     () => {
@@ -218,11 +223,12 @@ export function Sidebar({
         <button
           className="sidebar-item sidebar-item--action"
           type="button"
-          onClick={() =>
-            void openUrl(
-              "http://127.0.0.1:8080",
-            )
-          }
+          disabled={!dashboard}
+          onClick={() => {
+            if (!dashboard) return;
+            if (isTauri()) void openUrl(dashboard);
+            else window.open(dashboard, "_blank", "noopener,noreferrer");
+          }}
         >
           <span className="sidebar-nav-icon"><ChartNoAxesCombined size={18} strokeWidth={1.8} /></span>
           <span>Bifrost Dashboard</span>

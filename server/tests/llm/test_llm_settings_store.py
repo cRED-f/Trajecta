@@ -94,3 +94,22 @@ async def test_set_is_idempotent_and_overwrites(tmp_path) -> None:
         ("llm.runtime",),
     )
     assert len(rows) == 1
+
+
+async def test_provider_free_default_does_not_inherit_old_provider(tmp_path) -> None:
+    db = SQLiteDatabase(tmp_path / "settings.db")
+    await db.open()
+    store = LLMSettingsStore(db, bootstrap_model="9router/claude-opus-free")
+    await store.set(default_provider="9router", default_model="route-by-bifrost")
+    runtime = await store.get()
+    assert runtime["default_model"] == "route-by-bifrost"
+    assert runtime["default_provider"] == ""
+
+
+async def test_provider_free_bootstrap_is_preserved(tmp_path) -> None:
+    db = SQLiteDatabase(tmp_path / "settings.db")
+    await db.open()
+    store = LLMSettingsStore(db, bootstrap_model="route-by-bifrost")
+    runtime = await store.get()
+    assert runtime["default_provider"] == ""
+    assert runtime["default_model"] == "route-by-bifrost"

@@ -36,8 +36,7 @@ Python Deep Agents app
 ## Why Client Instantiation Is Trivial
 
 - One virtual key (`sk-bf-...`) authenticates both `/v1` and `/mcp`.
-- Model strings are Bifrost-prefixed: `openai/gpt-4o-mini`,
-  `anthropic/claude-sonnet-4-6`.
+- Model IDs can be provider-qualified (e.g. `openai/gpt-4o-mini`, `anthropic/claude-sonnet-4-6`) or bare names resolved by a compatible Bifrost model catalog or routing rule.
 - `base_url` in the Python app is `http://localhost:8080/v1` (not `.../v1/`).
 
 ## Supported Providers (configured in Bifrost)

@@ -227,3 +227,20 @@ async def test_sending_a_message_keeps_the_selected_ollama_model(
     stored = await service.get_conversation(conversation.id)
     assert stored.model == "ollama/qwen3:8b"
     assert stored.model != DEFAULT_MODEL
+
+
+async def test_bare_model_id_is_not_prefixed_with_default_provider(monkeypatch) -> None:
+    _enable_gateway(monkeypatch)
+    _patch_v1_models(monkeypatch, _catalog({"": ["gateway-route"]}))
+    factory = BifrostModelFactory(_settings())
+
+    resolved = await factory.resolve_or_default("gateway-route")
+    assert resolved == "gateway-route"
+    assert factory.create("gateway-route").model_name == "gateway-route"
+
+
+async def test_bare_routing_rule_alias_is_not_blocked_by_catalog(monkeypatch) -> None:
+    _enable_gateway(monkeypatch)
+    _patch_v1_models(monkeypatch, _catalog({"": ["openai/gpt-4o-mini"]}))
+    factory = BifrostModelFactory(_settings())
+    assert await factory.resolve_or_default("my-custom-route") == "my-custom-route"
