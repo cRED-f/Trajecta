@@ -37,3 +37,4 @@ apps/desktop/src-tauri/gen/schemas/acl-manifests.json
 apps/desktop/src-tauri/gen/schemas/capabilities.json
 apps/desktop/src-tauri/gen/schemas/desktop-schema.json
 apps/desktop/src-tauri/gen/schemas/windows-schema.json
+server/src/observability/PHOENIX_PHASE1.md

@@ -32,6 +32,7 @@ from server.src.memory.provider import MemoryProvider, get_memory_provider
 from server.src.memory.learning.worker import ContinuousLearningWorker
 from server.src.memory.retrieval import UnifiedMemoryRetriever
 from server.src.memory.curator import MemoryCurator
+from server.src.observability.setup import initialize_observability, shutdown_observability
 from server.src.runtime_encoding import configure_utf8_runtime
 from server.src.skills.service import build_skills_service
 from server.src.skills.learning.experience import ExperienceLearningService
@@ -51,9 +52,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        # Instrument before constructing model clients; disabled by default.
+        initialize_observability()
         # Open the shared memory provider (SQLite + FTS + vector + checkpointer + store).
-        memory = get_memory_provider(settings)
-        await memory.open()
+        try:
+            memory = get_memory_provider(settings)
+            await memory.open()
+        except BaseException:
+            shutdown_observability()
+            raise
 
         personal_tools = PersonalToolProvider(settings, memory)
 
@@ -183,11 +190,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             yield
         finally:
-            # Stop producers before SQLite/tools disappear.
-            await reflection.stop()
-            await scheduler.stop()
-            await personal_tools.close()
-            await memory.close()
+            try:
+                # Stop producers before SQLite/tools disappear.
+                await reflection.stop()
+                await scheduler.stop()
+                await personal_tools.close()
+                await memory.close()
+            finally:
+                shutdown_observability()
 
     app = FastAPI(title="Trajecta", version="0.1.0", lifespan=lifespan)
 

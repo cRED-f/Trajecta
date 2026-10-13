@@ -35,6 +35,9 @@ opentelemetry-api = "^1.44.0"
 opentelemetry-sdk = "^1.44.0"
 opentelemetry-exporter-otlp = "^1.44.0"
 opentelemetry-instrumentation-fastapi = "^0.65b0"
+# Optional AI tracing; Phoenix server is a separate developer/local service.
+arize-phoenix-otel = {version = "^0.17.1", optional = true}
+openinference-instrumentation-langchain = {version = "^0.1.76", optional = true}
 # Guardrails AI 0.11.x requires OpenAI <3, while langchain-openai 1.6.x needs >=2.45.
 # Keep the compatible intersection until both integrations support OpenAI 3.
 openai = ">=2.45.0,<3.0.0"
@@ -64,6 +67,9 @@ pillow = "*"
 pytesseract = "*"
 pyttsx3 = "*"
 faster-whisper = "*"
+
+[tool.poetry.extras]
+phoenix = ["arize-phoenix-otel", "openinference-instrumentation-langchain"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.1.1"

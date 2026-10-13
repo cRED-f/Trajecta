@@ -17,6 +17,7 @@ from langgraph.types import Command
 
 from server.src.chat.mcp import MCPToolProvider
 from server.src.chat.model import BifrostModelFactory
+from server.src.observability.tracing import trace_preparation
 from server.src.llm_auth_errors import (
     describe_gateway_failure,
     is_transient_gateway_disconnect,
@@ -326,6 +327,7 @@ class DeepAgentRuntime:
         self._memory_retriever = memory_retriever
         self._models = BifrostModelFactory(settings)
 
+    @trace_preparation
     async def prepare(
         self,
         *,
@@ -501,6 +503,7 @@ class DeepAgentRuntime:
         user_content: str,
         attachments: list[Attachment],
         cancel_event: asyncio.Event,
+        run_id: str | None = None,
     ) -> AsyncIterator[ChatEvent]:
         content = self._build_input(user_content, attachments)
         async for event in self._stream_input(
@@ -509,6 +512,7 @@ class DeepAgentRuntime:
             agent_input={"messages": [{"role": "user", "content": content}]},
             cancel_event=cancel_event,
             resumed=False,
+            run_id=run_id,
         ):
             yield event
 
@@ -519,6 +523,7 @@ class DeepAgentRuntime:
         conversation: Conversation,
         resume_payload: dict[str, Any],
         cancel_event: asyncio.Event,
+        run_id: str | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """Resume the saved HITL checkpoint, including parallel interrupts."""
         async for event in self._stream_input(
@@ -527,6 +532,7 @@ class DeepAgentRuntime:
             agent_input=Command(resume=resume_payload),
             cancel_event=cancel_event,
             resumed=True,
+            run_id=run_id,
         ):
             yield event
 
@@ -565,8 +571,10 @@ class DeepAgentRuntime:
         agent_input: Any,
         cancel_event: asyncio.Event,
         resumed: bool,
+        run_id: str | None = None,
     ) -> AsyncIterator[ChatEvent]:
-        run_id = uuid.uuid4().hex
+        # Service-supplied ID must agree with SSE, trajectories and cancellation.
+        run_id = run_id or uuid.uuid4().hex
         yield ChatEvent(
             type="run.started",
             conversation_id=conversation.id,

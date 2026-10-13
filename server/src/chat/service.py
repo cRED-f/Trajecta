@@ -32,6 +32,7 @@ from server.src.chat.models import (
 from server.src.chat.rag import AttachmentRAGIndex
 from server.src.chat.repository import ChatRepository
 from server.src.chat.runtime import DeepAgentRuntime, PreparedAgentRun
+from server.src.observability.tracing import current_trace_id, trace_agent_stream
 from server.src.chat.runs import ChatRunRegistry, RunAlreadyActive
 from server.src.chat.workspace import METADATA_KEY, validate_workspace_path
 from server.src.config import Settings
@@ -695,6 +696,7 @@ class ChatService:
     # Streaming a prepared turn
     # ------------------------------------------------------------------
 
+    @trace_agent_stream
     async def stream_prepared(self, turn: PreparedTurn) -> AsyncIterator[ChatEvent]:
         assistant_text: list[str] = []
         # Record public activity, not private model reasoning.
@@ -704,6 +706,7 @@ class ChatService:
         # Declared before begin() so the finally below can never see an
         # unbound name if the trajectory write itself fails.
         trajectory_id: str | None = None
+        trace_id = current_trace_id()
         _task_id, trajectory_id = await self._trajectories.begin(
             goal=turn.user_message.content or "[attachment-only task]",
             thread_id=turn.branch.thread_id,
@@ -712,6 +715,7 @@ class ChatService:
                 "branch_id": turn.branch.id,
                 "user_message_id": turn.user_message.id,
                 "model": turn.runtime.model_name,
+                **({"trace_id": trace_id} if trace_id else {}),
                 "attachments": [item.id for item in turn.attachments],
                 "workspace_path": turn.conversation.metadata.get(METADATA_KEY),
             },
@@ -800,8 +804,11 @@ class ChatService:
                 user_content=turn.user_message.content,
                 attachments=turn.attachments,
                 cancel_event=turn.cancel_event,
+                run_id=turn.run_id,
             ):
                 event.run_id = turn.run_id
+                if event.type == "run.started" and trace_id:
+                    event.data["trace_id"] = trace_id
                 if event.type in {"agent.step", "tool.call.delta", "tool.result", "reasoning.delta"}:
                     if len(activity_events) < 2_000:
                         activity_events.append({"type": event.type, "data": event.data})
@@ -882,6 +889,7 @@ class ChatService:
                     "model": turn.runtime.model_name,
                     "run_id": turn.run_id,
                     "trajectory_id": trajectory_id,
+                    **({"trace_id": trace_id} if trace_id else {}),
                     "activity_events": activity_events,
                 },
                 branch_id=turn.branch.id,
@@ -1107,6 +1115,7 @@ class ChatService:
             "tool_errors": data.get("tool_errors", 0),
         }
 
+    @trace_agent_stream
     async def stream_resume(self, turn: PreparedResume) -> AsyncIterator[ChatEvent]:
         assistant_text: list[str] = [turn.partial_text]
         activity_events: list[dict[str, Any]] = list(turn.prior_activity_events)
@@ -1115,6 +1124,7 @@ class ChatService:
         # Declared before begin() so the finally below can never see an
         # unbound name if the trajectory write itself fails.
         trajectory_id: str | None = None
+        trace_id = current_trace_id()
         _task_id, trajectory_id = await self._trajectories.begin(
             goal=f"Resume approved action for: {turn.user_message.content}",
             thread_id=turn.branch.thread_id,
@@ -1123,6 +1133,7 @@ class ChatService:
                 "branch_id": turn.branch.id,
                 "user_message_id": turn.user_message.id,
                 "model": turn.runtime.model_name,
+                **({"trace_id": trace_id} if trace_id else {}),
                 "approval_resume": True,
                 "workspace_path": turn.conversation.metadata.get(METADATA_KEY),
                 # A resume is only part of the original task; never learn it
@@ -1137,8 +1148,11 @@ class ChatService:
                 conversation=turn.conversation,
                 resume_payload=turn.resume_payload,
                 cancel_event=turn.cancel_event,
+                run_id=turn.run_id,
             ):
                 event.run_id = turn.run_id
+                if event.type == "run.started" and trace_id:
+                    event.data["trace_id"] = trace_id
                 if event.type in {"agent.step", "tool.call.delta", "tool.result", "reasoning.delta"}:
                     if len(activity_events) < 2_000:
                         activity_events.append({"type": event.type, "data": event.data})
@@ -1215,6 +1229,7 @@ class ChatService:
                     "model": turn.runtime.model_name,
                     "run_id": turn.run_id,
                     "trajectory_id": trajectory_id,
+                    **({"trace_id": trace_id} if trace_id else {}),
                     "resumed": True,
                     "activity_events": activity_events,
                     "human_interactions": turn.interaction_history,

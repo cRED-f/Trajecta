@@ -282,3 +282,21 @@ async def test_short_heading_is_not_quarantined_or_modified() -> None:
     await _consume(_runtime(), _prepared(agent), asyncio.Event(), collected)
     assert [e.data["text"] for e in collected if e.type == "message.delta"] == ["#", "# Summary"]
     assert collected[-1].type == "run.finished"
+
+async def test_runtime_accepts_service_run_id_without_creating_second_id() -> None:
+    """SSE, trajectory and runtime must use the same ID in every event."""
+    runtime = _runtime()
+    prepared = _prepared(FakeAgent([]))
+    observed = [
+        event
+        async for event in runtime._stream_input(
+            prepared=prepared,
+            conversation=_conversation(),
+            agent_input={"messages": [{"role": "user", "content": "hello"}]},
+            cancel_event=asyncio.Event(),
+            resumed=False,
+            run_id="chat-service-run-42",
+        )
+    ]
+    assert observed
+    assert all(event.run_id == "chat-service-run-42" for event in observed)
