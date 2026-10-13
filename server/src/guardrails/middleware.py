@@ -19,6 +19,7 @@ from server.src.guardrails.content import (
     ContentGuardrailService,
 )
 from server.src.config import ContentGuardrailsConfig
+from server.src.observability.operations import observed
 
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ class GuardrailsModelMiddleware(
         self._guardrails = guardrails
         self._model_name = model_name
 
+    @observed("trajecta.guardrails.model_boundary")
     async def awrap_model_call(
         self,
         request: Any,

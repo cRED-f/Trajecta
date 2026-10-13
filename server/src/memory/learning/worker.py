@@ -24,6 +24,8 @@ from server.src.memory.episodic.store import EpisodicMemory
 from server.src.memory.storage.sqlite import SQLiteDatabase
 from server.src.skills.learning.experience import ExperienceLearningService
 from server.src.skills.trajectory_store.store import TrajectoryStore
+from server.src.observability.operations import observed, safe_status
+from opentelemetry import trace
 
 log = logging.getLogger(__name__)
 
@@ -103,6 +105,7 @@ class ContinuousLearningWorker:
             self.wake.set()
         return values
 
+    @observed("trajecta.learning.enqueue")
     async def enqueue(self, trajectory_id: str, *, reason: Literal['completion','feedback']='completion') -> bool:
         """Fast durable enqueue. Distinct task revisions; never invoke model."""
         await self.load_config()
@@ -179,6 +182,7 @@ class ContinuousLearningWorker:
                 log.exception('Task learning loop error')
                 await asyncio.sleep(self.cfg.poll_seconds)
 
+    @observed("trajecta.learning.run_once")
     async def run_once(self) -> bool:
         await self.load_config()
         if not self.cfg.enabled or not await self.policy.get_setting('automatic_memory',True):
@@ -212,14 +216,19 @@ class ContinuousLearningWorker:
         if not rows:
             return False
         job = rows[0]
+        trace.get_current_span().set_attribute("trajecta.learning.attempt", int(job["attempts"]))
         try:
             result = await self._process(job)
-            await self._mark(job,'completed' if result else 'skipped',result or {'reason':'insufficient evidence'})
+            status = 'completed' if result else 'skipped'
+            trace.get_current_span().set_attribute("trajecta.learning.outcome", safe_status(status))
+            await self._mark(job,status,result or {'reason':'insufficient evidence'})
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             attempts = int(job['attempts'])
             state = 'failed' if (attempts >= self.cfg.max_attempts or is_non_retryable_gateway_auth_failure(exc)) else 'pending'
+            trace.get_current_span().set_attribute("trajecta.learning.outcome", safe_status(state))
+            trace.get_current_span().set_attribute("trajecta.error_type", type(exc).__name__)
             retry = (datetime.now(UTC)+timedelta(seconds=self.cfg.retry_delay_seconds * min(8,2**(attempts-1)))).isoformat()
             await self.db.execute(
                 '''UPDATE task_learning_jobs SET status=?,last_error=?,lease_until=NULL,
@@ -274,6 +283,7 @@ class ContinuousLearningWorker:
         }
         return payload,allowed
 
+    @observed("trajecta.learning.review_model")
     async def _call_review(self,prompt: str) -> Reflection:
         model_settings = await self.llm_settings.get()
         model_name = (self.cfg.model or str(model_settings['default_model'])).strip()
@@ -291,6 +301,7 @@ class ContinuousLearningWorker:
             raw = response.content
         return Reflection.model_validate(raw) if isinstance(raw,dict) else Reflection.model_validate_json(str(raw).strip())
 
+    @observed("trajecta.learning.reflect")
     async def _process(self, job: dict[str,Any]) -> dict[str,Any] | None:
         traces = await self.trajectories.for_task(job['task_id'])
         if not traces:

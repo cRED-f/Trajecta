@@ -24,6 +24,8 @@ compare two versions with fixed class-level thresholds and no statistics.
 
 from __future__ import annotations
 
+from server.src.observability.operations import observed
+
 import json
 import uuid
 
@@ -92,6 +94,7 @@ class SkillRegressionMonitor:
         self._promoter = promoter
         self._versioner = versioner
 
+    @observed("trajecta.skill.regression_check")
     async def check(
         self,
         skill_name: str,

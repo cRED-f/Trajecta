@@ -19,6 +19,7 @@ from server.src.skills.representation.skill import OutcomeAssertion, OutcomeAsse
 
 from server.src.memory.storage.fts import _fts_query
 from server.src.skills.trajectory_store import TrajectoryStore
+from server.src.observability.operations import observed
 
 if TYPE_CHECKING:
     from server.src.memory.provider import MemoryProvider
@@ -256,6 +257,7 @@ class EpisodicMemory:
             )
         return [self._decode(row) for row in rows]
 
+    @observed("trajecta.memory.episodic", result_count=True)
     async def search(
         self, query: str, limit: int = 10, *,
         user_id: str | None = None, scope: str = "local",

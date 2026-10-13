@@ -7,6 +7,10 @@ from langchain_core.messages import AIMessageChunk
 from langchain_core.outputs import ChatGenerationChunk
 
 from server.src.config import Settings
+from server.src.observability.bifrost import (
+    _enabled as bifrost_tracing_enabled,
+    inject_bifrost_context, inject_bifrost_context_async,
+)
 
 
 class BifrostConfigurationError(
@@ -104,6 +108,18 @@ class BifrostModelFactory:
             else f"{stripped}/v1"
         )
 
+        # Scope context propagation to this gateway client. Do not globally
+        # instrument HTTPX (which also carries private browser/tool traffic).
+        transport_clients = {}
+        if bifrost_tracing_enabled():
+            import httpx
+            transport_clients = {
+                "http_client": httpx.Client(event_hooks={"request": [inject_bifrost_context]}),
+                "http_async_client": httpx.AsyncClient(
+                    event_hooks={"request": [inject_bifrost_context_async]}
+                ),
+            }
+
         return BifrostReasoningChatOpenAI(
             model=model,
             base_url=base_url,
@@ -115,6 +131,7 @@ class BifrostModelFactory:
             # request-level failures; never replay the entire agent/tool graph.
             max_retries=2,
             timeout=180,
+            **transport_clients,
         )
 
     def gateway_base_url(self) -> str | None:

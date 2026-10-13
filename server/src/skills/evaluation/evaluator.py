@@ -17,6 +17,8 @@ Order:
 
 from __future__ import annotations
 
+from server.src.observability.operations import observed
+
 import asyncio
 
 from statistics import mean
@@ -227,6 +229,7 @@ class SkillEvaluator:
             replay
         )
 
+    @observed("trajecta.skill.evaluate")
     async def evaluate(
         self,
         candidate_id: str,

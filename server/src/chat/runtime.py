@@ -18,6 +18,7 @@ from langgraph.types import Command
 from server.src.chat.mcp import MCPToolProvider
 from server.src.chat.model import BifrostModelFactory
 from server.src.observability.tracing import trace_preparation
+from opentelemetry import trace
 from server.src.llm_auth_errors import (
     describe_gateway_failure,
     is_transient_gateway_disconnect,
@@ -149,6 +150,11 @@ def _recoverable_tool_error(exc: Exception, request: Any) -> str | None:
 
     call = getattr(request, "tool_call", None)
     name = call.get("name", "unknown") if isinstance(call, dict) else "unknown"
+    # LangChain/OpenInference already owns the tool span; annotate rather
+    # than creating a second tool trace or recording exception text.
+    current = trace.get_current_span()
+    current.set_attribute("trajecta.tool.recoverable_error", True)
+    current.set_attribute("trajecta.tool.error_type", type(exc).__name__)
     web_reason = _web_tool_error(exc, request)
     if web_reason is not None:
         return f"Tool {name} failed. {web_reason} Continue the user's task."

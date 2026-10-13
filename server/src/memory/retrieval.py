@@ -15,6 +15,8 @@ from typing import Any
 from server.src.memory.episodic.store import EpisodicMemory
 from server.src.memory.storage.fts import _fts_query
 from server.src.skills.repository import SkillRepository
+from server.src.observability.operations import observed
+from opentelemetry import trace
 
 logger = logging.getLogger(__name__)
 _WORDS = re.compile(r"[\w-]{4,}", re.UNICODE)
@@ -63,6 +65,7 @@ class UnifiedMemoryRetriever:
             raise RuntimeError("MemoryProvider must be open")
         self.repository = SkillRepository(self.db)
 
+    @observed("trajecta.memory.semantic", result_count=True)
     async def _semantic(self, query: str, limit: int) -> list[dict[str, Any]]:
         """RRF over lexical and vector hits; authorize both via canonical rows."""
         hits = await self.memory.fts.search(
@@ -75,6 +78,7 @@ class UnifiedMemoryRetriever:
         try:
             vectors = await asyncio.to_thread(self.memory.vector.search, "memories", query, limit * 4)
         except Exception:
+            trace.get_current_span().set_attribute("trajecta.memory.vector_fallback", True)
             logger.debug("Semantic vector search unavailable", exc_info=True)
             vectors = []
         for rank, hit in enumerate(vectors, 1):
@@ -99,6 +103,7 @@ class UnifiedMemoryRetriever:
             for doc_id in ids if doc_id in allowed
         ][:limit]
 
+    @observed("trajecta.memory.experience", result_count=True)
     async def _experiences(self, query: str, limit: int) -> list[dict[str, Any]]:
         rows = await self.db.fetch(
             """SELECT id, kind, content, updated_at, confidence FROM learned_experiences
@@ -115,6 +120,7 @@ class UnifiedMemoryRetriever:
         scored.sort(key=lambda item: (item["score"], item["updated_at"]), reverse=True)
         return scored[:limit]
 
+    @observed("trajecta.memory.skill", result_count=True)
     async def _skills(self, query: str, limit: int) -> list[dict[str, Any]]:
         if not query.strip():
             return []
@@ -180,6 +186,7 @@ class UnifiedMemoryRetriever:
                         suppressed.add(second if preference == first else first)
         return [item for item in items if item["tier"] + ":" + item["id"] not in suppressed]
 
+    @observed("trajecta.memory.search", result_count=True)
     async def search(self, query: str, *, workspace_path: str | None = None,
                      user_id: str = "local", limit: int = 8) -> list[dict[str, Any]]:
         """Only global semantic facts/approved experiences and same-workspace episodes.
@@ -201,6 +208,8 @@ class UnifiedMemoryRetriever:
         all_items: list[dict[str, Any]] = []
         for tier, value in zip(("semantic", "episodic", "experience", "skill"), outcomes):
             if isinstance(value, BaseException):
+                # Tier names are fixed and safe; never export exception messages.
+                trace.get_current_span().set_attribute(f"trajecta.memory.{tier}_failed", True)
                 logger.warning("Memory %s search failed: %s", tier, value)
                 continue
             if tier == "episodic":
@@ -234,6 +243,7 @@ class UnifiedMemoryRetriever:
         all_items.sort(key=lambda item: (item["rank"], item.get("updated_at") or ""), reverse=True)
         return all_items[:limit]
 
+    @observed("trajecta.memory.context")
     async def context(self, query: str, *, workspace_path: str | None = None,
                       user_id: str = "local", thread_id: str | None = None,
                       max_chars: int = 2500, limit: int = 8) -> str:

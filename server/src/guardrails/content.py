@@ -35,6 +35,8 @@ from server.src.config import (
 )
 from server.src.guardrails.policy import PermissionPolicyStore
 from server.src.guardrails.cache import GuardrailDecisionCache
+from server.src.observability.operations import observed
+from opentelemetry import trace
 
 
 logger = logging.getLogger(__name__)
@@ -235,6 +237,7 @@ class ContentGuardrailService:
 
         return findings
 
+    @observed("trajecta.guardrails.untrusted")
     async def guard_untrusted_text(
         self,
         text: str,
@@ -298,6 +301,7 @@ class ContentGuardrailService:
             findings=[finding],
         )
 
+    @observed("trajecta.guardrails.cloud_privacy")
     async def protect_model_context(
         self,
         text: str,
@@ -339,12 +343,15 @@ class ContentGuardrailService:
             text=text,
         )
         if key is None:
-            # Very large payloads are not retained in the cache.
+            # Oversized text is scanned but never cached; no content exported.
+            trace.get_current_span().set_attribute("trajecta.guardrails.cache", "bypass")
             return await producer()
 
         cached = self._decision_cache.get(key, text)
         if cached is not None:
+            trace.get_current_span().set_attribute("trajecta.guardrails.cache", "hit")
             return cached
+        trace.get_current_span().set_attribute("trajecta.guardrails.cache", "miss")
 
         # The per-key lock is only live while callers are waiting or scanning.
         # This is not a global validator lock and doesn't serialize distinct
@@ -362,10 +369,15 @@ class ContentGuardrailService:
             async with lock:
                 cached = self._decision_cache.get(key, text)
                 if cached is not None:
+                    trace.get_current_span().set_attribute("trajecta.guardrails.cache", "coalesced")
                     return cached
                 # Validator failures propagate and are never cached as allow.
                 result = await producer()
                 self._decision_cache.put(key, text, result)
+                current = trace.get_current_span()
+                current.set_attribute("trajecta.guardrails.findings", len(result.findings))
+                if result.findings:
+                    current.set_attribute("trajecta.guardrails.action", result.findings[0].action)
                 return result
         finally:
             async with self._inflight_guard:
@@ -550,12 +562,18 @@ class ContentGuardrailService:
             text,
         )
 
+    @observed("trajecta.guardrails.validator")
     async def _run_validator(
         self,
         key: str,
         factory: Callable[[], Any],
         text: str,
     ) -> Any:
+        # Only fixed validator categories; do not export thresholds or entity lists.
+        category = key.split(":", 1)[0]
+        if category not in {"prompt_injection", "secrets", "pii", "jailbreak"}:
+            category = "other"
+        trace.get_current_span().set_attribute("trajecta.guardrails.validator_type", category)
         lock = self._locks.setdefault(
             key,
             asyncio.Lock(),

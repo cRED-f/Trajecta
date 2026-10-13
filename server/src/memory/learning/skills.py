@@ -6,6 +6,8 @@ only path to autonomous activation.
 """
 from __future__ import annotations
 
+from server.src.observability.operations import observed
+
 import hashlib
 import json
 import re
@@ -38,6 +40,7 @@ class AutonomousSkillDiscovery:
     def __init__(self, db: SQLiteDatabase, skills: Any) -> None:
         self.db, self.skills = db, skills
 
+    @observed("trajecta.skill.discover")
     async def discover(self, task_id: str, traces: list[dict[str,Any]], insight: Any) -> str | None:
         # Synthesize from OBSERVED tool order only; no raw tool args or outputs.
         events = sorted((e for tr in traces if tr.get('outcome') in {'completed','success'}
@@ -144,6 +147,7 @@ class AutonomousSkillDiscovery:
             if (record.get('metadata') or {}).get('skill_bundle',{}).get('metadata',{}).get('notes',{}).get('autonomous_discovery'):
                 await self.refresh_candidate(record['id'])
 
+    @observed("trajecta.skill.refresh_candidate")
     async def refresh_candidate(self, candidate_id: str) -> None:
         candidate = await self.skills.repository.get_candidate(candidate_id)
         if not candidate or candidate['status'] not in {'candidate'}:
