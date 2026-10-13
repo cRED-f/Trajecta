@@ -13,3 +13,5 @@ export { SkillsSettings } from "./SkillsSettings";
 
 export type { SettingsPage, ThemeValue } from "./settings-types";
 export { LocalExecutionSettings } from "./LocalExecutionSettings";
+
+export { ObservabilitySettings } from "./ObservabilitySettings";

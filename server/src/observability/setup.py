@@ -12,6 +12,7 @@ from typing import Any
 
 from opentelemetry import trace
 from opentelemetry.trace import ProxyTracerProvider
+from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
 
 logger = logging.getLogger(__name__)
 _lock = Lock()
@@ -52,7 +53,14 @@ def initialize_observability() -> bool:
                     logger.warning("Phoenix endpoint rejected: remote export is disabled")
                     return False
 
+            try:
+                sampling = float(os.getenv("TRAJECTA_PHOENIX_SAMPLE_RATE", "1"))
+            except ValueError:
+                sampling = 1.0
+            if not 0.0 <= sampling <= 1.0:
+                sampling = 1.0
             provider = register(
+                sampler=ParentBased(TraceIdRatioBased(sampling)),
                 project_name=os.getenv("TRAJECTA_PHOENIX_PROJECT", "trajecta"),
                 endpoint=endpoint,
                 protocol="http/protobuf",

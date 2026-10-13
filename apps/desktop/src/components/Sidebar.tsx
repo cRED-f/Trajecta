@@ -1,6 +1,7 @@
 import {
   CalendarDays,
   ChartNoAxesCombined,
+  Activity,
   LibraryBig,
   Search,
   Settings2,
@@ -218,6 +219,13 @@ export function Sidebar({
         >
           <span className="sidebar-nav-icon"><CalendarDays size={18} strokeWidth={1.8} /></span>
           <span>Scheduled Tasks</span>
+        </button>
+
+        <button className={`sidebar-item sidebar-item--action ${activePage === "observability" ? "sidebar-item--active" : ""}`}
+          type="button" aria-current={activePage === "observability" ? "page" : undefined}
+          onClick={() => onNavigate("observability")}>
+          <span className="sidebar-nav-icon"><Activity size={18} strokeWidth={1.8}/></span>
+          <span>Observability</span>
         </button>
 
         <button

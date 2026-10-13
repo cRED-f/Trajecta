@@ -23,7 +23,8 @@ export type TopLevelPage =
   | "knowledge"
   | "memory"
   | "skills"
-  | "scheduled-tasks";
+  | "scheduled-tasks"
+  | "observability";
 
 interface ChatStore {
   activeConversationId: string | null;

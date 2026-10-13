@@ -72,6 +72,63 @@ The installed application uses an isolated writable directory rather than storin
 └── install.json                 # Git checkout reference
 ```
 
+## Enable automatic skill replay capture (installed Windows build)
+
+Trajecta can save candidate workflows without workspace replay capture, but
+file-changing skills need reproducible workspace evidence for automatic
+verification and activation. Replay capture is **off by default** because it
+may store copies of local files and increase disk usage and task overhead.
+
+To enable it in the **installed Windows build**, edit the persistent backend
+configuration (not the repository's `config/default.yaml`). In PowerShell:
+
+```powershell
+$folder = "$env:LOCALAPPDATA\ai.trajecta.desktop\data\.trajecta"
+New-Item -ItemType Directory -Force -Path $folder | Out-Null
+notepad "$folder\config.yaml"
+```
+
+Add the following YAML, or **merge `fixtures` into an existing `skills:`
+section** rather than adding a duplicate key:
+
+```yaml
+skills:
+  fixtures:
+    enabled: true
+    capture_workspace: true
+    max_files: 1000
+    max_file_mb: 8
+    max_total_mb: 100
+```
+
+Save the file, then fully exit Trajecta via the **system tray → Quit Trajecta**
+command and reopen it. Merely closing the window may leave the backend running.
+**No rebuild or reinstall is required** for this configuration change.
+
+To verify the values loaded by the **installed backend**, run:
+
+```powershell
+$base = "$env:LOCALAPPDATA\ai.trajecta.desktop"
+Push-Location "$base\data"
+try {
+    & "$base\runtime\venv\Scripts\python.exe" -c "from server.src.config import Settings; s = Settings.load(); print('Replay enabled:', s.skills.fixtures.enabled); print('Workspace capture:', s.skills.fixtures.capture_workspace)"
+} finally {
+    Pop-Location
+}
+```
+
+Both lines should show `True`. In **Knowledge → Skills**, the warning about
+workspace replay capture should disappear once the restarted backend reports
+its updated settings. Replay capture applies to **future** tasks: it cannot
+retroactively create missing evidence for prior tasks, and a captured workflow
+still must pass skill verification before activation.
+
+The default limits above cap the number and size of captured files; an
+incomplete snapshot is not accepted as verified replay evidence. Review the
+privacy implications before enabling capture in workspaces containing secrets
+or sensitive files. To disable it again, set `enabled: false` and
+`capture_workspace: false` in the same YAML file and restart Trajecta.
+
 ## Repository layout
 
 ```text

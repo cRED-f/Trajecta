@@ -51,7 +51,12 @@ if (!existsSync(built)) throw new Error(`Tauri did not create expected executabl
 // Python packages live outside the checkout; no external container runtime needed daily.
 if (existsSync(stagingVenv)) rmSync(stagingVenv,{recursive:true,force:true});
 call('uv',['venv','--python','3.11',stagingVenv]);
-call('uv',['pip','install','--python',python,root]);
+call('uv',['pip','install','--python',python,root + '[phoenix]']);
+// The full Phoenix server is optional to keep ordinary installs lightweight.
+// Set TRAJECTA_INSTALL_PHOENIX=1 during installation to bundle the local sidecar.
+if (process.env.TRAJECTA_INSTALL_PHOENIX === '1') {
+  call('uv',['pip','install','--python',python,'arize-phoenix']);
+}
 // Reject a Python installation that resolves but cannot load the FastAPI entrypoint.
 // Run from the same data directory as the installed desktop launcher.
 // Check the optional LangGraph SQLite backend explicitly before replacing the active venv.

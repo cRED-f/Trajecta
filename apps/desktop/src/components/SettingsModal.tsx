@@ -11,6 +11,7 @@ import {
   SettingsHeader,
   SettingsShell,
   LocalExecutionSettings,
+  ObservabilitySettings,
 } from "./settings";
 
 import { useMcpCatalog } from "../hooks/use-tools";
@@ -104,6 +105,8 @@ export function SettingsModal({
           {page === "guardrails" && (
             <GuardrailsSettings enabled={open} backendOnline={backendOnline} />
           )}
+
+          {page === "observability" && <ObservabilitySettings backendOnline={backendOnline} />}
 
           {page === "execution" && (
             <LocalExecutionSettings backendOnline={backendOnline} />

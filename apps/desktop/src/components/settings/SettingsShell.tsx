@@ -3,6 +3,7 @@ import {
   MonitorCog,
   Blocks,
   ServerCog,
+  Activity,
   Settings2,
   ShieldAlert,
   ShieldCheck,
@@ -106,6 +107,8 @@ export function SettingsShell({
           label="Embeddings"
           onSelect={onPageChange}
         />
+
+        <SettingsNavItem page="observability" current={page} icon={<Activity size={17} strokeWidth={1.8}/>} label="Observability" onSelect={onPageChange}/>
 
         <SettingsNavItem
           page="guardrails"

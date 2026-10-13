@@ -5,6 +5,7 @@ export type SettingsPage =
   | "memory"
   | "guardrails"
   | "execution"
+  | "observability"
   | "permissions"
   | "mcp-tools";
 

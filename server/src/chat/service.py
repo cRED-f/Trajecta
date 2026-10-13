@@ -712,6 +712,7 @@ class ChatService:
             thread_id=turn.branch.thread_id,
             metadata={
                 "conversation_id": turn.conversation.id,
+                "run_id": turn.run_id,
                 "branch_id": turn.branch.id,
                 "user_message_id": turn.user_message.id,
                 "model": turn.runtime.model_name,
@@ -760,6 +761,7 @@ class ChatService:
             ],
             metadata={
                 "conversation_id": turn.conversation.id,
+                "run_id": turn.run_id,
                 "branch_id": turn.branch.id,
                 "user_message_id": turn.user_message.id,
                 "workspace_path": turn.conversation.metadata.get(METADATA_KEY),
@@ -1109,6 +1111,7 @@ class ChatService:
 
         return {
             "duration_seconds": data.get("duration_seconds", 0.0),
+            "ttft_seconds": data.get("ttft_seconds"),
             "input_tokens": data.get("input_tokens", 0),
             "output_tokens": data.get("output_tokens", 0),
             "tool_calls": data.get("tool_calls", 0),
@@ -1130,6 +1133,7 @@ class ChatService:
             thread_id=turn.branch.thread_id,
             metadata={
                 "conversation_id": turn.conversation.id,
+                "run_id": turn.run_id,
                 "branch_id": turn.branch.id,
                 "user_message_id": turn.user_message.id,
                 "model": turn.runtime.model_name,

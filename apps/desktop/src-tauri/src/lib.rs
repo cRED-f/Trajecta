@@ -55,6 +55,8 @@ pub fn run() {
                         std::thread::sleep(Duration::from_secs(4));
                         if monitor.state::<DesktopProcesses>().stopping.load(Ordering::Relaxed) { break; }
                         let _ = backend_health(&monitor);
+                        // Do not automatically enable Phoenix; only supervise an owned process.
+                        check_phoenix_child(&monitor.state::<DesktopProcesses>());
                         if let Ok(base) = app_base(&monitor) {
                             ensure_bifrost(&base, &monitor.state::<DesktopProcesses>());
                         }
@@ -100,6 +102,8 @@ use tauri::Manager;
 struct DesktopProcesses {
     backend: Mutex<Option<Child>>,
     bifrost: Mutex<Option<Child>>,
+    phoenix: Mutex<Option<Child>>,
+    phoenix_error: Mutex<Option<String>>,
     bifrost_error: Mutex<Option<String>>,
     bifrost_restart_attempts: Mutex<u8>,
     error: Mutex<Option<String>>,
@@ -116,9 +120,12 @@ struct DesktopPreferences {
     launch_at_login: bool,
     close_to_tray: bool,
     start_minimized: bool,
+    phoenix_enabled: bool,
+    phoenix_sample_rate: f64,
+    phoenix_retention_days: u16,
 }
 impl Default for DesktopPreferences {
-    fn default() -> Self { Self { launch_at_login: false, close_to_tray: true, start_minimized: false } }
+    fn default() -> Self { Self { launch_at_login: false, close_to_tray: true, start_minimized: false, phoenix_enabled: false, phoenix_sample_rate: 1.0, phoenix_retention_days: 14 } }
 }
 
 fn app_base(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -327,6 +334,72 @@ fn launch_process(mut command: Command, log_path: PathBuf) -> Result<Child, Stri
     command.spawn().map_err(|e| e.to_string())
 }
 
+fn read_desktop_phoenix_retention(base: &std::path::Path) -> u16 {
+    let value = fs::read(base.join("desktop.json")).ok()
+        .and_then(|raw| serde_json::from_slice::<DesktopPreferences>(&raw).ok())
+        .map(|pref| pref.phoenix_retention_days).unwrap_or(14);
+    if (1..=365).contains(&value) { value } else { 14 }
+}
+
+// Phoenix is optional and receives traces on loopback only. Never take over or
+// kill another listener on port 6006, even if it happens to be Phoenix.
+fn check_phoenix_child(processes: &DesktopProcesses) {
+    if let Ok(mut guard) = processes.phoenix.lock() {
+        if let Some(child) = guard.as_mut() {
+            match child.try_wait() {
+                Ok(None) => {},
+                Ok(Some(status)) => {
+                    *guard = None;
+                    *processes.phoenix_error.lock().unwrap() = Some(format!("Phoenix exited ({status}); see logs/phoenix.log"));
+                },
+                Err(error) => {
+                    *guard = None;
+                    *processes.phoenix_error.lock().unwrap() = Some(format!("Phoenix status error: {error}"));
+                },
+            }
+        }
+    }
+}
+fn ensure_phoenix(base: &std::path::Path, processes: &DesktopProcesses, enabled: bool) {
+    check_phoenix_child(processes);
+    if !enabled { return; }
+    if processes.phoenix.lock().unwrap().is_some() { return; }
+    if service_online(6006) {
+        // An independently launched Phoenix is fine; do not claim ownership.
+        *processes.phoenix_error.lock().unwrap() = None;
+        return;
+    }
+    // Execute the Python module directly. Console script .exe launchers created
+    // in the installer's staging venv may embed its obsolete interpreter path.
+    let exe = base.join("runtime/venv/Scripts/python.exe");
+    let module = base.join("runtime/venv/Lib/site-packages/phoenix/server/main.py");
+    if !exe.is_file() || !module.is_file() {
+        *processes.phoenix_error.lock().unwrap() = Some(
+            "Phoenix server is not installed. Set TRAJECTA_INSTALL_PHOENIX=1 and run pnpm trajecta:install.".into()
+        );
+        return;
+    }
+    let working = base.join("data/phoenix");
+    if let Err(error) = fs::create_dir_all(&working) {
+        *processes.phoenix_error.lock().unwrap() = Some(error.to_string());
+        return;
+    }
+    let retention = read_desktop_phoenix_retention(base);
+    let mut cmd = Command::new(exe);
+    cmd.args(["-m", "phoenix.server.main", "serve"]).current_dir(&working)
+        .env("PHOENIX_HOST", "127.0.0.1")
+        .env("PHOENIX_PORT", "6006")
+        .env("PHOENIX_WORKING_DIR", &working)
+        .env("PHOENIX_DEFAULT_RETENTION_POLICY_DAYS", retention.to_string());
+    match launch_process(cmd, base.join("logs/phoenix.log")) {
+        Ok(child) => {
+            *processes.phoenix.lock().unwrap() = Some(child);
+            *processes.phoenix_error.lock().unwrap() = None;
+        },
+        Err(error) => *processes.phoenix_error.lock().unwrap() = Some(error),
+    }
+}
+
 fn start_services(app: &tauri::AppHandle) -> Result<(), String> {
     let base = app_base(app)?;
     let processes = app.state::<DesktopProcesses>();
@@ -339,6 +412,8 @@ fn start_services(app: &tauri::AppHandle) -> Result<(), String> {
         return Err(message);
     }
     ensure_bifrost(&base, &processes);
+    let preferences = read_preferences(app);
+    ensure_phoenix(&base, &processes, preferences.phoenix_enabled);
     // Check the child we already own BEFORE probing the port. Previously the
     // supervisor rejected its own healthy backend as an external conflict.
     let mut backend = processes.backend.lock().unwrap();
@@ -368,7 +443,10 @@ fn start_services(app: &tauri::AppHandle) -> Result<(), String> {
         .env("TRAJECTA_RESOURCE_DIR", &resources)
         .env("TRAJECTA_SERVER_PORT", "8420")
         .env("TRAJECTA_BACKEND_INSTANCE_ID", backend_instance_id(&base)?)
-        .env("PYTHONUTF8", "1");
+        .env("PYTHONUTF8", "1")
+        .env("TRAJECTA_PHOENIX_ENABLED", if preferences.phoenix_enabled { "true" } else { "false" })
+        .env("TRAJECTA_PHOENIX_ENDPOINT", "http://127.0.0.1:6006/v1/traces")
+        .env("TRAJECTA_PHOENIX_SAMPLE_RATE", preferences.phoenix_sample_rate.to_string());
     if let Some(token) = bifrost_setup_token(&base) {
         cmd.env("TRAJECTA_BIFROST_SETUP_TOKEN", token);
     }
@@ -392,6 +470,11 @@ fn stop_services(app: &tauri::AppHandle) {
     processes.attached_backend.store(false, Ordering::Relaxed);
     if let Ok(mut guard) = processes.backend.lock() {
         if let Some(mut child) = guard.take() { let _ = child.kill(); let _ = child.wait(); }
+    }
+    if let Ok(mut guard) = processes.phoenix.lock() {
+        if let Some(mut child) = guard.take() {
+            let _ = child.kill(); let _ = child.wait();
+        }
     }
     if let Ok(mut guard) = processes.bifrost.lock() {
         if let Some(mut child) = guard.take() {
@@ -510,6 +593,10 @@ struct DesktopStatus {
     managed_bifrost: bool,
     bifrost_installed: bool,
     bifrost_error: Option<String>,
+    phoenix_installed: bool,
+    phoenix_reachable: bool,
+    phoenix_managed: bool,
+    phoenix_error: Option<String>,
     error: Option<String>,
 }
 #[tauri::command]
@@ -526,6 +613,8 @@ fn desktop_status(app: tauri::AppHandle) -> DesktopStatus {
     let backend_log_path = if cfg!(debug_assertions) { None }
         else { app_base(&app).ok().map(|dir| dir.join("logs/backend.log").display().to_string()) };
     let bifrost_error = state.bifrost_error.lock().unwrap().clone();
+    let phoenix_managed = state.phoenix.lock().unwrap().is_some();
+    let phoenix_error = state.phoenix_error.lock().unwrap().clone();
     DesktopStatus {
         installed: !cfg!(debug_assertions),
         backend_running: backend_state == "connected",
@@ -535,6 +624,10 @@ fn desktop_status(app: tauri::AppHandle) -> DesktopStatus {
         managed_bifrost,
         bifrost_installed: app_base(&app).ok().is_some_and(|base| base.join("runtime/bifrost/launcher.json").exists()),
         bifrost_error,
+        phoenix_installed: app_base(&app).ok().is_some_and(|base| base.join("runtime/venv/Lib/site-packages/phoenix/server/main.py").exists()),
+        phoenix_reachable: service_online(6006),
+        phoenix_managed,
+        phoenix_error,
         error,
     }
 }
@@ -562,6 +655,12 @@ fn set_windows_autostart(executable: &std::path::Path, enabled: bool) -> Result<
 
 #[tauri::command]
 fn desktop_save_settings(app: tauri::AppHandle, settings: DesktopPreferences) -> Result<DesktopPreferences, String> {
+    if !settings.phoenix_sample_rate.is_finite() || !(0.01..=1.0).contains(&settings.phoenix_sample_rate) {
+        return Err("Phoenix sample rate must be between 0.01 and 1.0".into());
+    }
+    if !(1..=365).contains(&settings.phoenix_retention_days) {
+        return Err("Phoenix retention must be between 1 and 365 days".into());
+    }
     let base = app_base(&app)?;
     fs::create_dir_all(&base).map_err(|e| e.to_string())?;
     #[cfg(target_os="windows")]

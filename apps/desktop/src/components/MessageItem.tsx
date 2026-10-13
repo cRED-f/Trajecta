@@ -1,6 +1,12 @@
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { isTauri } from "@tauri-apps/api/core";
+import { useQuery } from "@tanstack/react-query";
+import { observabilityApi } from "../lib/observability-api";
+
 import {
   Check,
   Copy,
+  Activity,
   Pencil,
   RefreshCcw,
   ThumbsUp,
@@ -176,6 +182,10 @@ export function MessageItem({
   const [feedback, setFeedback] = useState<"success" | "failure" | null>(null);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [feedbackBusy, setFeedbackBusy] = useState(false);
+  const status = useQuery({ queryKey: ["observability", "status"], queryFn: observabilityApi.status,
+    enabled: message.role === "assistant" && typeof message.metadata?.trace_id === "string", staleTime: 15000 });
+  const traceId = typeof message.metadata?.trace_id === "string" && /^[a-fA-F0-9]{32}$/.test(message.metadata.trace_id)
+    ? message.metadata.trace_id : null;
   const trajectoryId = typeof message.metadata?.trajectory_id === "string"
     ? message.metadata.trajectory_id : null;
 
@@ -366,6 +376,16 @@ export function MessageItem({
 
         {!user && (
           <>
+          {traceId && <button className="icon-button" type="button" title={status.data?.project_id ? "View Phoenix trace" : "Copy Phoenix trace ID"}
+            aria-label={status.data?.project_id ? "View Phoenix trace" : "Copy Phoenix trace ID"}
+            onClick={() => {
+              if (status.data?.connected && status.data.project_id) {
+                const url = `http://127.0.0.1:6006/projects/${encodeURIComponent(status.data.project_id)}/traces/${traceId}`;
+                if (isTauri()) void openUrl(url); else window.open(url, "_blank", "noopener,noreferrer");
+              } else void navigator.clipboard.writeText(traceId);
+            }}>
+            <Activity size={15}/>
+          </button>}
           {trajectoryId && <>
             <button className="icon-button" type="button" aria-label="Helpful response"
               title={feedback === "success" ? "Saved as successful" : "Mark helpful"}

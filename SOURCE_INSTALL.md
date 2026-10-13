@@ -139,3 +139,37 @@ message, and inspect the last 80 lines of
 but requests still fail, check the desktop WebView network console for a blocked
 request/CORS error. These checks distinguish process termination from a browser
 network policy problem; they should not be used to kill an unrelated process.
+
+## Optional local Phoenix observability (Windows build)
+
+Trajecta's Phoenix/OpenInference instrumentation is an optional AI-agent tracing
+feature. By default, Trajecta neither launches a Phoenix server nor exports
+traces. To bundle the local server during a source install, run in PowerShell:
+
+```powershell
+$env:TRAJECTA_INSTALL_PHOENIX = "1"
+pnpm trajecta:install
+```
+
+Then open **Settings → Observability**, enable tracing, choose sampling and
+retention, and select **Save & restart services**. This restarts FastAPI and
+interrupts active runs, so finish chats first. The installed desktop launcher
+manages the Phoenix process on `127.0.0.1:6006` and writes its database under
+`%LOCALAPPDATA%\ai.trajecta.desktop\data\phoenix` and its diagnostics to
+`logs\phoenix.log`. It does not take ownership of a pre-existing process on
+port 6006. An independent Phoenix server may be used instead; in this case the
+managed retention setting does not configure that server.
+
+The local **Observability** page summarizes up to 500 saved trajectories;
+recorded completion is not verified task success. Detailed agent, tool,
+retrieval, guardrail, and background-learning spans are inspected in Phoenix.
+Direct trace links are available only when Phoenix exposes a resolvable project
+ID; otherwise use **Copy ID** and open the Phoenix dashboard. This phase does
+not add evaluation datasets, evaluators, judge-model calls, or quality scoring.
+
+If Phoenix is absent, crashes, or its port is occupied, normal Trajecta chat
+and Bifrost operation must remain available. Only bounded metadata is sent to
+Phoenix. Model prompts, responses, tool payloads, private memories, and model
+reasoning are not intentionally exported. Sampling changes apply on backend
+restart. The managed server uses Phoenix's default retention-policy setting;
+existing project-specific policies may override it.
